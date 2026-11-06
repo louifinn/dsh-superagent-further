@@ -37,6 +37,16 @@ describe('account-isolated operations', () => {
       expect(environment).not.toHaveProperty('GH_TOKEN')
     } finally { delete process.env.GH_TOKEN }
   })
+  it('passes text on stdin, where a Windows command line cannot carry newlines', async () => {
+    const output = await new Commands(() => deployment, {}, new AbortController().signal)
+      .run(NODE, ['-e', 'process.stdin.pipe(process.stdout)'], undefined, 'line one\n\nline two\n')
+    expect(output).toBe('line one\n\nline two\n')
+  })
+  it('reports a command that fails after reading stdin with its diagnostics and exit status', async () => {
+    await expect(new Commands(() => deployment, {}, new AbortController().signal)
+      .run(NODE, ['-e', 'process.exit(7)'], undefined, 'ignored'))
+      .rejects.toMatchObject({ message: `${nodeName} exited with code 7`, exitCode: 7 })
+  })
   it('refuses Feishu commands when the deployment has no Feishu bot', async () => {
     await expect(new Commands(() => testDeployment({ feishu: undefined }), {}, new AbortController().signal).lark(['im', '+chat-list'])).rejects.toThrow('The Feishu Source has no working bot CLI')
   })
@@ -48,23 +58,31 @@ describe('account-isolated operations', () => {
   })
   it('posts the reply as the model wrote it, only to the fixed repository', async () => {
     const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(commands,'pages').mockResolvedValue([])
-    const gh = vi.spyOn(commands,'gh').mockResolvedValue({})
+    const run = vi.spyOn(commands,'run').mockResolvedValue('{}')
     await send(commands, reply)
     // The disclosure line is prompt text: the model writes it, and the host adds nothing.
-    expect(gh).toHaveBeenCalledWith(['api',`repos/${REPOSITORY}/issues/8/comments`,'--method','POST','-f',expect.stringMatching(/^body=Done\n\n<!-- dsh-superagent:stable-operation -->$/)])
+    const [program, args, cwd, stdin] = run.mock.calls[0]!
+    expect(program).toBe('/path/agent-gh')
+    expect(args).toEqual(['api', `repos/${REPOSITORY}/issues/8/comments`, '--method', 'POST', '--input', '-'])
+    expect(cwd).toBeUndefined()
+    // The body goes over stdin because it carries newlines, which a Windows command line cannot pass as an argument.
+    expect(JSON.parse(stdin!)).toEqual({ body: 'Done\n\n<!-- dsh-superagent:stable-operation -->' })
     await expect(new Commands(() => deployment, {}, new AbortController().signal).pages(z.unknown(),
       '../../someone/else/issues')).rejects.toThrow()
   })
   it('routes review-comment replies to the root review comment', async () => {
     const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(commands,'pages').mockResolvedValue([])
-    const gh = vi.spyOn(commands,'gh').mockResolvedValueOnce({ id: 7, in_reply_to_id: 3 }).mockResolvedValueOnce({})
+    const run = vi.spyOn(commands,'run').mockResolvedValue('{}')
+    vi.spyOn(commands,'gh').mockResolvedValueOnce({ id: 7, in_reply_to_id: 3 })
     await send(commands, { ...reply, channel: githubChannel(8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })
-    expect(gh.mock.calls[1]![0]).toEqual(['api', `repos/${REPOSITORY}/pulls/8/comments/3/replies`, '--method', 'POST', '-f', expect.stringContaining('Done')])
+    expect(run.mock.calls[0]![1]).toEqual(['api', `repos/${REPOSITORY}/pulls/8/comments/3/replies`, '--method', 'POST', '--input', '-'])
   })
   it('uses Feishu bot identity and one idempotency key on retries', async () => {
     const commands = new Commands(() => deployment, {}, new AbortController().signal); const run = vi.spyOn(commands,'run').mockResolvedValue('{"ok":true,"data":{}}')
     await send(commands, { ...reply, channel: feishuChannel('oc_1', 'om_1') })
-    expect(run.mock.calls[0]![1]).toEqual(expect.arrayContaining(['--as','bot','--idempotency-key','stable-operation','--message-id','om_1']))
+    expect(run.mock.calls[0]![1]).toEqual(expect.arrayContaining(['--as','bot','--idempotency-key','stable-operation','--message-id','om_1','--markdown','-']))
+    // The reply text goes over stdin, so its newlines and markdown reach Feishu unchanged.
+    expect(run.mock.calls[0]![3]).toBe('Done')
   })
 })
 
@@ -100,26 +118,26 @@ describe('Channels', () => {
   it('drop a GitHub reply to an Issue that is deleted or locked, and keep others for a retry', async () => {
     const value = commands()
     vi.spyOn(value, 'pages').mockResolvedValue([])
-    const gh = vi.spyOn(value, 'gh')
+    const run = vi.spyOn(value, 'run')
     for (const stderr of ['gh: This issue was deleted (HTTP 410)', 'gh: Unable to create comment because issue is locked. (HTTP 403)']) {
-      gh.mockRejectedValueOnce(commandError({ stderr, code: 1 }))
+      run.mockRejectedValueOnce(commandError({ stderr, code: 1 }))
       expect(await send(value, reply)).toBe('gone')
     }
     // GitHub also answers 404 for a private repository the agent lost access to, so 404 is retried rather than dropped.
     for (const stderr of ['gh: Not Found (HTTP 404)', 'gh: Server Error (HTTP 500)']) {
-      gh.mockRejectedValueOnce(commandError({ stderr, code: 1 }))
+      run.mockRejectedValueOnce(commandError({ stderr, code: 1 }))
       await expect(send(value, reply)).rejects.toThrow(stderr)
     }
   })
   it('reply on the PR\'s conversation when the review comment a reply points at is gone', async () => {
     const value = commands()
     const pages = vi.spyOn(value, 'pages').mockResolvedValue([])
-    const gh = vi.spyOn(value, 'gh')
-      .mockRejectedValueOnce(commandError({ stderr: 'gh: Not Found (HTTP 404)', code: 1 })).mockResolvedValueOnce({})
+    vi.spyOn(value, 'gh')
+      .mockRejectedValueOnce(commandError({ stderr: 'gh: Not Found (HTTP 404)', code: 1 }))
+    const run = vi.spyOn(value, 'run').mockResolvedValue('{}')
     expect(await send(value, { ...reply, channel: githubChannel(8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })).toBe('sent')
     expect((pages.mock.calls[0] as unknown[])[1]).toBe('issues/8/comments')
-    const post = ['api', `repos/${REPOSITORY}/issues/8/comments`, '--method', 'POST', '-f', expect.stringContaining('Done')]
-    expect(gh.mock.calls[1]![0]).toEqual(post)
+    expect(run.mock.calls[0]![1]).toEqual(['api', `repos/${REPOSITORY}/issues/8/comments`, '--method', 'POST', '--input', '-'])
   })
   it('link each address to its page with its label', () => {
     const links = { repository: REPOSITORY, feishu: deployment.feishu! }
@@ -227,12 +245,17 @@ it.skipIf(process.platform !== 'win32')('runs a batch-file CLI through cmd.exe a
   const dir = mkdtempSync(join(tmpdir(), 'commands-'))
   try {
     writeFileSync(join(dir, 'echo-argv.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)))')
+    writeFileSync(join(dir, 'echo-stdin.mjs'), 'process.stdin.pipe(process.stdout)')
     const batch = join(dir, 'fake-cli.cmd')
     writeFileSync(batch, '@echo off\r\nnode "%~dp0echo-argv.mjs" %*\r\n')
+    const stdinCli = join(dir, 'fake-stdin.cmd')
+    writeFileSync(stdinCli, '@echo off\r\nnode "%~dp0echo-stdin.mjs"\r\n')
     const commands = new Commands(() => deployment, {}, new AbortController().signal)
     // npm-style CLIs are batch files on Windows; arguments reach the CLI unchanged, metacharacters included.
     expect(JSON.parse(await commands.run(batch, ['a b', 'c&d', 'e"f', '{"x": 1}']))).toEqual(['a b', 'c&d', 'e"f', '{"x": 1}'])
     // `cmd.exe` would expand a variable reference, so the command is refused instead of mutilated.
     await expect(commands.run(batch, ['%PATH%'])).rejects.toMatchObject({ message: expect.stringContaining('cannot run on Windows') })
+    // Message text reaches a batch-file CLI on stdin, newlines included.
+    expect(await commands.run(stdinCli, [], undefined, 'line one\n\nline two\n')).toBe('line one\n\nline two\n')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

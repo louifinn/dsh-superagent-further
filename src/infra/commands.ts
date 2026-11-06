@@ -1,5 +1,5 @@
 /** Subprocess wrapper for running gh, lark-cli, and git commands under the deployment's configured accounts. */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
@@ -8,6 +8,48 @@ import { batchArguments, expandsInBatch, isBatchFile } from './batch.ts'
 
 const exec = promisify(execFile)
 const TIMEOUT_MS = 90_000
+const OUTPUT_LIMIT = 16 * 1024 * 1024
+const DIAGNOSTICS_LIMIT = 64 * 1024
+/**
+ * Runs a CLI with text on its stdin.
+ * Message bodies carry newlines and markdown, which a `cmd.exe` command line cannot carry as an argument on Windows,
+ * so `gh api --input -` and `lark-cli --markdown -` read them from here instead.
+ */
+async function pipe(signal: AbortSignal, program: string, args: string[], environment: NodeJS.ProcessEnv,
+  cwd: string | undefined, input: string): Promise<string> {
+  const batch = batchInvocation(program, args, environment)
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(batch ? 'cmd.exe' : program, batch ?? args, { cwd, env: environment, windowsHide: true,
+      windowsVerbatimArguments: batch !== undefined, stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM') }, TIMEOUT_MS)
+    const abort = () => { child.kill('SIGTERM') }
+    signal.addEventListener('abort', abort, { once: true })
+    const settle = (error?: Error) => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+      if (error) reject(error)
+      else resolve(stdout)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => { if (stdout.length < OUTPUT_LIMIT) stdout += chunk })
+    child.stderr.on('data', (chunk: string) => { if (stderr.length < DIAGNOSTICS_LIMIT) stderr += chunk })
+    child.on('error', error => settle(error))
+    child.on('close', code => {
+      if (code === 0 && !timedOut) return settle()
+      // A cancelled command stays an AbortError so callers can tell cancellation from failure.
+      if (signal.aborted) return settle(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }))
+      settle(Object.assign(new Error(`${basename(program)} failed`),
+        { killed: timedOut, signal: timedOut ? 'SIGTERM' : null, code: code ?? null, stderr }))
+    })
+    // The CLI may exit before it reads everything; its exit status decides what happened.
+    child.stdin.on('error', () => {})
+    child.stdin.end(input)
+  })
+}
 /**
  * The `cmd.exe` invocation that runs a batch-file CLI, or undefined when the program is a native executable.
  * @throws CliError when an argument cannot cross a `cmd.exe` command line unchanged.
@@ -77,9 +119,10 @@ export class Commands {
   get deployment(): Deployment { return this.resolved() }
   get repository(): string { return this.deployment.repository }
   withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
-  async run(program: string, args: string[], cwd?: string): Promise<string> {
+  async run(program: string, args: string[], cwd?: string, stdin?: string): Promise<string> {
     const environment = { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' }
     try {
+      if (stdin !== undefined) return await pipe(this.signal, program, args, environment, cwd, stdin)
       const batch = batchInvocation(program, args, environment)
       const { stdout } = await exec(batch ? 'cmd.exe' : program, batch ?? args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
         windowsVerbatimArguments: batch !== undefined, env: environment })
@@ -105,6 +148,13 @@ export class Commands {
     const pages = z.array(z.array(z.unknown())).parse(await this.gh(['api', this.path(path), '--paginate', '--slurp']))
     return validItems(item, pages.flat(), tally)
   }
+  /**
+   * Posts a JSON request body to the GitHub API on stdin.
+   * Comment bodies carry newlines and markdown, which a Windows command line cannot pass as an argument.
+   */
+  async apiInput(path: string, body: unknown): Promise<void> {
+    await this.run(this.deployment.github.cli, ['api', this.path(path), '--method', 'POST', '--input', '-'], undefined, JSON.stringify(body))
+  }
   private path(path: string): string {
     const outside = /^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)/i.test(path)
     if (outside) throw new Error('GitHub calls are restricted to the configured repository')
@@ -112,12 +162,13 @@ export class Commands {
   }
   /**
    * Runs the Feishu bot's `lark-cli` and returns the JSON `data` payload.
+   * @param stdin text for the message body, where a Windows command line cannot carry it.
    * @throws CliError with Feishu's error code on failure (rewriting 232011 when the bot is not in the chat).
    */
-  async lark<T>(args: string[], cwd?: string): Promise<T> {
+  async lark<T>(args: string[], cwd?: string, stdin?: string): Promise<T> {
     const bot = this.deployment.feishu
     if (!bot) throw new Error('The Feishu Source has no working bot CLI')
-    const output = await this.run(bot.cli, [...args, '--as', 'bot', '--format', 'json'], cwd)
+    const output = await this.run(bot.cli, [...args, '--as', 'bot', '--format', 'json'], cwd, stdin)
       .catch((error: unknown) => { throw membership(error) })
     const result = JSON.parse(output) as { ok: boolean; data: T; error?: { code?: number; message?: string } }
     const code = result.error?.code

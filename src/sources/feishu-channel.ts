@@ -20,8 +20,9 @@ export async function sendFeishu(host: Pick<SourceContext, 'commands'>, message:
   const messageId = message.channel.address.messageId
   if (!messageId) throw new Error('Missing Feishu reply target')
   const text = checkedImText(message.text)
-  const reply = ['im', '+messages-reply', '--message-id', messageId, '--markdown', text, '--reply-in-thread', '--idempotency-key', message.id]
-  try { await host.commands.lark(reply) }
+  // The text goes over stdin: it carries newlines, which a Windows command line cannot pass as an argument.
+  const reply = ['im', '+messages-reply', '--message-id', messageId, '--markdown', '-', '--reply-in-thread', '--idempotency-key', message.id]
+  try { await host.commands.lark(reply, undefined, text) }
   catch (error) {
     if (gone(error)) return 'gone'
     throw error
