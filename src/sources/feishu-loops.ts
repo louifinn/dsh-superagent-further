@@ -7,6 +7,7 @@ import { threadKey, type Thread, type Trigger } from '../core/index.ts'
 import { feishuChatLink } from './feishu-channel.ts'
 import type { FeishuBot } from '../deployment.ts'
 import { validItems, type Tally } from '../infra/commands.ts'
+import { invocation } from '../infra/batch.ts'
 import { readFeishu, type FeishuRef } from './feishu-read.ts'
 import { feishuRef, feishuTime, feishuTrigger, HistoricalMessageSchema, historyEvent, HistoryPageSchema, SOURCE, topicEvent }
   from './feishu-trigger.ts'
@@ -68,12 +69,19 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
 export const consumerRetry = (previous: number | undefined, ranMs: number): number =>
   previous === undefined || ranMs >= 60_000 ? 1000 : Math.min(previous * 2, 60_000)
 async function consume(ctx: SourceContext, signal: AbortSignal): Promise<void> {
-  const child = spawn(bot(ctx).cli, ['event', 'consume', 'im.message.receive_v1', '--as', 'bot'],
-    { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
+  // A Feishu CLI installed through npm is a batch file on Windows, which Node starts only through `cmd.exe`.
+  const { program, args: argv, verbatim } = invocation(bot(ctx).cli, ['event', 'consume', 'im.message.receive_v1', '--as', 'bot'])
+  const child = spawn(program, argv, { stdio: ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: verbatim,
+    env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
       LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } })
   const stdout = createInterface({ input: child.stdout }); const stderr = createInterface({ input: child.stderr })
   let chain = Promise.resolve(); let diagnostic = ''; let ready = false
-  const stop = (): void => { child.stdin.end(); child.kill('SIGTERM') }
+  const stop = (): void => {
+    child.stdin.end()
+    // Ending a wrapping `cmd.exe` leaves the batch file's own process running, so end the tree; elsewhere a signal suffices.
+    if (verbatim && child.pid !== undefined) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+    child.kill('SIGTERM')
+  }
   signal.addEventListener('abort', stop, { once: true })
   const timeout = setTimeout(() => { diagnostic = 'Feishu event consumer did not become ready within 45 seconds'; stop() }, 45_000)
   stderr.on('line', (line: string) => {

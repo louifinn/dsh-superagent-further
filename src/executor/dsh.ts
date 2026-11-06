@@ -239,6 +239,13 @@ export class DshExecutor implements Executor {
     return { ...ticket, execution: ticketExecution(ticket, outcome, this.host.store.settings(), this.host.machine.stateDir) }
   }
   /**
+   * The command that runs an operator's prepare command: PowerShell on Windows, which the configuration mounts as the worker's
+   * shell tool, and the POSIX shell elsewhere.
+   */
+  private prepareCommand(command: string): string[] {
+    return process.platform === 'win32' ? ['pwsh', '-NoProfile', '-NonInteractive', '-Command', command] : ['sh', '-c', command]
+  }
+  /**
    * Runs the configured `executor.prepare` command for a new ticket workspace in its parent directory with the ticket's
    * execution environment variables, then verifies the directory as the worker sees it.
    * A failed prepare command throws `PrepareFailed`, which is not retried automatically; an empty directory it left is removed, a non-empty one kept.
@@ -251,7 +258,7 @@ export class DshExecutor implements Executor {
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
-    if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
+    if (command) await runAsWorker(this.host.context.subprocess, this.prepareCommand(command), dirname(directory), signal, env)
       .catch(async (error: unknown) => {
         // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
         await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })

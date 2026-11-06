@@ -60,6 +60,11 @@ declare module '@deepseek-ai/cordis' {
  */
 const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
   'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
+/**
+ * The profile's shell tool: the Windows configuration mounts `tool-pwsh` and disables `tool-bash`, while elsewhere the profile
+ * mounts `tool-bash`; a main Session allowed only the other name would have no shell at all.
+ */
+const SHELL_TOOL = process.platform === 'win32' ? 'pwsh' : 'bash'
 /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
 const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
   + 'end the turn instead of waiting for them.'
@@ -69,16 +74,21 @@ const DEFAULT_WAIT = 'This shell waits up to 60 seconds by default: pass timeout
 /** `sleep` at a command position: the start, after ; & | ( { ! ` or a newline, or after a keyword or a command that runs it. */
 const SLEEP = /(?:^|[;&|({!`\n]|\b(?:do|then|else|elif|if|while|until|time|exec|nohup|command|env)\s)\s*(?:\S*\/)?sleep\b/
 /**
- * The main Session's guard: it refuses a bash command that runs sleep or asks to hold the step longer than 30 seconds, and a
+ * A PowerShell command that waits, at a command position: `Start-Sleep`, `Wait-Process`, or `Start-Process` with `-Wait`.
+ * PowerShell separates statements and pipeline stages with ;, |, & or a newline, and block keywords end with one too.
+ */
+const POWERSHELL_WAIT = /(?:^|[;&|({!`\n]|\b(?:do|then|else|if|while|until|foreach|for|switch|try|catch|finally|process|begin|end)\s)\s*(?:\S*[\\/])?(?:Start-Sleep|Wait-Process)\b|(?:^|[;&|({!`\n]|\b(?:do|then|else|if|while|until|foreach|for|switch|try|catch|finally|process|begin|end)\s)\s*(?:\S*[\\/])?Start-Process\b[^;&|\n]*\s-Wait\b/i
+/**
+ * The main Session's guard: it refuses a shell command that runs sleep or asks to hold the step longer than 30 seconds, and a
  * job wait longer than 5 seconds. Under `standard`, as a main Session created before the router preset runs, the shell holds
  * a command 60 seconds and a job wait lasts 30 seconds by default, so a command needs a timeout or the background, and a
  * job wait its timeout; the router preset ends both after 5 seconds.
  */
 function noWait({ name, arguments: input }: { name: string; arguments: unknown }, routed: () => boolean): string | undefined {
   const args = (input ?? {}) as { command?: unknown; timeoutMs?: unknown; run_in_background?: unknown; wait?: unknown; timeout_ms?: unknown }
-  if (name === 'bash') {
-    const sleeps = typeof args.command === 'string' && SLEEP.test(args.command)
-    if (sleeps || typeof args.timeoutMs === 'number' && args.timeoutMs > 30_000) return NO_WAIT
+  if (name === 'bash' || name === 'pwsh') {
+    const waits = typeof args.command === 'string' && (name === 'bash' ? SLEEP : POWERSHELL_WAIT).test(args.command)
+    if (waits || typeof args.timeoutMs === 'number' && args.timeoutMs > 30_000) return NO_WAIT
     if (args.timeoutMs === undefined && args.run_in_background !== true && !routed()) return DEFAULT_WAIT
   }
   if (name === 'job_output' && args.wait === true && (typeof args.timeout_ms === 'number' ? args.timeout_ms > 5_000 : !routed())) return NO_WAIT
@@ -260,7 +270,7 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
     if (master) {
-      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
+      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', SHELL_TOOL, 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.

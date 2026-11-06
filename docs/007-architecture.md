@@ -34,6 +34,17 @@ Startup registers management routes and runs Setup. After setup resolves, it ins
 
 Shutdown cancels turns, waits for passes, effects and agents, restores the process environment, closes the Store and releases the lock. Source plugins inject Runtime as the `orchestrator` service through the narrow `SourceHost` interface.
 
+### Platforms
+
+dsh-superagent runs on macOS, Linux and Windows 10/11, with each platform difference behind one module:
+
+- **Absolute paths** (`src/infra/paths.ts`): the plugin `Config` schema accepts a drive-letter, UNC or root-relative path on Windows and a POSIX path elsewhere, and `policy.ts` applies the same rule to the Executor directory. The rule is a schema pattern rather than `path.isAbsolute`, which would accept the other platform's syntax.
+- **Batch-file CLIs** (`src/infra/batch.ts`): Windows starts a `.cmd`/`.bat` program only through `cmd.exe`, and Node cannot start one with an argument array at all. `Commands` builds that invocation with `cmd.exe /d /s /c` plus `windowsVerbatimArguments` and refuses an argument `cmd.exe` would rewrite (`%VAR%`, a line break); the Feishu event consumer starts its CLI the same way and ends the whole process tree when it stops.
+- **Worker environment** (`src/infra/environment.ts`): the `worker-bin` shims are batch files on Windows and `#!/bin/sh` scripts elsewhere, `PATH` is split with `path.delimiter`, and the git credential helper is compared in git's normalised `-z` form.
+- **Shell tool**: both presets install `bash` and `pwsh`; the main Session's allow list keeps the platform's shell (`src/app/sessions.ts`), and the Executor's prepare command runs through `sh -c` on POSIX and `pwsh -NoProfile -NonInteractive -Command` on Windows.
+- **Service lifecycle** (`scripts/dsh-superagent`, `scripts/dsh-superagent.cmd`): a dependency-free Node script with no Python or tmux, using `Get-CimInstance Win32_Process` for discovery on Windows and `ps -ww` elsewhere. A graceful stop asks the runtime over `POST /orchestrator/api/shutdown`, because Windows cannot deliver a graceful signal to a detached process; only when the route is missing does it fall back to `SIGINT` on POSIX or `taskkill /T` on Windows.
+- **Owner-only state** (`src/infra/acl.ts`): POSIX modes restrict nothing on Windows, so the state directory and database get an `icacls` ACL that grants only the operator's account.
+
 | Part | Module | Does |
 | --- | --- | --- |
 | Setup | `src/app/setup.ts` | Resolves the repository and the accounts by probing their CLIs the way worker shells run them, writes and applies the workers' environment and command shims, and keeps the setup problems; Settings checks a changed account through it, and restarts through it, which runs setup again |
@@ -355,6 +366,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
 | `src/infra/environment.ts` | The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the environment and of a Ticket's directory |
+| `src/infra/batch.ts` | `isBatchFile`, `expandsInBatch`, `batchArguments` and `invocation`: how a `.cmd` or `.bat` CLI is started through `cmd.exe` on Windows, and the arguments that cannot be passed |
+| `src/infra/acl.ts` | `restrictToOwner`: POSIX modes, or an owner-only `icacls` ACL on Windows, for the state directory and database |
 | `src/infra/paths.ts` | The package's root, where packaged files are |
 | `src/infra/text.ts` | Word counts and the chat message limit, `fill` and `sameName` |
 | `src/infra/health.ts` | The `HealthBoard`, every part's health entry, each claimed by its one writer |
@@ -436,7 +449,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
 | `tests/model-surface.spec.ts` | Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary, within a size budget per role |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/index.spec.ts` | The plugin configuration and setup, the agent's process environment, the plugin entry |
-| `tests/service-script.spec.ts` | `scripts/dsh-superagent` against fake `ps`, `tmux` and `dsh` |
+| `tests/service-script.spec.ts` | `scripts/dsh-superagent` against an injectable process table, launcher and `dsh`, and a mock management API |
+| `tests/batch.spec.ts`, `tests/acl.spec.ts` | Batch-file CLIs through `cmd.exe` with an exact argument round trip, and owner-only state files as POSIX modes or Windows ACLs |
 | `tests/client.spec.tsx`, `tests/navigation.spec.ts`, `tests/controls.spec.tsx` | The client plugin's registration and polling, Session navigation and route memory, the local controls, and the panel's imports, which have no cycle |
 | `tests/panel-overview.spec.tsx`, `panel-source.spec.tsx`, `panel-trigger.spec.tsx`, `panel-eval.spec.tsx`, `panel-execution.spec.tsx` | Each page of the panel, against a fake management API answered by route |
 | `tests/panel-settings.spec.tsx`, `panel-prompts.spec.tsx`, `panel-deployment.spec.tsx`, `panel-panel.spec.tsx` | The settings groups, drafts and history, the prompts, the Deployment page, and the panel's search, glossary and route memory |

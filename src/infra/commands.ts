@@ -4,9 +4,19 @@ import { basename } from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import type { Deployment } from '../deployment.ts'
+import { batchArguments, expandsInBatch, isBatchFile } from './batch.ts'
 
 const exec = promisify(execFile)
 const TIMEOUT_MS = 90_000
+/**
+ * The `cmd.exe` invocation that runs a batch-file CLI, or undefined when the program is a native executable.
+ * @throws CliError when an argument cannot cross a `cmd.exe` command line unchanged.
+ */
+function batchInvocation(program: string, args: string[]): string[] | undefined {
+  if (!isBatchFile(program)) return undefined
+  if (expandsInBatch(args)) throw new CliError(`${basename(program)} cannot run on Windows with an argument that contains %VAR% or a line break`)
+  return batchArguments(program, args)
+}
 /**
  * Error thrown by Commands when a CLI invocation fails, capturing stderr diagnostics, API error codes, and exit status without echoing command arguments.
  * Source channels and pollers inspect its code to distinguish deleted conversations from retryable failures.
@@ -17,6 +27,8 @@ export class CliError extends Error {
 /** Extracts a sanitized error from a failed subprocess without echoing argv, which may contain message text. */
 export function commandError(error: unknown, program = 'command'): Error {
   if (error instanceof Error && error.name === 'AbortError') return error
+  // Diagnostics raised before a process starts already describe the failure.
+  if (error instanceof CliError) return error
   const exitCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'number' ? error.code : undefined
   if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') {
     const stderr = error.stderr.trim()
@@ -67,7 +79,9 @@ export class Commands {
   withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
   async run(program: string, args: string[], cwd?: string): Promise<string> {
     try {
-      const { stdout } = await exec(program, args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
+      const batch = batchInvocation(program, args)
+      const { stdout } = await exec(batch ? 'cmd.exe' : program, batch ?? args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
+        windowsVerbatimArguments: batch !== undefined,
         env: { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } })
       return stdout
     } catch (error) { throw commandError(error, program) }

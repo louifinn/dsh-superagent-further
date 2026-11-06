@@ -22,10 +22,20 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 const gitQuote = (value: string): string => `"${value.replace(/[\\"]/g, char => `\\${char}`)}"`
 export const credentialHelper = (cli: string): string => `!${shellQuote(cli)} auth git-credential`
 
-export function sameDirectory(a: string, b: string): boolean {
-  const real = (path: string): string => { try { return realpathSync(path) } catch { return resolve(path) } }
-  return real(a) === real(b)
+/** A directory's canonical spelling: its real path, its trailing separators dropped, and its case folded on Windows, whose filesystems ignore it. */
+function directoryKey(path: string): string {
+  let real: string
+  try { real = realpathSync(path) } catch { real = resolve(path) }
+  const trimmed = real.replace(/[\\/]+$/, '')
+  // A root (`/` or `C:\`) keeps its separator, so all its spellings still name the same directory.
+  const canonical = trimmed === '' || /^[A-Za-z]:$/.test(trimmed) ? real : trimmed
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical
 }
+/**
+ * True when both spellings name the same directory, including one with a trailing separator or, on Windows, another case
+ * and mixed `/` and `\` separators.
+ */
+export function sameDirectory(a: string, b: string): boolean { return directoryKey(a) === directoryKey(b) }
 export function withoutDirectory(path: string, dir: string): string {
   return path.split(delimiter).filter(entry => !sameDirectory(entry, dir)).join(delimiter)
 }
@@ -57,11 +67,13 @@ export function agentVariables(stateDir: string): Record<string, string | undefi
   }
 }
 
-/** True when a regular file starts with the dsh-superagent marker in its first two lines; a symbolic link, directory, or other non-regular file never counts as written by dsh-superagent. */
+/** The markers that identify a file dsh-superagent writes; a POSIX shim names the marker with a `#` comment and a Windows shim with `rem`. */
+const MARKERS: readonly string[] = [MARKER, ...LEGACY_MARKERS]
+/** True when a regular file starts with a dsh-superagent marker in its first two lines; a symbolic link, directory, or other non-regular file never counts as written by dsh-superagent. */
 async function written(file: string): Promise<boolean> {
   if (!(await lstat(file)).isFile()) return false
   const head = (await readFile(file, 'utf8')).split('\n', 2)
-  return [MARKER, ...LEGACY_MARKERS].some(marker => head.includes(marker))
+  return MARKERS.some(marker => head.some(line => line.includes(marker)))
 }
 async function own(file: string, text: string, mode = 0o644): Promise<void> {
   let foreign = false
@@ -71,6 +83,34 @@ async function own(file: string, text: string, mode = 0o644): Promise<void> {
   await writeFile(temporary, text, { mode })
   await rename(temporary, file)
 }
+
+/** Windows shells find a command by its extension (`PATHEXT`), so their shims carry `.cmd`; POSIX shells run the extension-less wrapper. */
+const WINDOWS = process.platform === 'win32'
+const shimFile = (name: string): string => WINDOWS ? `${name}.cmd` : name
+/** A literal in a batch file: `%` starts a variable reference, and the redirection and separators would split the command. */
+const batchLiteral = (value: string): string => value.replaceAll('%', '%%').replace(/[\^&|<>()]/g, char => `^${char}`)
+/**
+ * The batch body of a shim that removes its own directory from PATH and runs `program` with the shim's arguments, forwarding
+ * its exit status. A wrapper the program runs by name must reach the real CLI, never this shim again; PATH may spell the
+ * directory with backslashes or forward slashes, and batch's substring substitution ignores case.
+ */
+function runBatch(program: string): string {
+  return [
+    'setlocal EnableDelayedExpansion',
+    'set "SELF=%~dp0"',
+    // `%~dp0` ends in a separator; the substitution below needs the directory without it.
+    'if "%SELF:~-1%"=="\\" set "SELF=%SELF:~0,-1%"',
+    'set "FSELF=%SELF:\\=/%"',
+    'set "PATH=;!PATH!;"',
+    'set "PATH=!PATH:;%SELF%;=;!"',
+    'set "PATH=!PATH:;%FSELF%;=;!"',
+    'set "PATH=!PATH:~1,-1!"',
+    `call "${program.replaceAll('%', '%%')}" %*`,
+    'exit /b %ERRORLEVEL%',
+  ].join('\n')
+}
+/** The batch body of a shim that refuses to run a command, printing `message` to stderr. */
+const failBatch = (message: string): string => `1>&2 echo ${batchLiteral(message)}\nexit /b 1`
 
 /**
  * Atomically writes worker CLI shims and the isolated git configuration file into the state directory, refusing to overwrite foreign files.
@@ -85,18 +125,19 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   // Workers may be running concurrently: write each shim to a temp file and atomically rename it so no command ever resolves past the shim directory.
   const kept = new Set<string>()
   const shim = async (name: string, body: string): Promise<void> => {
-    const temporary = join(dir, `.${name}.${process.pid}.tmp`)
-    await writeFile(temporary, `#!/bin/sh\n${MARKER}\n${body}\n`, { mode: 0o755 })
-    await rename(temporary, join(dir, name))
-    kept.add(name)
+    const file = shimFile(name)
+    const temporary = join(dir, `.${file}.${process.pid}.tmp`)
+    await writeFile(temporary, `${WINDOWS ? '@echo off' : '#!/bin/sh'}\n${WINDOWS ? `rem ${MARKER}` : MARKER}\n${body}\n`, { mode: 0o755 })
+    await rename(temporary, join(dir, file))
+    kept.add(file)
   }
   const withoutShims = [
     `self=${shellQuote(dir)}`, 'rest=', 'IFS=:', 'set -f',
     'for entry in $PATH; do [ "$entry" = "$self" ] || rest="${rest:+$rest:}$entry"; done',
     'set +f', 'unset IFS', 'PATH=$rest', 'export PATH',
   ].join('\n')
-  const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
-  const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
+  const run = (program: string): string => WINDOWS ? runBatch(program) : `${withoutShims}\nexec ${shellQuote(program)} "$@"`
+  const fail = (message: string): string => WINDOWS ? failBatch(message) : `echo ${shellQuote(message)} >&2\nexit 1`
   await shim('gh', run(github.cli))
   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
   for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
@@ -134,12 +175,38 @@ export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[],
   throw new CliError(read(handle.collected.stderr).trim() || `${argv.join(' ')} ${ended}`, undefined, exitCode ?? undefined)
 }
 
+/**
+ * The pairs in `git config -z --show-origin` output, which separates the origin from its value with NUL. `-z` never quotes a
+ * path, but an older git that ignores `-z` prints a C-quoted origin, which `originPath` unquotes.
+ */
+function originEntries(output: string): [string, string][] {
+  const fields = output.split('\0')
+  const entries: [string, string][] = []
+  for (let index = 0; index + 1 < fields.length; index += 2) entries.push([fields[index]!, fields[index + 1]!])
+  return entries
+}
+/** The path a `--show-origin` origin names, or `undefined` when the setting did not come from a file. */
+function originPath(origin: string): string | undefined {
+  if (!origin.startsWith('file:')) return undefined
+  const value = origin.slice('file:'.length)
+  return value.startsWith('"') ? value.slice(1, -1).replace(/\\(.)/g, '$1') : value
+}
+
 /** Verifies that worker git invocations resolve the deployment's GitHub credential helper. */
 export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
   const { github, stateDir } = deployment
   // `-z` separates fields with NUL and never quotes paths.
-  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
-  if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, credentialHelper(github.cli), ''].join('\0')) throw new SetupError('gitTooOld')
+  const output = await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')
+  const entries = originEntries(output)
+  const expected = credentialHelper(github.cli)
+  // The helper must be the one in the worker gitconfig, whose path git prints as it was written: Windows may spell it with
+  // another case or with forward slashes.
+  const matches = entries.length === 1 && (() => {
+    const [origin, value] = entries[0]!
+    const path = originPath(origin)
+    return path !== undefined && sameDirectory(path, workerGitConfig(stateDir)) && value === expected
+  })()
+  if (!matches) throw new SetupError('gitTooOld')
 }
 
 /**

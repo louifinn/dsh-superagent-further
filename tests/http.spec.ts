@@ -96,3 +96,16 @@ it('answers a prompt save that lost a race with 409, and a settings body over 12
     body: { error: `Request exceeds ${128 * 1024} bytes` } })
   expect(saves).toEqual([])
 })
+
+it('acknowledges a shutdown before stopping the runtime, since the process ends after the response', async () => {
+  const stops: string[] = []
+  const call = serve({ requestShutdown: () => { stops.push('shutdown') } })
+  // A shutdown without the panel's same-origin header is refused like every other management request.
+  expect(await call('POST', 'shutdown', undefined, { 'x-orchestrator-request': undefined }))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+  expect(await call('POST', 'shutdown')).toEqual({ status: 200, body: { stopping: true } })
+  // The acknowledgement is written in the route's own tick; stopping starts on the next one so it cannot cut the response off.
+  expect(stops).toEqual([])
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(stops).toEqual(['shutdown'])
+})

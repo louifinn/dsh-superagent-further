@@ -1,7 +1,8 @@
 /** SQLite persistence for domain aggregates, key-value state, settings history, and the channel outbox. */
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { restrictToOwner } from '../infra/acl.ts'
 import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
@@ -59,8 +60,10 @@ export class Store implements Repositories {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     this.read = storeReads(this.db)
+    // Windows ignores the directory mode above, so the directory and the database are given an owner-only ACL; on Unix this is
+    // the 0700 directory and 0600 file mode the rest of the code expects.
+    try { restrictToOwner(dirname(path), true); restrictToOwner(path) } catch (error) { this.report(error) }
     try {
-      chmodSync(path, 0o600)
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
       const version = this.get(KV.store.schema)
       if (version !== undefined && version > SCHEMA_VERSION) throw new Error(`Unsupported orchestrator database version ${version}`)

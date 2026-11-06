@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import { mkdirSync } from 'node:fs'
+import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
@@ -84,11 +85,15 @@ export class Runtime extends Service implements SourceHost {
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
-  constructor(ctx: Context, readonly machine: Machine, restart: () => void) {
+  constructor(ctx: Context, readonly machine: Machine, restart: () => void,
+    /** Ends the host process once a management shutdown has stopped the runtime (injected so tests can observe it). */
+    private readonly exit: (code: number) => void = code => { process.exit(code) }) {
     super(ctx, 'orchestrator')
     const runtime = this
     // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
+    // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
+    try { restrictToOwner(machine.stateDir, true) } catch (error) { ctx.logger.warn('dsh-superagent: %s', String(error)) }
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     const release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
     this.releaseLock = async () => { release() }
@@ -223,10 +228,22 @@ export class Runtime extends Service implements SourceHost {
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
-      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog() }
+      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
+      requestShutdown: () => { runtime.requestShutdown() } }
   }
   /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
   stop(): Promise<void> { return this.stopping ??= this.shutdown() }
+  /**
+   * Stops the runtime and then ends the host process. `scripts/dsh-superagent stop` requests this over the management API
+   * because Windows cannot deliver a graceful signal to a detached process; POSIX stops send SIGINT and never take this path.
+   */
+  requestShutdown(): void {
+    if (this.stopping) return
+    void this.stop().then(() => { this.exit(0) }, (error: unknown) => {
+      this.ctx.logger.error('dsh-superagent shutdown failed: %s', String(error))
+      this.exit(1)
+    })
+  }
   private async shutdown(): Promise<void> {
     this.closingFlag = true; const passes = this.passes.stop(); this.stopped.abort()
     try {

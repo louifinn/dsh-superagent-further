@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Config, executable, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
 import { gitEnv } from './fixtures/git.ts'
 
+const windows = process.platform === 'win32'
 const exec = promisify(execFile)
 let dir: string
 let path: string
@@ -25,12 +26,16 @@ const setupError = (place: string, code: string, values: Record<string, unknown>
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'deployment-'))
   mkdirSync(join(dir, 'bin')); mkdirSync(join(dir, 'state', 'worker-bin'), { recursive: true }); mkdirSync(join(dir, 'widgets', 'src'), { recursive: true })
-  path = [join(dir, 'state-link', 'worker-bin'), `${join(dir, 'state', 'worker-bin')}/`, join(dir, 'bin'), '/usr/bin', '/bin'].join(':')
+  // Both a plain directory and a normalized path with a trailing separator must be skipped as shim directories.
+  path = [join(dir, 'state-link', 'worker-bin'), `${join(dir, 'state', 'worker-bin')}${windows ? '' : '/'}`, join(dir, 'bin'),
+    ...(windows ? [] : ['/usr/bin', '/bin'])].join(delimiter)
   gh(join(dir, 'bin', 'gh'), 'Agent-Bot')
   program(join(dir, 'bin', 'lark-cli'), lark({ appId: 'cli_bot', brand: 'lark', identities: { bot: { status: 'ready' } } }))
   // Stale worker shims with the same binary name must be skipped regardless of PATH normalization or symlinks.
   program(join(dir, 'state', 'worker-bin', 'gh'))
-  symlinkSync(join(dir, 'state'), join(dir, 'state-link'))
+  // A directory junction needs no elevation on Windows; a POSIX symlink points at the same shim directory.
+  if (windows) symlinkSync(join(dir, 'state'), join(dir, 'state-link'), 'junction')
+  else symlinkSync(join(dir, 'state'), join(dir, 'state-link'))
   await exec('git', ['init', '-q', join(dir, 'widgets')], { env: gitEnv() })
   await exec('git', ['-C', join(dir, 'widgets'), 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'], { env: gitEnv() })
 })
@@ -56,7 +61,9 @@ describe('configuration schema', () => {
   })
 })
 
-describe('setup', () => {
+// The stand-ins below are shell scripts, so the real-subprocess variants of these checks run on POSIX only;
+// the Windows equivalents below drive the same resolution logic with a canned probe.
+describe.skipIf(windows)('setup', () => {
   it('reads the repository from the GitHub Source and the accounts from their CLIs, skipping the worker shims', async () => {
     const deployment = await resolveDeployment(machine(), { repository: 'acme/widgets', cli: 'gh' }, probe, path)
     expect(deployment).toMatchObject({ repository: 'acme/widgets', github: { cli: join(dir, 'bin', 'gh'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' } })
@@ -97,5 +104,74 @@ describe('setup', () => {
     await refuses('feishuNoBot')
     program(join(dir, 'bin', 'lark-cli'), 'echo "not configured" >&2; exit 1')
     await refuses('feishuCliFailed', { output: expect.stringContaining('not configured') })
+  })
+})
+
+type Answer = (args: string[], environment?: Record<string, string>) => string
+/** A probe answering by the resolved CLI's file name; the shell-script stand-ins above cannot run on Windows. */
+const canned = (answers: Record<string, Answer>): Probe => async (argv, environment) => {
+  const answer = answers[basename(argv[0]!)]
+  if (!answer) throw new Error(`${basename(argv[0]!)} exited with 1`)
+  return answer(argv.slice(1), environment)
+}
+const signedIn = (push: boolean): Record<string, Answer> => ({
+  gh: args => args.join(' ') === 'api user' ? '{"login":"Agent-Bot","id":7}' : `{"name":"acme/widgets","push":${push}}`,
+})
+const failing: Probe = async () => { throw new Error('exited with 1') }
+
+describe.skipIf(!windows)('setup on Windows', () => {
+  it('resolves the CLI file and reads the repository and account through the probe', async () => {
+    const deployment = await resolveDeployment(machine(), { repository: 'acme/widgets', cli: 'gh' }, canned(signedIn(true)), path)
+    expect(deployment).toMatchObject({ repository: 'acme/widgets', github: { cli: join(dir, 'bin', 'gh'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' } })
+    expect(deployment).not.toHaveProperty('feishu')
+    // A renamed repository is still resolved by its old name; notifications carry GitHub's current full_name.
+    expect((await resolveDeployment(machine(), { repository: 'acme/gadgets', cli: 'gh' }, canned(signedIn(true)), path)).repository).toBe('acme/widgets')
+  })
+  it('finds a bare program and a PATHEXT program on PATH while skipping the worker shims', () => {
+    const shims = join(dir, 'state', 'worker-bin')
+    expect(executable('gh', path, shims)).toBe(join(dir, 'bin', 'gh'))
+    // The same name in the stale shim directory is skipped through the junction that PATH also lists.
+    expect(executable('gh', join(dir, 'state-link', 'worker-bin'))).toBe(join(dir, 'state-link', 'worker-bin', 'gh'))
+    // npm-style CLIs are `.cmd` files on Windows; the PATHEXT search finds them by their command name.
+    writeFileSync(join(dir, 'bin', 'npm-style.cmd'), '@exit /b 0\r\n')
+    expect(executable('npm-style', path)).toBe(join(dir, 'bin', 'npm-style.cmd'))
+    expect(() => executable('nothing-here', join(dir, 'bin'))).toThrow('nothing-here is not an executable file on PATH')
+    expect(() => executable('bin\\gh', join(dir, 'bin'))).toThrow('must be a command name or an absolute path')
+  })
+  it('names what setup needs and where it is set', async () => {
+    const needs = (place: string, code: string, values: Record<string, unknown>, github: unknown, probe: Probe) =>
+      expect(resolveDeployment(machine(), github, probe, path)).rejects.toEqual(setupError(place, code, values))
+    const repository = 'acme/widgets'
+    await needs('github', 'repositoryUnset', {}, { cli: 'gh' }, failing)
+    await needs('github', 'agentCliUnset', {}, { repository }, failing)
+    await needs('github', 'agentCliMissing', { output: `${join(dir, 'missing')} is not an executable file` }, { repository, cli: join(dir, 'missing') }, failing)
+    await needs('github', 'agentCliSignedOut', {}, { repository, cli: 'gh' }, failing)
+    await needs('github', 'repositoryReadOnly', { account: 'Agent-Bot', repository }, { repository, cli: 'gh' }, canned(signedIn(false)))
+    const unreadable: Probe = async argv => {
+      if (argv.slice(1).join(' ') === 'api user') return '{"login":"Agent-Bot","id":7}'
+      throw new Error('gh: Not Found (HTTP 404)')
+    }
+    await needs('github', 'repositoryUnreadable', { account: 'Agent-Bot', repository, output: expect.stringContaining('HTTP 404') }, { repository, cli: 'gh' }, unreadable)
+    await needs('github', 'agentCliNoAccount', {}, { repository, cli: 'gh' }, async () => '{}')
+  })
+  it('reads the Feishu bot through environment overrides and refuses a non-bot identity', async () => {
+    const environments: (Record<string, string> | undefined)[] = []
+    const answers = (mode: string, status = 'ready'): Probe => canned({
+      'lark-cli': (args, environment) => {
+        environments.push(environment)
+        const line = args.join(' ')
+        if (line === 'auth status') return JSON.stringify({ appId: 'cli_bot', brand: 'lark', identities: { bot: { status } } })
+        if (line === 'config strict-mode') return `strict-mode: ${mode} (source: profile)`
+        if (line.startsWith('api GET /open-apis/bot/v3/info')) return JSON.stringify({ bot: { open_id: 'ou_bot', app_name: 'Widgets Bot' }, code: 0 })
+        throw new Error(`unexpected ${line}`)
+      },
+    })
+    expect(await resolveFeishuBot(machine(), {}, answers('bot'), path)).toBeUndefined()
+    expect(await resolveFeishuBot(machine(), { cli: 'lark-cli' }, answers('bot'), path))
+      .toEqual({ cli: join(dir, 'bin', 'lark-cli'), appId: 'cli_bot', brand: 'lark', botId: 'ou_bot', name: 'Widgets Bot' })
+    // The notifier overrides travel as subprocess environment entries, not as a POSIX `env` command prefix.
+    expect(environments.at(-1)).toMatchObject({ LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' })
+    await expect(resolveFeishuBot(machine(), { cli: 'lark-cli' }, answers('off'), path)).rejects.toEqual(setupError('feishu', 'feishuUserIdentity', { mode: 'off' }))
+    await expect(resolveFeishuBot(machine(), { cli: 'lark-cli' }, answers('bot', 'missing'), path)).rejects.toEqual(setupError('feishu', 'feishuBotNotReady', { app: 'cli_bot', status: 'missing' }))
   })
 })

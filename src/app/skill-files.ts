@@ -1,12 +1,16 @@
 /** Loads packaged built-in skill definitions and prompt templates from disk. */
 import { readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { packagePath } from '../infra/paths.ts'
 /**
  * Reads a packaged text file with normalized Unix line endings.
+ * A caller may pass an already absolute path, which is read as it is instead of being joined under the package root
+ * (on Windows a path on another drive cannot be made relative to the package, so callers receive an absolute one).
  * @throws Naming the file when it is missing or whitespace-only, because `dsh-superagent` cannot load without it.
  */
 function packaged(...parts: string[]): { path: string; text: string } {
-  const path = packagePath(...parts)
+  const absolute = parts.findIndex(part => isAbsolute(part))
+  const path = absolute < 0 ? packagePath(...parts) : join(...parts.slice(absolute))
   let text: string
   try { text = readFileSync(path, 'utf8').replaceAll('\r\n', '\n') }
   catch (error) {

@@ -18,9 +18,11 @@ Opening a blank managed Session in the Web UI can select the profile's default p
 
 Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
 
+On Windows, POSIX file modes restrict nothing, so the state directory and the database are given an ACL that grants only the operator's account (`icacls`), the Windows equivalent of the `0700` directory and `0600` file used elsewhere. If Windows refuses that change, the log says so and the files keep the permissions they inherit.
+
 ## Prerequisites
 
-- Node.js 22.19+ or 24+, pnpm, git 2.32+, Python 3.8+ and tmux
+- Node.js 22.19+ or 24+, pnpm and git 2.32+. macOS, Linux and Windows 10/11 are supported: the service script is plain Node, so Python and tmux are no longer needed. On Windows run it as `scripts\dsh-superagent.cmd` (the `.cmd` wrapper runs the same script)
 - GitHub CLI (`gh`) 2.48 or later. Source CLI fields must point to `gh` or `lark-cli` wrappers; the host relies on their subcommands and output formats.
 - A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
 - A model provider configured for DeepSeek Harness. dsh-superagent uses the profile's default model unless the Eval or Execution settings name another.
@@ -46,6 +48,19 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
    Sign in as the agent account; the last command prints its login. dsh-superagent reads the login the same way.
 
+   On Windows, write the same wrapper as a batch file, `%USERPROFILE%\.local\bin\gh-agent.cmd`, and sign it in from `cmd`:
+
+   ```bat
+   @echo off
+   set "GH_CONFIG_DIR=%USERPROFILE%\.config\gh-agent"
+   gh %*
+   ```
+
+   ```bat
+   gh-agent.cmd auth login
+   gh-agent.cmd api user --jq .login
+   ```
+
 ### Feishu bot (optional)
 
 1. Create a self-built app with the bot capability. Grant it the permissions to receive message events, read and send chat messages, and read chat members, then publish the app version.
@@ -64,6 +79,19 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
    The first command reads the app secret from standard input. Use a separate configuration directory: `lark-cli` allows one profile per app id, and your personal configuration may already contain a user login for that app.
 
+   On Windows, set the variables in `cmd` or PowerShell and write the wrapper as `%USERPROFILE%\.local\bin\lark-bot.cmd`:
+
+   ```bat
+   set "LARKSUITE_CLI_CONFIG_DIR=%USERPROFILE%\.lark-cli-dsh-superagent"
+   lark-cli config init --app-id <cli_…> --app-secret-stdin
+   lark-cli config strict-mode bot --global
+
+   :: lark-bot.cmd
+   @echo off
+   set "LARKSUITE_CLI_CONFIG_DIR=%USERPROFILE%\.lark-cli-dsh-superagent"
+   lark-cli %*
+   ```
+
    The host refuses a CLI that can act as a user. It reads the app id, Feishu/Lark brand and bot `open_id` from the bot configuration.
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
@@ -80,7 +108,9 @@ dsh superagent --from-default-profile web --dump-config > /dev/null
 dsh plugin --profile superagent add "link:$PWD"
 ```
 
-The pinned version above is public; other versions must satisfy `engines.dsh` in `package.json`.
+The pinned version above is public; other versions must satisfy `engines.dsh` in `package.json`. If DeepSeek Harness is already installed, as with the desktop app, skip the first line and use the `dsh` it puts on `PATH`.
+
+On Windows, run the same commands from PowerShell or `cmd`: create the profile with `dsh superagent --from-default-profile web --dump-config > $null` and install the bundle with the checkout's path, for example `dsh plugin --profile superagent add "link:C:/src/dsh-superagent"`. Only the executable names differ; the profile and patch files are the same.
 
 The fourth command creates `~/.dsh/profiles/superagent` from the DeepSeek Harness Web template. The fifth installs this bundle. Set `DSH_HOME` to relocate the default `~/.dsh` directory.
 
@@ -104,9 +134,11 @@ scripts/dsh-superagent start
 scripts/dsh-superagent status
 ```
 
-`start` runs `dsh --profile superagent` in tmux session `dsh-superagent`, or `dsh-<profile>` for another profile. It waits up to one minute for the runtime to become ready or report a setup requirement. On a first run it prints the missing setup information. It refuses duplicate instances, including ones started outside this script.
+On Windows the same commands are `scripts\dsh-superagent.cmd start` and `scripts\dsh-superagent.cmd status`; the wrapper takes the same arguments and returns the same exit codes.
 
-`stop` and `restart` request graceful shutdown and wait up to five minutes for Executors. They never force-kill the process or touch other tmux sessions.
+`start` launches `dsh --profile superagent --no-open` in the background, with its output in the log file named below, and returns when the runtime is ready or reports a setup requirement. No terminal or `tmux` session stays attached, and the process survives closing the terminal. It waits up to one minute, prints the missing setup information on a first run, and refuses duplicate instances, including ones started outside this script.
+
+`stop` and `restart` ask the running instance to stop over the management API (`POST /orchestrator/api/shutdown` with the panel's `x-orchestrator-request: 1` header) and wait up to five minutes for Executor Sessions. When that route is missing, as with an older build, `stop` falls back to `SIGINT` on macOS and Linux and to ending the process tree with `taskkill` on Windows. They never touch other DeepSeek Harness profiles. Because `start` detaches the service, closing the terminal does not stop it; a service that dies unexpectedly is recovered by the hourly check below or by `start`.
 
 `status` prints process ids, health and setup problems. For a different profile or port, use `--profile` and `--url`, or set `DSH_SUPERAGENT_PROFILE` and `DSH_SUPERAGENT_URL`.
 
@@ -138,19 +170,25 @@ Create the hourly check in the DeepSeek Harness profile you normally use, not in
 Check dsh-superagent: run `scripts/dsh-superagent --profile superagent status` in <checkout>. Exit 0: do nothing and say nothing. Exit 2: do not restart; tell me each part under `errors` with its detail, unless you already told me about the same ones. Exit 3: do not restart; tell me what `setup` says setup needs, unless you already told me. If it reports manually_stopped: true, leave it stopped. Otherwise (exit 1) run `scripts/dsh-superagent --profile superagent --respect-stop restart`, which exits the same way: 0 means it recovered, so say nothing; 2 and 3 are reported as above; if it exits 1 or fails otherwise, read the newest .artifacts/dsh-superagent-superagent-*.log and the Troubleshooting section of docs/006-deployment.md, fix what you can, and tell me what was wrong and what you did.
 ```
 
-`--respect-stop` preserves an intentional stop. Only `stop` writes the marker; `start` clears it. `restart` writes no marker, so the check can recover a restart whose shutdown timed out.
+`--respect-stop` preserves an intentional stop. Only `stop` writes the marker; `start` clears it. `restart` writes no marker, so the check can recover a restart whose shutdown timed out. On Windows, use `scripts\dsh-superagent.cmd` in the same prompt.
 
 ## Settings
 
 Setup must succeed before polling or work starts. Overview lists missing requirements and links to their settings. A settings change runs setup again. If you fix something outside the application, such as CLI authentication, choose **Check again**.
 
-1. **Sources.** Set the GitHub repository (`owner/name`) and agent CLI, for example `/home/me/.local/bin/gh-agent`. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
+1. **Sources.** Set the GitHub repository (`owner/name`) and agent CLI, for example `/home/me/.local/bin/gh-agent` on macOS and Linux, or `C:\Users\me\.local\bin\gh-agent.cmd` on Windows. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
 2. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
 3. **Execution.** The directory root and a prepare command. To give each Ticket a checkout of the repository:
 
    ```sh
    git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
    git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"
+   ```
+
+   On Windows the prepare command runs in PowerShell, so write it that way; this is one line because the command is passed as `-Command`:
+
+   ```powershell
+   git -C C:\src\widgets fetch --no-tags "https://github.com/$env:DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "$($env:DSH_SUPERAGENT_GITHUB_PR_HEAD ?? 'HEAD'):refs/dsh-superagent/$env:DSH_SUPERAGENT_TICKET"; git -C C:\src\widgets worktree add -b "agent/$env:DSH_SUPERAGENT_NAME" "$env:DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$env:DSH_SUPERAGENT_TICKET"
    ```
 
    List personal CLIs, such as one signed in to your own account, as blocked commands.
@@ -174,6 +212,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
 | `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
+| `POST shutdown` | Stops the runtime and ends the host process, after answering `stopping: true`. The service script uses it for a graceful stop, because Windows cannot deliver a signal to a detached process |
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
@@ -235,7 +274,7 @@ From an allowed GitHub account, open an Issue or post a comment containing `@<ag
 1. Wait until no Executor is in the middle of a turn.
 2. Back up `<stateDir>/orchestrator.sqlite`.
 3. Run `git pull && pnpm install && pnpm build`.
-4. Run `scripts/dsh-superagent restart` and inspect its status.
+4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows) and inspect its status.
 
 A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading.
 

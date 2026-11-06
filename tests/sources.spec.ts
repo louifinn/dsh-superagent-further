@@ -22,6 +22,24 @@ import { SetupError, type SetupProblem } from '../src/setup.ts'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SpawnOptions } from 'node:child_process'
+
+/**
+ * Redirects only the spawn of the fake Feishu bot CLI to a Node script that this file writes on Windows.
+ * Windows cannot execute the extensionless `#!/bin/sh` fake (spawn `ENOENT`) and refuses `.cmd` files without a shell
+ * (spawn `EINVAL`), while `process.execPath` plus a script path starts the very same fake program as a real process.
+ */
+const fakeCli = vi.hoisted(() => ({ path: '', script: '' }))
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (command: string, args: readonly string[] = [], options?: SpawnOptions) =>
+      process.platform === 'win32' && command === fakeCli.path
+        ? actual.spawn(process.execPath, [fakeCli.script, ...args], options ?? {})
+        : actual.spawn(command, [...args], options ?? {}),
+  }
+})
 
 const MEMBER = 'ou_alice'
 function host(overrides: Partial<SourceContextDeps> = {}) {
@@ -1030,21 +1048,68 @@ describe('feishu event consumer', () => {
   let dir: string
   let controller: AbortController
   let running: Promise<unknown> | undefined
+  const stores: Store[] = []
   // The fake CLI is a real process, which starts slower while the whole suite runs.
   const until = { timeout: 10_000 }
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'feishu-consumer-')); controller = new AbortController() })
+  /** Removes a temp directory, retrying while Windows still holds a file handle (closing SQLite and reaping a child are asynchronous there). */
+  async function removeDirectory(path: string): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try { rmSync(path, { recursive: true, force: true }); return }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (attempt >= 20 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY')) throw error
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+  }
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'feishu-consumer-')); controller = new AbortController(); stores.length = 0 })
   afterEach(async () => {
     controller.abort()
     await running
     vi.useRealTimers()
-    rmSync(dir, { recursive: true, force: true })
+    // A test that failed before `store.close()` leaves its SQLite handle open, and Windows then refuses to delete the
+    // directory; close whatever the test did not and let the retry wait for the child processes to finish exiting.
+    for (const store of stores.splice(0)) { try { store.close() } catch { /* Closed by the test already. */ } }
+    await removeDirectory(dir)
   })
+  /**
+   * The fake bot CLI as a Node program: the same behaviour as the POSIX shell script below, without a shebang Windows
+   * cannot execute. `runs` counts starts, `pid` names the latest process, and each mode prints what the consumer reads.
+   */
+  function nodeCli(mode: 'never' | 'warn' | 'ready' | 'flaky' | 'events' | 'late'): string {
+    return `const { existsSync, readFileSync, writeFileSync } = require('node:fs')
+const { join } = require('node:path')
+const dir = ${JSON.stringify(dir)}
+const keep = () => setInterval(() => {}, 1_000_000)
+if (process.argv[2] !== 'event') process.stdout.write('{"ok":true,"data":{}}\\n')
+else {
+  const n = (existsSync(join(dir, 'runs')) ? Number(readFileSync(join(dir, 'runs'), 'utf8')) : 0) + 1
+  writeFileSync(join(dir, 'runs'), String(n)); writeFileSync(join(dir, 'pid'), String(process.pid))
+  const ready = () => process.stderr.write('[event] ready\\n')
+  switch (${JSON.stringify(mode)}) {
+    case 'never': keep(); break
+    case 'warn': ready(); process.stderr.write('WARN the connection was reset\\n'); keep(); break
+    case 'ready': ready(); keep(); break
+    case 'flaky': ready(); if (n > 1) keep(); else process.exitCode = 1; break
+    case 'events': ready(); process.stdout.write(readFileSync(join(dir, 'events'))); writeFileSync(join(dir, 'printed'), ''); keep(); break
+    case 'late': ready(); setTimeout(() => { process.stdout.write(readFileSync(join(dir, 'events'))); writeFileSync(join(dir, 'printed'), '') }, 1000); keep(); break
+  }
+}
+`
+  }
   /**
    * A bot CLI whose `event consume` behaves as `mode` says: `never` gets ready, `warn` warns once ready, `ready` stays up,
    * and `flaky` exits after its first ready. It records each run and the PID of the latest.
    */
   function cli(mode: 'never' | 'warn' | 'ready' | 'flaky' | 'events' | 'late'): string {
     const path = join(dir, 'lark-bot')
+    if (process.platform === 'win32') {
+      // No shebang on Windows: the same fake runs under `process.execPath`, and the spawn mock at the top of this file
+      // redirects the product's spawn of this path to `node <script> event consume ...`.
+      fakeCli.path = path; fakeCli.script = join(dir, 'lark-bot.cjs')
+      writeFileSync(fakeCli.script, nodeCli(mode))
+      return path
+    }
     writeFileSync(path, `#!/bin/sh
   [ "$1" = event ] || { echo '{"ok":true,"data":{}}'; exit 0; }
   n=$(cat '${dir}/runs' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${dir}/runs'; echo $$ > '${dir}/pid'
@@ -1064,6 +1129,7 @@ describe('feishu event consumer', () => {
   /** The Feishu Source's context, on a fresh Store whose Feishu Source is on, with `cli` as the bot CLI. */
   function consumerSource(path: string, config: Record<string, unknown> = { chats: [] }) {
     const store = new Store(join(dir, 'db.sqlite'))
+    stores.push(store)
     store.saveSettings(SettingsSchema.parse({ sources: { feishu: { enabled: true, config } } }))
     const board = new HealthBoard()
     const sources = new SourceRegistry(() => store.settings(), board)

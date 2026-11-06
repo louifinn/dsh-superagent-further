@@ -18,3 +18,10 @@ export function packageRoot(): string {
   throw new Error('dsh-superagent package root not found')
 }
 export const packagePath = (...parts: string[]): string => join(packageRoot(), ...parts)
+/**
+ * Matches an absolute path in the host platform's syntax: a root on POSIX, a drive (`C:\`, `C:/`) or a rooted/UNC path on Windows.
+ * Schemastery validates strings with a regular expression, and `path.isAbsolute` would also accept the other platform's syntax,
+ * so the rule is written per platform and shared by the configuration schemas.
+ */
+export const absolutePath: RegExp = process.platform === 'win32' ? /^(?:[A-Za-z]:[\\/]|[\\/])/ : /^\//
+export const isAbsolutePath = (value: string): boolean => absolutePath.test(value)

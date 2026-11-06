@@ -246,7 +246,15 @@ it('lists in the same order in SQLite and in memory, and undoes a failed nested 
   store.close()
 })
 
-it('creates the state directory for its owner alone, and the database readable by its owner alone', () => {
+it('creates the state directory and the database before the first use', () => {
+  const path = join(directory, 'state', 'orchestrator.sqlite')
+  new Store(path).close()
+  expect([statSync(dirname(path)).isDirectory(), statSync(path).isFile()]).toEqual([true, true])
+})
+it.skipIf(process.platform === 'win32')('creates the state directory for its owner alone, and the database readable by its owner alone', () => {
+  // POSIX mode bits, which `Store` sets through `restrictToOwner`. Windows ignores them: `mkdirSync({ mode })` and
+  // `chmodSync(0o600)` still leave `statSync().mode` at 0o666, and access is decided by the directory's ACL instead.
+  // `restrictToOwner` writes an owner-only `icacls` ACL there, asserted against a real `Store` in `tests/acl.spec.ts`.
   const path = join(directory, 'state', 'orchestrator.sqlite')
   new Store(path).close()
   expect([statSync(dirname(path)).mode & 0o777, statSync(path).mode & 0o777]).toEqual([0o700, 0o600])

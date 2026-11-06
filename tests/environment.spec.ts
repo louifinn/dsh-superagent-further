@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SENSITIVE_ENV_PATTERN, type SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
@@ -14,8 +14,29 @@ import { gitEnv } from './fixtures/git.ts'
 // Git and shell subprocesses can exceed the 5s default timeout when the test suite runs in parallel.
 vi.setConfig({ testTimeout: 30_000 })
 const exec = promisify(execFile)
+const WINDOWS = process.platform === 'win32'
 let dir: string
+/** Writes a POSIX shell script, as git runs its `!` helpers with its own `sh` and `chmod` has meaning. */
 const program = (path: string, body: string): string => { writeFileSync(path, `#!/bin/sh\n${body}\n`); chmodSync(path, 0o755); return path }
+/** Writes a test CLI the shims run: a shell script on POSIX and a `.cmd` batch file on Windows, whose shells find commands by extension. */
+const cli = (path: string, body: string): string => WINDOWS
+  ? (writeFileSync(`${path}.cmd`, `@echo off\n${body}\n`), `${path}.cmd`)
+  : program(path, body)
+/** The name `writeEnvironment` gives a shim: `.cmd` on Windows, the bare command name elsewhere. */
+const shimFile = (name: string): string => WINDOWS ? `${name}.cmd` : name
+const shim = (name: string): string => join(workerBin(dir), shimFile(name))
+/** A command's arguments as one batch-file command line; the tests pass arguments without spaces or quoting. */
+const batchArguments = (command: string, args: readonly string[]): string => `"${command}"${args.map(arg => ` ${arg}`).join('')}`
+/** Runs a command as a worker's shell does: through `cmd.exe` on Windows, where a `.cmd` shim runs, and directly on POSIX. */
+const shellRun = (command: string, args: readonly string[], options: { env?: Record<string, string>; timeout?: number } = {}) => WINDOWS
+  // cmd's `/c` keeps exactly two quotes around a path that contains spaces when the rest of the line is passed verbatim.
+  ? exec(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', batchArguments(command, args)], { ...options, windowsVerbatimArguments: true })
+  : exec(command, args, options)
+/** The exit status and trimmed stderr of a worker command that fails, as its shell reports them. */
+const failure = async (name: string, args: string[]): Promise<{ code: number | undefined; stderr: string }> => {
+  const error = await shellRun(shim(name), args).catch((caught: unknown) => caught) as { code?: number; stderr?: string }
+  return { code: error.code, stderr: (error.stderr ?? '').trim() }
+}
 /** Worker shell environment after DSH strips credential-shaped variables. */
 const workerEnv = (env: Record<string, string | undefined>): Record<string, string> =>
   Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined && !SENSITIVE_ENV_PATTERN.test(entry[0])))
@@ -24,37 +45,42 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
 describe('worker shims', () => {
   it('run a wrapper that calls `gh` by name without reaching the shim again, and keep the caller\'s other PATH entries', async () => {
-    program(join(dir, 'real', 'gh'), 'echo "{\\"login\\":\\"agent-bot\\",\\"config\\":\\"$GH_CONFIG_DIR\\",\\"path\\":\\"$PATH\\"}"')
-    const wrapper = program(join(dir, 'gh-agent'), `GH_CONFIG_DIR=${dir}/agent-config exec gh "$@"`)
+    cli(join(dir, 'real', 'gh'), WINDOWS
+      ? 'echo login=agent-bot\necho config=%GH_CONFIG_DIR%\necho path=%PATH%'
+      : 'echo login=agent-bot\necho config=$GH_CONFIG_DIR\necho path=$PATH')
+    const wrapper = cli(join(dir, 'gh-agent'), WINDOWS
+      ? `set "GH_CONFIG_DIR=${dir}\\agent-config"\ncall gh %*`
+      : `GH_CONFIG_DIR=${dir}/agent-config exec gh "$@"`)
     await writeEnvironment(testDeployment({ stateDir: dir, github: { ...testDeployment().github, cli: wrapper }, feishu: undefined }), [])
     const bin = workerBin(dir)
-    const path = [bin, join(dir, 'venv'), join(dir, 'real'), '/usr/bin', '/bin'].join(':')
-    const { stdout } = await exec('gh', ['api', 'user'], { env: { PATH: path }, timeout: 10_000 })
-    expect(JSON.parse(stdout)).toEqual({ login: 'agent-bot', config: `${dir}/agent-config`, path: [join(dir, 'venv'), join(dir, 'real'), '/usr/bin', '/bin'].join(':') })
+    const path = [bin, join(dir, 'venv'), join(dir, 'real'), '/usr/bin', '/bin'].join(delimiter)
+    const { stdout } = await shellRun(shim('gh'), ['api', 'user'], { env: { PATH: path }, timeout: 10_000 })
+    expect(stdout.trim().split(/\r?\n/)).toEqual(['login=agent-bot', `config=${join(dir, 'agent-config')}`,
+      `path=${[join(dir, 'venv'), join(dir, 'real'), '/usr/bin', '/bin'].join(delimiter)}`])
   })
   it('make `lark-cli` fail without a Feishu bot and each blocked command fail with the agent\'s login', async () => {
     await writeEnvironment(testDeployment({ stateDir: dir, feishu: undefined }), ['personal-gh'])
-    const bin = workerBin(dir)
-    await expect(exec(join(bin, 'lark-cli'), ['im', '+chat-list'])).rejects.toMatchObject({ code: 1, stderr: 'lark-cli is unavailable: this installation has no Feishu bot.\n' })
-    await expect(exec(join(bin, 'personal-gh'), [])).rejects.toMatchObject({ code: 1, stderr: 'personal-gh is blocked in this installation; use gh, which acts as agent-bot.\n' })
+    expect(await failure('lark-cli', ['im', '+chat-list'])).toEqual({ code: 1, stderr: 'lark-cli is unavailable: this installation has no Feishu bot.' })
+    expect(await failure('personal-gh', [])).toEqual({ code: 1, stderr: 'personal-gh is blocked in this installation; use gh, which acts as agent-bot.' })
   })
   it('keep `gh` and `lark-cli` working, and shim no `git`, when the blocked commands name the commands workers need', async () => {
-    const gh = program(join(dir, 'gh-agent'), 'echo gh "$@"'), lark = program(join(dir, 'lark-bot'), 'echo lark "$@"')
+    const gh = cli(join(dir, 'gh-agent'), WINDOWS ? 'echo gh %*' : 'echo gh "$@"')
+    const lark = cli(join(dir, 'lark-bot'), WINDOWS ? 'echo lark %*' : 'echo lark "$@"')
     const base = testDeployment()
     await writeEnvironment(testDeployment({ stateDir: dir, github: { ...base.github, cli: gh }, feishu: { ...base.feishu!, cli: lark } }), ['gh', 'git', 'lark-cli'])
-    const bin = workerBin(dir)
-    expect([(await exec(join(bin, 'gh'), ['api', 'user'])).stdout, (await exec(join(bin, 'lark-cli'), ['im'])).stdout]).toEqual(['gh api user\n', 'lark im\n'])
-    expect(readdirSync(bin)).not.toContain('git')
+    const out = async (name: string, args: string[]) => (await shellRun(shim(name), args)).stdout.trim()
+    expect([await out('gh', ['api', 'user']), await out('lark-cli', ['im'])]).toEqual(['gh api user', 'lark im'])
+    expect(readdirSync(workerBin(dir)).map(name => name.replace(/\.cmd$/, ''))).not.toContain('git')
   })
   it('replace only what dsh-superagent wrote and refuse anything else in its places', async () => {
     await writeEnvironment(testDeployment({ stateDir: dir }), ['old-cli'])
     await writeEnvironment(testDeployment({ stateDir: dir }), [])
-    expect(readdirSync(workerBin(dir)).sort()).toEqual(['gh', 'lark-cli'])
+    expect(readdirSync(workerBin(dir)).sort()).toEqual(['gh', 'lark-cli'].map(shimFile).sort())
     // A file that merely contains the marker on a later line, a symlink to a shim, and a foreign gitconfig are all rejected.
-    writeFileSync(join(workerBin(dir), 'notes'), `notes\nmore\n${readFileSync(join(workerBin(dir), 'gh'), 'utf8').split('\n')[1]}\n`)
+    writeFileSync(join(workerBin(dir), 'notes'), `notes\nmore\n${readFileSync(shim('gh'), 'utf8').split('\n')[1]}\n`)
     await expect(writeEnvironment(testDeployment({ stateDir: dir }), [])).rejects.toThrow(`${join(workerBin(dir), 'notes')} was not written by dsh-superagent`)
     rmSync(join(workerBin(dir), 'notes'))
-    symlinkSync(join(workerBin(dir), 'gh'), join(workerBin(dir), 'link'))
+    symlinkSync(shim('gh'), join(workerBin(dir), 'link'))
     await expect(writeEnvironment(testDeployment({ stateDir: dir }), [])).rejects.toThrow('link was not written by dsh-superagent')
     rmSync(join(workerBin(dir), 'link'))
     writeFileSync(workerGitConfig(dir), '[user]\n\tname = someone\n')
@@ -64,9 +90,9 @@ describe('worker shims', () => {
   it('replaces the files it wrote under the project\'s earlier names', async () => {
     await writeEnvironment(testDeployment({ stateDir: dir }), ['old-cli', 'older-cli'])
     const legacy = (file: string, name: string) => writeFileSync(file, readFileSync(file, 'utf8').replace('Written by dsh-superagent', `Written by ${name}`))
-    legacy(join(workerBin(dir), 'old-cli'), 'dsh-tag'); legacy(join(workerBin(dir), 'older-cli'), 'dsh-freelancer'); legacy(workerGitConfig(dir), 'dsh-go')
+    legacy(shim('old-cli'), 'dsh-tag'); legacy(shim('older-cli'), 'dsh-freelancer'); legacy(workerGitConfig(dir), 'dsh-go')
     await writeEnvironment(testDeployment({ stateDir: dir }), [])
-    expect(readdirSync(workerBin(dir)).sort()).toEqual(['gh', 'lark-cli'])
+    expect(readdirSync(workerBin(dir)).sort()).toEqual(['gh', 'lark-cli'].map(shimFile).sort())
     expect(readFileSync(workerGitConfig(dir), 'utf8')).toContain('Written by dsh-superagent')
   })
 })
@@ -84,7 +110,9 @@ describe('agent git configuration', () => {
     await git('init', '-q', 'repo')
     await exec('git', ['-C', 'repo', 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'], { cwd: dir, env })
     expect(await git('-C', 'repo', 'remote', 'get-url', '--push', 'origin')).toBe('https://github.com/acme/widgets.git')
-    expect(await git('config', '--show-origin', '--get-all', 'credential.https://github.com.helper')).toBe(`file:${workerGitConfig(dir)}\t${credentialHelper('/opt/agent tools/gh')}`)
+    // `-z` prints the origin path without quoting it, which a Windows path with backslashes would otherwise be.
+    const helpers = await exec('git', ['config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], { cwd: dir, env })
+    expect(helpers.stdout.split('\0')).toEqual([`file:${workerGitConfig(dir)}`, credentialHelper('/opt/agent tools/gh'), ''])
     expect(await git('config', '--get-all', 'credential.helper')).toBe('')
     await expect(git('config', 'commit.gpgsign')).rejects.toThrow()
     await expect(git('config', 'core.abbrev')).rejects.toThrow()
@@ -115,7 +143,10 @@ it('removes every spelling of a directory from PATH and keeps the other entries'
   mkdirSync(join(dir, 'state', 'worker-bin'), { recursive: true })
   symlinkSync(join(dir, 'state'), join(dir, 'link'))
   const bin = join(dir, 'state', 'worker-bin')
-  expect(withoutDirectory([`${bin}/`, join(dir, 'link', 'worker-bin'), '/usr/bin', 'node_modules/.bin'].join(':'), bin)).toBe('/usr/bin:node_modules/.bin')
+  // The shim directory spelled with a trailing separator, through a symlink, and (on Windows) with forward slashes.
+  const spellings = [`${bin}/`, join(dir, 'link', 'worker-bin'), ...(WINDOWS ? [bin.replaceAll('\\', '/')] : [])]
+  const entries = [...spellings, '/usr/bin', 'node_modules/.bin']
+  expect(withoutDirectory(entries.join(delimiter), bin)).toBe(['/usr/bin', 'node_modules/.bin'].join(delimiter))
 })
 
 /** Minimal SubprocessRuntime backed by child_process.spawn with an isolated global git config. */
@@ -154,7 +185,10 @@ describe('ticket directory check', () => {
     await expect(check('repo')).rejects.toThrow(/bad config/)
   })
   it('reports a failed command\'s exit status', async () => {
-    const failing = ['sh', '-c', 'echo nope >&2; exit 3']
+    // The platform shell: POSIX shell status and stderr, and the batch equivalent on Windows.
+    const failing = WINDOWS
+      ? [process.env.ComSpec ?? 'cmd.exe', '/d', '/s', '/c', '1>&2 echo nope & exit /b 3']
+      : ['sh', '-c', 'echo nope >&2; exit 3']
     const error = await runAsWorker(subprocess(join(dir, 'global')), failing, dir, signal).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(CliError)
     expect(error).toMatchObject({ message: 'nope', exitCode: 3 })

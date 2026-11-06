@@ -51,6 +51,8 @@ export interface HttpHost {
   links(): LinkTarget
   ticketEnvironment(ticket: Ticket): Variable[]
   checkSetup(): void
+  /** Stop the runtime, then end the host process; requested by the service script where no graceful signal exists. */
+  requestShutdown(): void
   requestPass(): void
   models(): Promise<ModelCatalog>
 }
@@ -203,6 +205,9 @@ function routes(runtime: HttpHost): Routes {
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
     'POST policy-sync/:id': async ({ params }) => ({ policy: await runtime.settings.sync(params.id) }),
     'POST setup/check': () => { runtime.checkSetup(); return { restarting: true } },
+    // Acknowledge before stopping: the acknowledgement must be written to the socket before the process ends, which is how
+    // `scripts/dsh-superagent stop` ends a detached service on Windows where no graceful signal can be delivered.
+    'POST shutdown': () => { setTimeout(() => { runtime.requestShutdown() }, 0); return { stopping: true } },
     'GET models': () => runtime.models(),
     'GET prompts': ({ query }) => { const { revision, offset } = PromptsQuery.parse(query); return promptsView(runtime, revision, offset) },
     'PUT prompts': async input => {

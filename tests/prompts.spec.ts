@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
 import { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
@@ -59,8 +59,9 @@ it('assembles every role from fixed sections around the team sections, whatever 
 
 it('reads a prompt file whatever its line ends and blank lines, and names a missing or empty one', () => {
   const dir = mkdtempSync(join(tmpdir(), 'prompt-file-'))
-  // promptFile resolves paths relative to prompts/; use a relative path to reach the temp dir.
-  const name = (file: string) => relative(packagePath('prompts'), join(dir, file))
+  // An absolute path names the file itself. On Windows a temp directory can sit on another drive than the package,
+  // so a path relative to `prompts/` cannot always be expressed.
+  const name = (file: string): string => join(dir, file)
   try {
     writeFileSync(join(dir, 'crlf.md'), 'One.\r\nTwo. \r\n \t\r\n\r\nThree.\r\n')
     writeFileSync(join(dir, 'blank.md'), ' \n\t\n')
@@ -68,6 +69,14 @@ it('reads a prompt file whatever its line ends and blank lines, and names a miss
     expect(() => promptFile(name('blank'))).toThrow(`Empty packaged file: ${join(dir, 'blank.md')}`)
     expect(() => promptFile(name('absent'))).toThrow(`Missing packaged file: ${join(dir, 'absent.md')}`)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it.runIf(process.platform === 'win32')('reads an absolute prompt path on a drive of its own, instead of joining it under prompts/', () => {
+  // A drive-letter path is absolute on Windows even when no relative form exists (two drives share no prefix);
+  // `promptFile` must open it as given rather than composing `prompts\<drive>:\...`.
+  const drive = packagePath('prompts').slice(0, 2).toLowerCase()
+  const path = `${drive === 'z:' ? 'y' : 'z'}:\\dsh-superagent-missing\\prompt`
+  expect(() => promptFile(path)).toThrow(`Missing packaged file: ${path}.md`)
 })
 
 it('leaves the UI before-and-after evidence to the delivery requirements, which a team can change', () => {
