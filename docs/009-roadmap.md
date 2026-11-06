@@ -54,7 +54,7 @@ The Sprint 1 scope. Everything here blocks leaving the agent unattended.
 - [x] `origin` added, `main` pushed, `check.yml` green on Linux, macOS and Windows with Node 22 and 24.
 - [x] One-host switching documented and enforced by a clear failure message from both hosts.
 - [x] 006 pins the tested DSH version; `scripts/verify-install` exists and passes in application mode and in service mode.
-- [ ] `pnpm check` green on Windows, and both real end-to-end paths still run after the changes.
+- [x] `pnpm check` green on Windows, and both real end-to-end paths still run after the changes.
 
 ## Open questions
 
