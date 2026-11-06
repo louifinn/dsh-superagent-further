@@ -132,6 +132,8 @@ Add the machine configuration to that profile's own `cordis.patch.yml` instead o
 
 A profile has one host at a time. Point the application and `scripts/dsh-superagent` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
 
+The orchestrator applies the worker environment to its whole host process: `PATH` gains `worker-bin`, so `gh` and `lark-cli` resolve to the worker's shims, and `GIT_CONFIG_GLOBAL` points at the agent's git configuration. Installing into a profile you also work in therefore applies those settings to your own Sessions in that application, and the commands you run there act as the agent's accounts. When that separation matters, install into a separate `superagent` profile, as this guide's default does, and restart the application after switching hosts.
+
 ## Machine configuration
 
 Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there. The `webserver` entry sets the panel's port.
