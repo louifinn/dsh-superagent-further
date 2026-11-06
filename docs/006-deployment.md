@@ -315,14 +315,29 @@ From an allowed GitHub account, open an Issue or post a comment containing `@<ag
 
 ## Upgrade
 
-1. Wait until no Executor is in the middle of a turn.
-2. Back up `<stateDir>/orchestrator.sqlite`.
-3. Run `git pull && pnpm install && pnpm build`.
-4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows) and inspect its status.
+An upgrade keeps the state directory, and the host opens an older database by migrating it on start; only a database
+written by a newer build has to be restored from its backup. Wait for a quiet moment: a restart ends a running Assignment
+and starts a replacement with a recovery note.
 
-A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading.
+1. Wait until no Executor is in the middle of a turn (`status` shows no running Assignment).
+2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
+3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
+4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 11 (current)`, or
+   `schema 10 migrates to 11 on start` when the next start is the one that upgrades the database.
 
-A database migrated by a newer version cannot be opened by an older one. Rollback therefore requires the pre-upgrade backup. After upgrading DeepSeek Harness itself, restart the running instance so the panel loads matching artifacts.
+Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
+**Default updated** after upgrading.
+
+### Rolling back
+
+1. Stop the host (`scripts/dsh-superagent stop`, or quit the DeepSeek Harness application).
+2. Restore the backed-up database over `<stateDir>/orchestrator.sqlite`, and remove that directory's `-wal` and `-shm` files.
+3. Check out the earlier commit, then `pnpm install --frozen-lockfile && pnpm build`.
+4. Start the host and run `scripts/verify-install` again; the `schema` line must report the version that checkout expects.
+
+A database migrated by a newer version cannot be opened by an older one, so the backup is the rollback path, not a reverse
+migration. After upgrading DeepSeek Harness itself, restart the running instance so the panel loads matching artifacts.
 
 ### Agent presets
 

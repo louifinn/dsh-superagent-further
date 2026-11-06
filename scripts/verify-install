@@ -14,6 +14,7 @@
  * - the profile's `cordis.patch.yml`: a `dsh-superagent` entry with a `stateDir`;
  * - the management API at `/orchestrator/api/state`, with the orchestrator header;
  * - the state directory lock and the service's PID file;
+ * - the schema version of the state database against the one this checkout expects;
  * - the panel URL and token in the newest service log.
  *
  * Exit codes: 0 every check passed; 1 at least one check failed; 2 the API answered but the installation waits for
@@ -29,6 +30,7 @@ import { request as http } from 'node:http'
 import { request as https } from 'node:https'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { URL as Address } from 'node:url'
 
 const args = process.argv.slice(2)
@@ -148,6 +150,45 @@ function lock(stateDir) {
   return record(true, 'lock', `${held ? 'held' : 'free'}; ${owner}; ${directory}`)
 }
 
+/** The schema version this checkout migrates to, read from the migration module so the script needs no build. */
+function expectedSchema() {
+  try {
+    // `URL` below is the option value, not the constructor, so the path is built from `import.meta.dirname`.
+    const found = /export const SCHEMA_VERSION = (\d+)/.exec(readFileSync(join(import.meta.dirname, '..', 'src', 'app', 'migration.ts'), 'utf8'))
+    return found === null ? undefined : Number(found[1])
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Reports the state database's schema version without writing anything: a database from a newer build is the symptom of
+ * a rolled-back checkout and has to be restored from its backup, while an older one is migrated when the host starts.
+ */
+function schema(stateDir) {
+  const directory = stateDir ?? (patch.stateDir ?? undefined)
+  if (directory === undefined) return record(false, 'schema', 'no stateDir to check')
+  const path = join(directory, 'orchestrator.sqlite')
+  if (!existsSync(path)) return record(true, 'schema', `no database yet; ${path} is created on first start`)
+  let version
+  try {
+    const db = new DatabaseSync(path, { readOnly: true })
+    try {
+      const row = db.prepare('SELECT value FROM kv WHERE key = ?').get('schema')
+      version = row === undefined ? undefined : Number(JSON.parse(String(row.value)))
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    return record(false, 'schema', `${path}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const expected = expectedSchema()
+  if (version === undefined) return record(true, 'schema', 'the database records no schema version yet; it is written on first start')
+  if (expected === undefined) return record(true, 'schema', `schema ${version}`)
+  if (version > expected) return record(false, 'schema', `schema ${version} is newer than this checkout (${expected}); restore the backup from before the upgrade, or use the newer checkout`)
+  return record(true, 'schema', version < expected ? `schema ${version} migrates to ${expected} on start` : `schema ${version} (current)`)
+}
+
 async function panel() {
   const files = existsSync(artifacts)
     ? readdirSync(artifacts).filter(name => name.startsWith(`dsh-superagent-${PROFILE}-`) && name.endsWith('.log'))
@@ -171,6 +212,7 @@ async function panel() {
 
 const answer = await api()
 lock(answer.state.stateDir ?? patchStateDir)
+schema(answer.state.stateDir ?? patchStateDir)
 await panel()
 
 const failed = checks.filter(check => !check.ok)
@@ -180,4 +222,4 @@ if (flag('json')) {
   for (const check of checks) console.log(`${check.ok ? 'ok  ' : 'fail'} ${check.name.padEnd(8)} ${check.detail}`)
   console.log(failed.length === 0 ? `\ndsh-superagent is ready for ${PROFILE}.` : `\n${failed.length} check(s) failed.`)
 }
-process.exitCode = failed.length === 0 ? 0 : answer.problem !== undefined ? 2 : 1
+process.exitCode = failed.length === 0 ? 0 : answer.problem == null ? 1 : 2
