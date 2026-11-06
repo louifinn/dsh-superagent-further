@@ -1,0 +1,71 @@
+# 009 Roadmap
+
+This document turns the prototype into something a team can use every day. It records where the code stands after its first real runs, what must happen before an installation can be left running unattended, and in which order to do the rest. It builds on [006 Deployment](006-deployment.md) and [007 Architecture](007-architecture.md); decisions recorded here supersede their open questions when they disagree.
+
+## Where it stands
+
+- The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
+- Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
+- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed.
+- `.github/workflows/check.yml` is committed but has never run: the repository has no remote yet.
+- The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
+- Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
+
+## Principles
+
+- **Safety before reach.** The agent acts when asked or when a written rule allows it. Every new capability must state what it will not do.
+- **Every failure visible.** A silent retry loop is a bug. Health, the outbox and the log must explain what is stuck and what the operator can do.
+- **One clear path.** Prefer one supported way to install, host and upgrade over two half-supported ones. A second path is a documented exception with a test.
+- **Prove it on a real run.** Mocked tests are necessary, not sufficient: each milestone ends with the real Sources, the real CLIs and the real repository.
+
+## P0 — make the installation safe to keep running
+
+The Sprint 1 scope. Everything here blocks leaving the agent unattended.
+
+| # | Item | Why now | Done when |
+| - | ---- | ------- | --------- |
+| 1 | Credential convergence | The agent token is a classic PAT with `admin:org` and `delete_repo`; the Feishu app secret sits in a plain `.env`. One leak is a whole-account loss. | `louibot` uses a fine-grained token limited to the test repository (issues, pull requests, contents); the Feishu app secret is rotated; `.env` stays gitignored and a short section in 006 says where each secret lives and how to rotate it. |
+| 2 | Remote and CI | The workflow exists but nothing has ever run it, so platform regressions are invisible. | `origin` is `louifinn/dsh-superagent-further`, `main` is pushed, and `check.yml` is green on all six platform and Node combinations. Any CI-only failure is fixed, not skipped. |
+| 3 | One host at a time | Two hosts sharing a state directory collide on the file lock; today the loser logs one line and fails. | Starting the service while the application hosts the orchestrator (or the reverse) fails with a message naming the other host, the lock owner and the one command that switches; 006 documents the switch; the panel shows the same explanation. |
+| 4 | Version alignment and self-check | The deployment guide pins DSH `0.2.1-rc.3` while the machine runs `0.2.2-rc.1`; an install has no single command that proves it works. | 006 pins the version this fork is tested against; `scripts/verify-install` checks the DSH version, that the plugin is active, that `/orchestrator/api/state` answers ready, who holds the state lock and whether the panel token was issued; the script passes in both host modes. |
+
+## P1 — stability and day-to-day ergonomics
+
+| # | Item | Why | Done when |
+| - | ---- | --- | --------- |
+| 5 | Test stability under load | One loaded run produced six failures that never reproduced alone. | The cause is identified and fixed, or the affected specs are isolated; ten consecutive full runs are green, including one run next to a concurrent WSL suite. |
+| 6 | Upgrade and migration | State survives upgrades but its schema has no migration step, and a DSH upgrade can break a pinned install. | `stateDir` migration from an old database is tested; 006 describes stop, update, build, start and verify with rollback; `pnpm check` covers the migration. |
+| 7 | Observability | Health answers "ready" or "error" with one sentence. Operators need the trend. | Health reports the last failure and the next retry for each Source, outbox retry counts and ages, and Ticket age by stage; logs rotate and keep a bounded history. |
+| 8 | Ticket loop ergonomics | A Ticket parked at `person` waits silently, and a stale PR or a failed worker has no visible retry path. | The panel lists waiting Tickets with age and the expected human action, a failed worker can be retried without a new trigger, stale PRs are marked, and a daily digest can be enabled. |
+
+## P2 — capability and distribution
+
+| # | Item | Why | Done when |
+| - | ---- | --- | --------- |
+| 9 | Trigger trust and prompt injection | 007 leaves the trusted Trigger fields open; Source text is data but nothing enforces that end to end. | The trusted fields are documented and tested, Source bodies cannot change role, tools or Policy, and regression tests cover injection attempts in issue bodies, comments and Feishu messages. |
+| 10 | Several repositories or projects | One state directory serves one repository, which blocks a second project. | Either a Source-level repository list with per-repository worker directories, or a documented one-profile-per-project mode with a switching script and a test. |
+| 11 | Release engineering | Installation depends on a development checkout and `link:`. | Semver and a CHANGELOG exist; a packed tarball installs with `dsh plugin --profile <name> add <file>`; the install steps in 006 use it; a release is tagged and CI-tested. |
+| 12 | Feishu breadth | Only a listed group mention is proven; direct messages, unlisted chats, attachments and several chats are untested. | Each of those paths has a test and a documented behaviour, with history backfill paging and rate limits stated. |
+| 13 | Platform and experience | macOS has no real run; the panel has not been seen rendered on a clean machine; the UI text is English-only. | A macOS checklist is executed once by hand; panel screenshots are part of the release check; the panel and the replies are reviewed for untranslated strings. |
+
+## Sprint 1 checklist
+
+- [ ] Fine-grained token for `louibot`; Feishu app secret rotated; secret locations documented in 006.
+- [ ] `origin` added, `main` pushed, `check.yml` green on Linux, macOS and Windows with Node 22 and 24.
+- [ ] One-host switching documented and enforced by a clear failure message from both hosts.
+- [ ] 006 pins the tested DSH version; `scripts/verify-install` exists and passes in application mode and in service mode.
+- [ ] `pnpm check` green on Windows, and both real end-to-end paths still run after the changes.
+
+## Open questions
+
+- Do changes land on the fork only, or are they offered upstream as a pull request once CI runs?
+- Is the operator's OS account sufficient isolation for a worker, or should 006 require a dedicated OS user by default?
+- Should a second host be refused outright, or allowed with an explicit `--force` that takes over the lock?
+- Which actions may end a Ticket without a person: opening a PR is one, merging is not. Should that list be configurable per Source?
+
+## Non-goals
+
+- Hosting several tenants, or serving more than one operator account.
+- Forges other than GitHub, and chat products other than Feishu.
+- Running the service as a Windows service or a system daemon.
+- A visual redesign of the panel.
