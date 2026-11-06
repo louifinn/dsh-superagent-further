@@ -24,7 +24,7 @@ The Sprint 1 scope. Everything here blocks leaving the agent unattended.
 
 | # | Item | Why now | Done when |
 | - | ---- | ------- | --------- |
-| 1 | Credential convergence | The agent token is a classic PAT with `admin:org` and `delete_repo`; the Feishu app secret sits in a plain `.env`. One leak is a whole-account loss. | `louibot` uses a fine-grained token limited to the test repository (issues, pull requests, contents); the Feishu app secret is rotated; `.env` stays gitignored and a short section in 006 says where each secret lives and how to rotate it. |
+| 1 | Credential convergence | The agent token is a classic PAT with `admin:org` and `delete_repo`; the Feishu app secret sits in a plain `.env`. One leak is a whole-account loss. | Narrowing the credentials is the operator's call; on 2026-11-07 the operator chose to keep the current classic token and Feishu secret. The installation side is done: `.env` is gitignored and a section in 006 says where each secret lives and how to rotate it. |
 | 2 | Remote and CI | The workflow exists but nothing has ever run it, so platform regressions are invisible. | `origin` is `louifinn/dsh-superagent-further`, `main` is pushed, and `check.yml` is green on all six platform and Node combinations. Any CI-only failure is fixed, not skipped. |
 | 3 | One host at a time | Two hosts sharing a state directory collide on the file lock, and an in-application host applies the worker environment to every Session in that app. | Starting the service while the application hosts the orchestrator (or the reverse) fails with a message naming the other host, the lock owner and the one command that switches; 006 documents the switch and the environment consequence; the panel shows the same explanation. |
 | 4 | Version alignment and self-check | The guide pinned a DSH version older than the one the machine runs, and an install has no single command that proves it works. | 006 pins the version this fork is tested against (`0.2.2-rc.1`); `scripts/verify-install` checks the DSH version, that the plugin is active, that `/orchestrator/api/state` answers ready, who holds the state lock and whether the panel token was issued; the script passes in both host modes. |
@@ -50,7 +50,8 @@ The Sprint 1 scope. Everything here blocks leaving the agent unattended.
 
 ## Sprint 1 checklist
 
-- [ ] Fine-grained token for `louibot`; Feishu app secret rotated; secret locations documented in 006.
+- [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006
+  records where each secret lives and how to rotate it.
 - [x] `origin` added, `main` pushed, `check.yml` green on Linux, macOS and Windows with Node 22 and 24.
 - [x] One-host switching documented and enforced by a clear failure message from both hosts.
 - [x] 006 pins the tested DSH version; `scripts/verify-install` exists and passes in application mode and in service mode.
