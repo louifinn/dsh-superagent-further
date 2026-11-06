@@ -12,9 +12,9 @@ const TIMEOUT_MS = 90_000
  * The `cmd.exe` invocation that runs a batch-file CLI, or undefined when the program is a native executable.
  * @throws CliError when an argument cannot cross a `cmd.exe` command line unchanged.
  */
-function batchInvocation(program: string, args: string[]): string[] | undefined {
+function batchInvocation(program: string, args: string[], environment: NodeJS.ProcessEnv): string[] | undefined {
   if (!isBatchFile(program)) return undefined
-  if (expandsInBatch(args)) throw new CliError(`${basename(program)} cannot run on Windows with an argument that contains %VAR% or a line break`)
+  if (expandsInBatch(args, environment)) throw new CliError(`${basename(program)} cannot run on Windows with an argument that names an environment variable (%VAR%) or a line break`)
   return batchArguments(program, args)
 }
 /**
@@ -78,11 +78,11 @@ export class Commands {
   get repository(): string { return this.deployment.repository }
   withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
   async run(program: string, args: string[], cwd?: string): Promise<string> {
+    const environment = { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' }
     try {
-      const batch = batchInvocation(program, args)
+      const batch = batchInvocation(program, args, environment)
       const { stdout } = await exec(batch ? 'cmd.exe' : program, batch ?? args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
-        windowsVerbatimArguments: batch !== undefined,
-        env: { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } })
+        windowsVerbatimArguments: batch !== undefined, env: environment })
       return stdout
     } catch (error) { throw commandError(error, program) }
   }

@@ -5,15 +5,21 @@
  */
 const BATCH_FILE = /\.(?:cmd|bat)$/i
 /**
- * What `cmd.exe` rewrites inside a command line: `%VAR%` expands (there is no escape outside a batch file) and a line break
- * starts a new command. An argument matching this cannot reach the CLI unchanged and must be refused.
+ * What `cmd.exe` rewrites inside a command line: a `%VAR%` that names a variable in the child's environment expands (there is
+ * no escape outside a batch file), and a line break starts a new command. A percent pair that names no variable passes through
+ * unchanged, so an encoded value such as `%3A50%3A` is safe: only defined names and line breaks must be refused.
  */
-const EXPANSION = /%[^%]*%|[\r\n]/
+const EXPANSION = /%([^%]*)%/g
+const LINE_BREAK = /[\r\n]/
 /** Whether `program` is a batch file, which only `cmd.exe` can run. */
 export const isBatchFile = (program: string, platform: NodeJS.Platform = process.platform): boolean =>
   platform === 'win32' && BATCH_FILE.test(program)
-/** Whether an argument cannot cross a `cmd.exe` command line unchanged. */
-export const expandsInBatch = (args: readonly string[]): boolean => args.some(arg => EXPANSION.test(arg))
+/** Whether an argument cannot cross a `cmd.exe` command line unchanged, given the environment the CLI inherits. */
+export function expandsInBatch(args: readonly string[], environment: NodeJS.ProcessEnv = process.env): boolean {
+  const defined = new Set(Object.keys(environment).map(name => name.toUpperCase()))
+  return args.some(arg => LINE_BREAK.test(arg)
+    || [...arg.matchAll(EXPANSION)].some(match => defined.has((match[1] ?? '').toUpperCase())))
+}
 /**
  * The `cmd.exe` arguments that run `program` with `args`. `/d` skips AutoRun, and `/s` with one outer quote pair around the
  * quoted command line keeps every token intact; callers must also pass `windowsVerbatimArguments: true`, because otherwise

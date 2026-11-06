@@ -25,10 +25,12 @@ it('runs a native program directly and a batch file through cmd.exe', () => {
 })
 
 it('knows which arguments cmd.exe would rewrite instead of passing through', () => {
-  expect(expandsInBatch(['%PATH%'])).toBe(true)
-  expect(expandsInBatch(['a\nb'])).toBe(true)
-  // A lone `%` that does not start a variable name survives a command line.
-  expect(expandsInBatch(['100%', 'p%q', '{"x": 1}'])).toBe(false)
+  const environment = { PATH: 'C:\\tools', USERPROFILE: 'C:\\Users\\me' }
+  expect(expandsInBatch(['%PATH%'], environment)).toBe(true)
+  expect(expandsInBatch(['%path%'], environment)).toBe(true)
+  expect(expandsInBatch(['a\nb'], environment)).toBe(true)
+  // A percent pair that names no variable in the CLI's environment survives a command line unchanged, including URL-encoded values.
+  expect(expandsInBatch(['%NOPE%', '%3A50%3A', '100%', 'p%q', '{"x": 1}'], environment)).toBe(false)
   expect(batchArguments('fake.cmd', ['a b', 'e"f'])).toEqual(['/d', '/s', '/c', '""fake.cmd" "a b" "e\\"f""'])
 })
 
@@ -42,7 +44,7 @@ it.skipIf(!windows)('keeps every argument intact through the invocation it build
     const { program, args: argv, verbatim } = invocation(fake, args)
     return spawnSync(program, argv, { windowsVerbatimArguments: verbatim, encoding: 'utf8' })
   }
-  const args = ['a b', 'c&d', 'e"f', ';', '=', '{"x": 1}', '中文', '']
+  const args = ['a b', 'c&d', 'e"f', ';', '=', '{"x": 1}', '中文', '', 'x%3A50%3Ay', '%DSH_SUPERAGENT_TEST_UNSET%']
   const result = run(args)
   expect(result.status, result.stderr).toBe(0)
   expect(JSON.parse(result.stdout.trim())).toEqual(args)
