@@ -61,6 +61,8 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
    gh-agent.cmd api user --jq .login
    ```
 
+   The Deployment page saves the repository and the agent CLI, and verifies both before it stores them. Saving the Source with no repository is the exception, so you can unbind an installation: the service then waits for setup again, as on its first run.
+
 ### Feishu bot (optional)
 
 1. Create a self-built app with the bot capability. Grant it the permissions to receive message events, read and send chat messages, and read chat members, then publish the app version.

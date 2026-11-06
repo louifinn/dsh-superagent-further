@@ -34,7 +34,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 
 ## Development
 
-`pnpm check` runs the typecheck, the tests and the build.
+`pnpm check` runs the typecheck, the tests and the build. CI runs the same command on Linux, macOS and Windows with Node.js 22 and 24, so the Windows-only code paths are exercised on every push.
 
 ## License
 

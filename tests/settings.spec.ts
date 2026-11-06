@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { UserError } from '../src/core/index.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { Setup } from '../src/app/setup.ts'
+import { SetupError } from '../src/setup.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import { startRuntime, type Host } from './fixtures/host.ts'
 
@@ -98,4 +99,14 @@ it('records nothing for a pause that changes nothing, refuses a sync while setup
   await expect(settings.sync('feishu')).rejects.toThrow(new UserError('nothingToSync', { source: 'feishu' }))
   vi.mocked(Setup.prototype.configured).mockRestore()
   expect(() => settings.block('source:x')).toThrow(new UserError('unknownBlock', { block: 'source:x' }))
+})
+it('accepts an unbound GitHub Source when it validates a save, so an installation returns to its first-run state', async () => {
+  h = await startRuntime()
+  const { setup, store } = h.runtime
+  const current = store.settings()
+  const unbound = { ...current, sources: { ...current.sources, github: { enabled: true, config: {} } } }
+  await expect(setup.checkAccounts('source:github', unbound)).resolves.toBeUndefined()
+  // Every other GitHub account change is still verified before it is stored.
+  const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { repository: 'acme/widgets' } } } }
+  await expect(setup.checkAccounts('source:github', partial)).rejects.toThrow(SetupError)
 })

@@ -57,9 +57,14 @@ export class Setup {
   }
   /** Defer the restart to the next macrotask so the current HTTP or tool caller receives its response first. */
   restart(): void { setTimeout(this.host.restart, 0) }
-  /** Verify account CLIs for a modified source block before saving, ignoring setup errors belonging to other blocks. */
+  /**
+   * Verify account CLIs for a modified source block before saving, ignoring setup errors belonging to other blocks.
+   * A GitHub Source saved without a repository is accepted instead: setup reports the requirement again, so an
+   * installation can unbind its accounts and return to its first-run state.
+   */
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
+    if (block === 'source:github' && !settings.sources.github?.config.repository) return
     const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
       : resolveDeployment(machine, settings.sources.github?.config, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
