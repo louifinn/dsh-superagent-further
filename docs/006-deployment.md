@@ -118,6 +118,20 @@ The fourth command creates `~/.dsh/profiles/superagent` from the DeepSeek Harnes
 
 Run the profile-creation command only for a new installation. If the profile already exists, that command replaces it and deletes its `cordis.patch.yml`, including machine configuration. Do not use it for upgrades.
 
+### Install into an existing profile
+
+The desktop application keeps its plugins in its own profile (`desktop`), so this bundle can be installed there instead of in a separate `superagent` profile. The orchestrator then runs inside the application and its panel appears in that UI:
+
+```sh
+git clone <this repository> dsh-superagent && cd dsh-superagent
+pnpm install && pnpm build
+dsh plugin --profile desktop add "link:$PWD"
+```
+
+Add the machine configuration to that profile's own `cordis.patch.yml` instead of copying the template: an entry `- id: dsh-superagent` with `stateDir`, and `- id: dsh-superagent-feishu` with `disabled: false` when Feishu is used. The application picks the change up on restart, and `dsh --profile desktop --dump-config` does not work because the application manages that profile exclusively.
+
+A profile has one host at a time. Point the application and `scripts/dsh-superagent` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
+
 ## Machine configuration
 
 Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there. The `webserver` entry sets the panel's port.
