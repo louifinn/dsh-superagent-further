@@ -38,6 +38,7 @@ import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))))
+const SCRIPT = realpathSync(fileURLToPath(import.meta.url))
 const ARTIFACTS = join(ROOT, '.artifacts')
 const CONTROL = join(ARTIFACTS, 'control')
 const KEEP_LOGS = 20
@@ -293,6 +294,16 @@ function nameMatches(name) {
   return name === undefined || name === '' || PROCESS_NAMES.has(name.toLowerCase())
 }
 
+/**
+ * Return whether an entry is a run of this management script rather than a DSH service. `status` and `stop` are invoked
+ * with the same `--profile <p>` words a service has, so without this check they would find (and could stop) themselves;
+ * the Windows branch is saved from that only by also requiring a `cli.js` word.
+ */
+function isScript(entry) {
+  if (entry.pid === process.pid) return true
+  return entry.args.some(word => word === SCRIPT || /(^|[\\/])dsh-superagent(?:\.cmd)?$/i.test(word))
+}
+
 /** Return whether command-line arguments belong to the main DSH service process for `profile`. */
 function serves(args, profile) {
   const words = []
@@ -315,7 +326,7 @@ function serves(args, profile) {
 
 /** Apply the platform's extra discriminator: Windows distinguishes the CLI host from GUI/renderer/tool processes. */
 function serviceEntry(entry, profile) {
-  if (!nameMatches(entry.name) || !serves(entry.args, profile)) return false
+  if (isScript(entry) || !nameMatches(entry.name) || !serves(entry.args, profile)) return false
   if (process.platform !== 'win32') return true
   if (!entry.args.some(word => /cli\.js$/i.test(word))) return false
   return !entry.args.some(word => word.startsWith('--type=') || word.includes('dsh-subprocess-local'))

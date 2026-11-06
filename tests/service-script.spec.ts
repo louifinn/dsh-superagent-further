@@ -354,6 +354,15 @@ it('discovers the real process table without crashing when no fake table is inje
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
 }, 20_000)
+it('does not count a run of this script itself as the service, whatever its path spelling', async () => {
+  // A `status` or `stop` command carries the same `--profile` words a service does; counting one would let the script see
+  // (and on POSIX stop) itself. The Windows branch is saved from that only by also requiring a `cli.js` word.
+  processes(
+    { pid: sleeper(), name: 'node', args: [process.execPath, join(root, 'scripts', 'dsh-superagent'), 'status', '--profile', 'superagent'] },
+    { pid: sleeper(), name: 'node', args: ['node', 'C:\\src\\dsh-superagent', 'status', '--profile', 'superagent'] },
+  )
+  expect((await status('superagent')).pids).toEqual([])
+}, 20_000)
 it('prints usage for --help and exits 2 for invalid arguments', async () => {
   expect(await run('--help')).toMatchObject({ code: 0, stdout: expect.stringContaining('usage: dsh-superagent') })
   expect(await run('bogus')).toMatchObject({ code: 2, stderr: expect.stringContaining('invalid choice') })
