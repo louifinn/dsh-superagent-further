@@ -48,6 +48,20 @@ The Sprint 1 scope. Everything here blocks leaving the agent unattended.
 | 12 | Feishu breadth | Only a listed group mention is proven; direct messages, unlisted chats, attachments and several chats are untested. | Each of those paths has a test and a documented behaviour, with history backfill paging and rate limits stated. |
 | 13 | Platform and experience | macOS has no real run; the panel has not been seen rendered on a clean machine; the UI text is English-only. | A macOS checklist is executed once by hand; panel screenshots are part of the release check; the panel and the replies are reviewed for untranslated strings. |
 
+## Sprint 2 checklist
+
+The P1 scope.
+
+- [x] Timeouts sized for a loaded machine: `vitest.config.ts` allows 30 s per test, and the abort test proves preemption
+  through the child's own lifetime instead of a stopwatch. Ten consecutive full runs were green, one next to a concurrent
+  WSL suite.
+- [x] Upgrade and migration: `scripts/verify-install` reads the state database read-only and fails when it is newer than
+  the checkout; 006 lists the upgrade steps and the rollback; `tests/migration.spec.ts` covers schema 10 to 11.
+- [ ] Observability: Source health reports the last failure and the next attempt, the overview reports outbox counts and
+  ages and Ticket age by stage, and logs keep a bounded history.
+- [ ] Ticket loop ergonomics: the panel lists waiting Tickets with their age and expected action, a failed worker can be
+  retried without a new trigger, and stale PRs are marked.
+
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006
@@ -70,3 +84,4 @@ The Sprint 1 scope. Everything here blocks leaving the agent unattended.
 - Forges other than GitHub, and chat products other than Feishu.
 - Running the service as a Windows service or a system daemon.
 - A visual redesign of the panel.
+

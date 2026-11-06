@@ -230,15 +230,17 @@ it('stops a running command when the signal of its work aborts, or the lifetime,
   const lifetime = new AbortController(), work = new AbortController()
   const commands = new Commands(() => deployment, {}, lifetime.signal)
   const started = Date.now()
-  const running = commands.withSignal(work.signal).run(NODE, ['-e', 'setTimeout(() => {}, 5000)'])
+  // The child outlives the test timeout, so an abort that did nothing would fail this test by timing out rather than by
+  // a stopwatch that a loaded machine can overshoot: the bound only has to be well under the child's own lifetime.
+  const running = commands.withSignal(work.signal).run(NODE, ['-e', 'setTimeout(() => {}, 60_000)'])
   work.abort()
   await expect(running).rejects.toThrow()
   // Only commands bound to the aborted work signal stop.
   expect(await commands.run(NODE, ['-e', 'console.log("still")'])).toBe('still\n')
-  const other = commands.withSignal(new AbortController().signal).run(NODE, ['-e', 'setTimeout(() => {}, 5000)'])
+  const other = commands.withSignal(new AbortController().signal).run(NODE, ['-e', 'setTimeout(() => {}, 60_000)'])
   lifetime.abort()
   await expect(other).rejects.toThrow()
-  expect(Date.now() - started).toBeLessThan(4000)
+  expect(Date.now() - started).toBeLessThan(20_000)
 })
 
 it.skipIf(process.platform !== 'win32')('runs a batch-file CLI through cmd.exe and refuses an argument it cannot pass', async () => {
@@ -259,3 +261,4 @@ it.skipIf(process.platform !== 'win32')('runs a batch-file CLI through cmd.exe a
     expect(await commands.run(stdinCli, [], undefined, 'line one\n\nline two\n')).toBe('line one\n\nline two\n')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
