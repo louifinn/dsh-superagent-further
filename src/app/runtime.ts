@@ -95,8 +95,13 @@ export class Runtime extends Service implements SourceHost {
     // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
     try { restrictToOwner(machine.stateDir, true) } catch (error) { ctx.logger.warn('dsh-superagent: %s', String(error)) }
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
-    const release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
-    this.releaseLock = async () => { release() }
+    let release: (() => unknown) | undefined
+    try {
+      release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
+    } catch (error) {
+      throw new Error(`dsh-superagent is already hosted for ${machine.stateDir}. Stop the other host: scripts/dsh-superagent stop for the service, or disable the dsh-superagent plugin in the profile that runs it, then start this one.`, { cause: error })
+    }
+    this.releaseLock = async () => { await release?.() }
     let opened: Store | undefined
     try {
       const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
@@ -171,7 +176,7 @@ export class Runtime extends Service implements SourceHost {
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
-      try { opened?.close() } finally { release() }
+      try { opened?.close() } finally { void release?.() }
       throw error
     }
   }

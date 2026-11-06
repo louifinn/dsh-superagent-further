@@ -1,0 +1,183 @@
+#!/usr/bin/env node
+/**
+ * Verify one local dsh-superagent installation, and print what it found.
+ *
+ * Run this file with Node 22.19+ (`node scripts/verify-install`, or `scripts\verify-install.cmd` on Windows).
+ * It reads the installation, never changes it, and has no dependency beyond the Node standard library.
+ *
+ * Usage:
+ *   verify-install [--profile <name>] [--url <url>] [--dsh <launcher>] [--token <token>] [--json]
+ *
+ * Checks:
+ * - the DSH version the launcher reports;
+ * - the profile's `package.json`: the `dsh-superagent` dependency and the bundle in `dsh.profile.bundles`;
+ * - the profile's `cordis.patch.yml`: a `dsh-superagent` entry with a `stateDir`;
+ * - the management API at `/orchestrator/api/state`, with the orchestrator header;
+ * - the state directory lock and the service's PID file;
+ * - the panel URL and token in the newest service log.
+ *
+ * Exit codes: 0 every check passed; 1 at least one check failed; 2 the API answered but the installation waits for
+ * setup, which a person must finish before the panel can act.
+ *
+ * The API call needs no token on a loopback host: the management header is the guard. Pass `--token` only to print the
+ * panel URL for an instance whose token you already have.
+ */
+
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { request as http } from 'node:http'
+import { request as https } from 'node:https'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { URL as Address } from 'node:url'
+
+const args = process.argv.slice(2)
+const option = (name, fallback) => {
+  const at = args.indexOf(`--${name}`)
+  return at >= 0 && args[at + 1] !== undefined ? args[at + 1] : fallback
+}
+const flag = name => args.includes(`--${name}`)
+
+if (flag('help') || flag('h')) {
+  console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 22).map(line => line.replace(/^ \* ?/, '')).join('\n'))
+  process.exit(0)
+}
+
+const PROFILE = option('profile', process.env.DSH_SUPERAGENT_PROFILE ?? 'superagent')
+const URL = option('url', process.env.DSH_SUPERAGENT_URL ?? 'http://127.0.0.1:3082')
+const DSH = option('dsh', process.env.DSH_SUPERAGENT_DSH ?? (process.platform === 'win32' ? 'dsh.cmd' : 'dsh'))
+const TOKEN = option('token', undefined)
+const dshHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const profileDir = join(dshHome, 'profiles', PROFILE)
+const artifacts = join(process.cwd(), '.artifacts')
+const control = join(artifacts, 'control', 'profiles', PROFILE)
+
+const checks = []
+const record = (ok, name, detail) => { checks.push({ ok, name, detail }); return ok }
+
+/**
+ * One HTTP request, with no dependency and no keep-alive socket left behind.
+ *
+ * The script must exit as soon as it printed its answer: a pooled connection would keep the process alive, and
+ * closing it during exit trips a libuv assertion on Windows. Each request therefore uses its own connection.
+ */
+function request(address, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new Address(address)
+    const send = target.protocol === 'https:' ? https : http
+    const outgoing = send(target, { headers, agent: false, timeout: 8_000 }, response => {
+      const chunks = []
+      response.on('data', chunk => chunks.push(chunk))
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+      response.on('error', reject)
+    })
+    outgoing.on('timeout', () => outgoing.destroy(new Error('timed out after 8 s')))
+    outgoing.on('error', reject)
+    outgoing.end()
+  })
+}
+
+function version() {
+  try {
+    if (process.platform !== 'win32') return execFileSync(DSH, ['--version'], { encoding: 'utf8', timeout: 30_000 }).trim()
+    // A batch launcher cannot be spawned without a shell; PowerShell runs it as the interactive shell does.
+    const command = /[\\/\s]/.test(DSH) ? `& "${DSH}" --version` : `${DSH} --version`
+    for (const shell of ['pwsh', 'powershell.exe']) {
+      try { return execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 60_000 }).trim() } catch { /* try the next shell */ }
+    }
+    return undefined
+  } catch (error) {
+    return undefined
+  }
+}
+const reported = version()
+record(reported !== undefined, 'dsh', reported ?? `could not run ${DSH} --version`)
+
+function profile() {
+  const path = join(profileDir, 'package.json')
+  if (!existsSync(path)) return record(false, 'profile', `${path} does not exist`)
+  const manifest = JSON.parse(readFileSync(path, 'utf8'))
+  const dependency = manifest.dependencies?.['dsh-superagent'] ?? manifest.devDependencies?.['dsh-superagent']
+  const bundle = Array.isArray(manifest.dsh?.profile?.bundles) && manifest.dsh.profile.bundles.includes('dsh-superagent')
+  return record(dependency !== undefined && bundle, 'profile', dependency === undefined
+    ? 'the profile does not depend on dsh-superagent'
+    : !bundle ? 'dsh.profile.bundles does not list dsh-superagent' : `${PROFILE} loads dsh-superagent ${dependency}`)
+}
+profile()
+
+let patchStateDir
+function patch() {
+  const path = join(profileDir, 'cordis.patch.yml')
+  if (!existsSync(path)) return record(false, 'patch', `${path} does not exist`)
+  const text = readFileSync(path, 'utf8')
+  const entry = /(^|\n)\s*-\s*id:\s*dsh-superagent\b/.test(text)
+  const state = /stateDir:\s*['"]?([^'"\n]+)/.exec(text)?.[1]?.trim()
+  patchStateDir = state
+  return record(entry && state !== undefined, 'patch', !entry
+    ? 'cordis.patch.yml has no dsh-superagent entry'
+    : state === undefined ? 'the dsh-superagent entry has no stateDir' : `stateDir ${state}`)
+}
+patch()
+
+async function api() {
+  const state = { stateDir: undefined }
+  try {
+    const response = await request(`${URL.replace(/\/$/, '')}/orchestrator/api/state`, {
+      'x-orchestrator-request': '1', ...TOKEN ? { authorization: `Bearer ${TOKEN}` } : {},
+    })
+    if (response.status < 200 || response.status > 299) return { ok: record(false, 'api', `${URL} answered ${response.status}`), state }
+    const body = JSON.parse(response.body)
+    state.stateDir = body.setup?.machine?.stateDir
+    const health = Object.entries(body.health ?? {}).map(([name, value]) => `${name}=${value.state}`).join(' ')
+    const problem = body.setup?.problem
+    record(true, 'api', `${URL} answered; ${health || 'no health entries'}${problem ? `; waiting for setup (${problem.code})` : ''}`)
+    record(body.setup?.problem == null, 'setup', body.setup?.problem ? `${body.setup.problem.place}: ${body.setup.problem.detail}` : 'configured')
+    record(!body.paused, 'pause', body.paused ? 'the orchestrator is paused' : 'running')
+    return { ok: body.setup?.problem == null, state, problem }
+  } catch (error) {
+    return { ok: record(false, 'api', `${URL}: ${error instanceof Error ? error.message : String(error)}`), state }
+  }
+}
+
+function lock(stateDir) {
+  const directory = stateDir ?? (patch.stateDir ?? undefined)
+  if (directory === undefined) return record(false, 'lock', 'no stateDir to check')
+  const held = existsSync(`${directory}.lock`)
+  const pid = join(control, 'service.pid')
+  const owner = existsSync(pid) ? `service.pid ${readFileSync(pid, 'utf8').trim()}` : 'no service pid file'
+  return record(true, 'lock', `${held ? 'held' : 'free'}; ${owner}; ${directory}`)
+}
+
+async function panel() {
+  const files = existsSync(artifacts)
+    ? readdirSync(artifacts).filter(name => name.startsWith(`dsh-superagent-${PROFILE}-`) && name.endsWith('.log'))
+      .map(name => ({ name, at: statSync(join(artifacts, name)).mtimeMs })).sort((a, b) => b.at - a.at)
+    : []
+  if (TOKEN !== undefined) return record(true, 'panel', `${URL}/?token=${TOKEN}`)
+  if (files.length > 0) {
+    const log = readFileSync(join(artifacts, files[0].name), 'utf8')
+    const url = /dsh web: (https?:\/\/\S+)/.exec(log)?.[1]
+    if (url !== undefined) return record(true, 'panel', url)
+  }
+  // An application-managed host writes no service log. Its panel still answers at `/`, with or without a token.
+  try {
+    const response = await request(URL)
+    const served = [200, 303, 401, 403].includes(response.status)
+    return record(served, 'panel', served ? `served at ${URL} (pass --token to print the sign-in URL)` : `${URL} answered ${response.status}`)
+  } catch (error) {
+    return record(false, 'panel', `${URL}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+const answer = await api()
+lock(answer.state.stateDir ?? patchStateDir)
+await panel()
+
+const failed = checks.filter(check => !check.ok)
+if (flag('json')) {
+  console.log(JSON.stringify({ profile: PROFILE, url: URL, checks }, null, 2))
+} else {
+  for (const check of checks) console.log(`${check.ok ? 'ok  ' : 'fail'} ${check.name.padEnd(8)} ${check.detail}`)
+  console.log(failed.length === 0 ? `\ndsh-superagent is ready for ${PROFILE}.` : `\n${failed.length} check(s) failed.`)
+}
+process.exitCode = failed.length === 0 ? 0 : answer.problem !== undefined ? 2 : 1

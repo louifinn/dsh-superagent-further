@@ -15,11 +15,44 @@ const temporary = (): string => {
 }
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }) })
 
-/** The access rules Windows reports for a path, as `icacls` prints one line per rule after the path line. */
-function rules(path: string): string[] {
-  return execFileSync('icacls', [path], { encoding: 'utf8' }).split(/\r?\n/)
-    // An access rule line names an account and then its parenthesized rights and flags.
-    .filter(line => /:\(/.test(line))
+/** An account Windows grants, and the right it grants, as one access rule of `icacls`. */
+type Rule = { account: string; rights: string }
+
+/**
+ * The access rules Windows reports for a path.
+ *
+ * `icacls` prints the path and the first rule on one line, so a rule is found by its own shape: an account — a
+ * `DOMAIN\name`, `NT AUTHORITY\name`, `BUILTIN\name` or an `S-1-5-…` SID — a colon and its parenthesized rights.
+ * A path never matches: its drive-colon is followed by a separator, not by a parenthesized right.
+ */
+function rules(path: string): Rule[] {
+  const text = execFileSync('icacls', [path], { encoding: 'utf8' })
+  const found: Rule[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    if (!/:\(/.test(raw)) continue
+    // `icacls` prints the path and the first rule on the same line, so drop the path before looking for a rule.
+    const line = raw.startsWith(path) ? raw.slice(path.length) : raw
+    for (const match of line.matchAll(/([^:\r\n]+?):((?:\([A-Za-z,]+\))+)/g)) {
+      found.push({ account: match[1]!.trim(), rights: match[2]! })
+    }
+  }
+  return found
+}
+
+/** Accounts Windows always reaches, whatever a directory grants: they do not weaken the owner's control. */
+const alwaysAllowed = (account: string): boolean =>
+  ['NT AUTHORITY\\SYSTEM', 'BUILTIN\\ADMINISTRATORS'].includes(account.toUpperCase())
+
+function expectOwnerOnly(path: string, owner: string): void {
+  const entries = rules(path)
+  expect(entries.length, path).toBeGreaterThan(0)
+  // The operator holds full control…
+  expect(entries.filter(entry => entry.account.toUpperCase() === owner && entry.rights.includes('(F)')), path).toHaveLength(1)
+  for (const entry of entries) {
+    // …no rule is inherited from the parent directory, and no other account but the system's own keeps access.
+    expect(entry.rights, path).not.toContain('(I)')
+    if (entry.account.toUpperCase() !== owner) expect(alwaysAllowed(entry.account), `${path}: ${entry.account}`).toBe(true)
+  }
 }
 
 it.skipIf(!windows)('gives a directory and a file an owner-only ACL on Windows, where POSIX modes do nothing', () => {
@@ -28,17 +61,8 @@ it.skipIf(!windows)('gives a directory and a file an owner-only ACL on Windows, 
   writeFileSync(database, '')
   restrictToOwner(directory, true)
   restrictToOwner(database)
-  const owner = execFileSync('whoami', [], { encoding: 'utf8' }).trim()
-  for (const path of [directory, database]) {
-    const entries = rules(path)
-    // Every rule belongs to the owner and none is inherited from the parent directory: the owner's full control is all that is left.
-    expect(entries.length, path).toBeGreaterThan(0)
-    for (const entry of entries) {
-      expect(entry.toUpperCase(), path).toContain(owner.toUpperCase())
-      expect(entry, path).not.toContain('(I)')
-      expect(entry, path).toContain('(F)')
-    }
-  }
+  const owner = execFileSync('whoami', [], { encoding: 'utf8' }).trim().toUpperCase()
+  for (const path of [directory, database]) expectOwnerOnly(path, owner)
 })
 
 it.skipIf(!windows)('a Store gives its directory and database an owner-only ACL on Windows', () => {
@@ -46,16 +70,7 @@ it.skipIf(!windows)('a Store gives its directory and database an owner-only ACL 
   const path = join(directory, 'state', 'orchestrator.sqlite')
   new Store(path).close()
   const owner = execFileSync('whoami', [], { encoding: 'utf8' }).trim().toUpperCase()
-  for (const target of [dirname(path), path]) {
-    const entries = rules(target)
-    expect(entries.length, target).toBeGreaterThan(0)
-    // The state is the operator's alone: no rule inherited from the parent, and full control for the owner only.
-    for (const entry of entries) {
-      expect(entry.toUpperCase(), target).toContain(owner)
-      expect(entry, target).not.toContain('(I)')
-      expect(entry, target).toContain('(F)')
-    }
-  }
+  for (const target of [dirname(path), path]) expectOwnerOnly(target, owner)
 })
 
 it.skipIf(windows)('gives a directory and a file the POSIX modes the state directory expects', () => {

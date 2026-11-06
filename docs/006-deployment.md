@@ -18,7 +18,7 @@ Opening a blank managed Session in the Web UI can select the profile's default p
 
 Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
 
-On Windows, POSIX file modes restrict nothing, so the state directory and the database are given an ACL that grants only the operator's account (`icacls`), the Windows equivalent of the `0700` directory and `0600` file used elsewhere. If Windows refuses that change, the log says so and the files keep the permissions they inherit.
+On Windows, POSIX file modes restrict nothing, so the state directory and the database are given an ACL that removes inherited permissions and gives the operator's account full control (`icacls`), the Windows equivalent of the `0700` directory and `0600` file used elsewhere. Explicit entries the path already carries, such as `SYSTEM`'s, stay. If Windows refuses the change, the log says so and the files keep the permissions they inherit.
 
 ## Prerequisites
 
@@ -103,7 +103,7 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 Run this block once, on a machine that has no `superagent` profile yet:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.2.1-rc.3
+npm install -g @deepseek-ai/dsh@0.2.2-rc.1
 git clone <this repository> dsh-superagent && cd dsh-superagent
 pnpm install && pnpm build
 dsh superagent --from-default-profile web --dump-config > /dev/null
@@ -133,6 +133,19 @@ Add the machine configuration to that profile's own `cordis.patch.yml` instead o
 A profile has one host at a time. Point the application and `scripts/dsh-superagent` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
 
 The orchestrator applies the worker environment to its whole host process: `PATH` gains `worker-bin`, so `gh` and `lark-cli` resolve to the worker's shims, and `GIT_CONFIG_GLOBAL` points at the agent's git configuration. Installing into a profile you also work in therefore applies those settings to your own Sessions in that application, and the commands you run there act as the agent's accounts. When that separation matters, install into a separate `superagent` profile, as this guide's default does, and restart the application after switching hosts.
+
+### Verify an installation
+
+`scripts/verify-install` reads one installation and reports what it found, without changing anything. It has no dependency beyond Node's standard library, and needs no token on a loopback host:
+
+```sh
+scripts/verify-install --profile superagent
+scripts/verify-install --profile desktop --url http://127.0.0.1:52471   # hosted by the desktop application
+```
+
+It checks the DSH version the launcher reports, the profile's `package.json` dependency and `dsh.profile.bundles` entry, the profile's `cordis.patch.yml` `stateDir`, the management API (health, setup, paused), the state directory lock and service PID file, and the panel URL. On Windows run `scripts\verify-install.cmd` with the same arguments; `--json` prints the results as JSON, and `--token <token>` prints the panel URL.
+
+Exit codes: `0` every check passed, `1` at least one check failed, `2` the API answered but the installation waits for setup, which a person must finish before the panel can act.
 
 ## Machine configuration
 
