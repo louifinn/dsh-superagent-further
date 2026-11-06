@@ -5,7 +5,7 @@ import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
-import { healthText, localized, reasonLabel, valueLabel, readableMarkers } from './text.ts'
+import { healthText, localized, reasonLabel, valueLabel, readableMarkers, when } from './text.ts'
 import { CheckSetupButton, ConfirmButton, Hint, LoadState, Section, SetupMessage } from './widgets.tsx'
 
 function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () => Promise<void> }) {
@@ -91,6 +91,10 @@ export function OverviewPage() {
         {data.flow.dropped > 0 && stat(t('flowDroppedLabel'), data.flow.dropped, { page: 'source' })}
       </div>
     </Section>
+    {data.outbox.pending > 0 && <Section title={t('outboxTitle')} count={data.outbox.pending}>
+      <p className="dt-hint">{t('outboxSummary', { pending: String(data.outbox.pending), failing: String(data.outbox.failing),
+        oldest: when(data.outbox.oldestAt, t('lang')), next: when(data.outbox.nextAt, t('lang')) })}</p>
+    </Section>}
     <Section title={t('term.executor')} action={more({ page: 'execution' })}>
       {/* Pauses surface in `problems` above, so Executor counts render the same in both states; while setup waits, nothing runs. */}
       {setup?.problem ? <Hint>{t('executorWaitingSetup')}</Hint> : <div className="dt-stats">

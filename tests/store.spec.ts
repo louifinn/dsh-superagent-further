@@ -270,3 +270,14 @@ it('reads `%` and `_` in a key prefix and a search query as written, not as patt
   expect([store.read.search('50%').map(item => item.id), store.read.search('a_b').map(item => item.id)]).toEqual([['p'], ['r']])
   store.close()
 })
+
+it('summarises the reply queue for the overview: waiting count, failures, the oldest wait and the next attempt', () => {
+  const store = new Store(join(directory, 'orchestrator.sqlite'))
+  expect(store.read.replyQueue()).toEqual({ pending: 0, failing: 0, oldestAt: undefined, nextAt: undefined })
+  const insert = store.db.prepare(`INSERT INTO effect (kind, key, value, seq, due, since, attempts) VALUES ('reply', ?, '{}', ?, ?, ?, ?)`)
+  insert.run('m1', 1, 1_000, '2026-01-01T00:00:00Z', 2)
+  insert.run('m2', 2, 5_000, '2026-01-01T00:01:00Z', 0)
+  expect(store.read.replyQueue()).toEqual({ pending: 2, failing: 1, oldestAt: '2026-01-01T00:00:00Z',
+    nextAt: new Date(1_000).toISOString() })
+  store.close()
+})

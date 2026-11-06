@@ -72,6 +72,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     problems,
     person: open.filter(ticket => ticketStage(ticket).stage === 'person').map(ticket => ticketRow(view, ticket)),
     executor: { ...load, maxWorkers: settings.executor.maxWorkers, idle: open.filter(ticket => ticketStage(ticket).stage === 'idle').length },
+    // The reply queue is the other half of "every failure visible": a message that keeps failing is invisible without it.
+    outbox: store.read.replyQueue(),
     flow: { received, filtered, triggers: received - filtered, judged: judgement.judged, accepted: judgement.accepted,
       evaluating: evaluating.length, dropped: store.read.droppedSince(since) },
     policyVersion: policyVersionValue,

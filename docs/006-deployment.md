@@ -261,6 +261,11 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
 
+The panel shows the reply queue while messages wait: how many, how many failed at least once, the oldest wait and the
+next attempt. A polling Source shows its next check beside its last message, so a quiet Source and a stuck one look
+different; a Source driven by a live stream has no next check to show. The service script keeps the twenty newest log
+files, and the application host keeps its own log.
+
 Health entries are grouped by responsibility:
 
 | Entry | Reports |
@@ -370,3 +375,4 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | The log says the plugin is incompatible with the running dsh | Install a DeepSeek Harness version within the `engines.dsh` range |
 | The panel shows "Failed to load plugins" after a DeepSeek Harness upgrade | Restart the running instance |
 | Nothing happens after a mention | Check that the author is on the Source's allowed list, the Source is on, and processing is not paused. On GitHub, a mention added by editing an Issue's body is not received; mention the agent in a comment |
+

@@ -99,6 +99,8 @@ function SourceRow({ source }: { source: SourceStatusRow }) {
   const { problem, dropped } = source
   const { dot, label: state } = sourceMark(t, source.state)
   const { received, filtered, lastAt } = source.stats
+  // A polling Source says when it will try next, so a quiet Source and a stuck one look different.
+  const nextAt = source.health.find(item => item.nextAt)?.nextAt
   // Omit healthy parts and suppress per-part notes when a setup problem already explains why the Source is stopped.
   const notes = source.enabled && !problem && !setup?.problem ? source.health.filter(item => item.state === 'error'
     || item.state === 'paused') : []
@@ -111,6 +113,7 @@ function SourceRow({ source }: { source: SourceStatusRow }) {
         {received > 0 && <LabelValue label={t('sourceReceivedLabel')}
           value={received} />}{filtered > 0 && <LabelValue label={t('sourceFilteredLabel')} value={filtered} />}
         {lastAt && <LabelValue label={t('sourceLatestLabel')} value={when(lastAt, t('lang'))} />}
+        {nextAt && <LabelValue label={t('sourceNextLabel')} value={when(nextAt, t('lang'))} />}
       </div>
       {problem && <p className="dt-error">
         <SetupMessage problem={problem} lead /> <button type="button" className="dt-textlink"

@@ -319,3 +319,14 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
   expect(followupOwners(store.triggers.get('f3')!, records)).toEqual([])
   expect([records.tickets.get, records.threads.get].map(read => read.mock.calls.length)).toEqual([0, 0])
 })
+
+it('reports the reply queue in the overview and the next check of a polling Source', () => {
+  const host = views()
+  host.store.db.prepare(`INSERT INTO effect (kind, key, value, seq, due, since, attempts) VALUES ('reply', 'm1', '{}', 1, 1234, ?, 1)`)
+    .run('2026-01-01T00:00:00Z')
+  const nextAt = '2026-01-01T00:01:00Z'
+  const view = overview(host, { github: { state: 'ready', detail: '1 notifications', at: '2026-01-01T00:00:00Z', nextAt } }, 'v1', load)
+  expect(view.outbox).toEqual({ pending: 1, failing: 1, oldestAt: '2026-01-01T00:00:00Z', nextAt: new Date(1234).toISOString() })
+  const github = sourcesStatus(host, { github: { state: 'ready', detail: '1 notifications', nextAt } }, {}).find(source => source.id === 'github')
+  expect(github?.health).toContainEqual({ name: 'github', state: 'ready', detail: '1 notifications', nextAt })
+})

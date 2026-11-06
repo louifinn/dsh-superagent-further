@@ -157,3 +157,15 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   await click('评估超时未决定：#9 迟迟未决')
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
 })
+
+it('shows the reply queue only while messages wait, with the oldest wait and the next attempt', async () => {
+  await mount()
+  expect(all('.dt-section-title').map(title => title.textContent)).not.toContain(`${zh.outboxTitle}0`)
+  expect(text()).not.toContain(zh.outboxTitle)
+  server.outbox = { pending: 3, failing: 1, oldestAt: new Date(Date.now() - 600_000).toISOString(),
+    nextAt: new Date(Date.now() + 300_000).toISOString() }
+  await remount()
+  expect(all('.dt-section-title').map(title => title.textContent)).toContain(`${zh.outboxTitle}3`)
+  expect(text()).toContain('3 条回复等待发送')
+  expect(text()).toContain('1 条已失败过')
+})

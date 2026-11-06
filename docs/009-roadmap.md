@@ -57,8 +57,9 @@ The P1 scope.
   WSL suite.
 - [x] Upgrade and migration: `scripts/verify-install` reads the state database read-only and fails when it is newer than
   the checkout; 006 lists the upgrade steps and the rollback; `tests/migration.spec.ts` covers schema 10 to 11.
-- [ ] Observability: Source health reports the last failure and the next attempt, the overview reports outbox counts and
-  ages and Ticket age by stage, and logs keep a bounded history.
+- [x] Observability: a polling Source reports when it next checks and, while it keeps failing, the consecutive count and
+  the last error; the overview reports outbox waiting and failing counts, the oldest wait and the next attempt; the panel
+  shows each Ticket's stage age; each host keeps a bounded log history.
 - [ ] Ticket loop ergonomics: the panel lists waiting Tickets with their age and expected action, a failed worker can be
   retried without a new trigger, and stale PRs are marked.
 

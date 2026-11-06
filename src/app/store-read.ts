@@ -3,6 +3,9 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { Decision, Thread, Trigger } from '../core/index.ts'
 import type { Dropped, Receipt, TimelinePlace } from './store.ts'
 
+/** One summary of the reply effect queue: waiting messages, those that failed at least once, and the oldest and next attempt. */
+export interface ReplyQueue { pending: number; failing: number; oldestAt?: string | undefined; nextAt?: string | undefined }
+
 export function storeReads(db: DatabaseSync) {
   const values = <T>(sql: string, ...parameters: SQLInputValue[]): T[] => db.prepare(sql).all(...parameters).map(row => JSON.parse(String(row.value)) as T)
   return {
@@ -70,6 +73,17 @@ export function storeReads(db: DatabaseSync) {
   failingReplies: (): (Receipt & { attempts: number; error: string })[] => db.prepare(`SELECT o.value, e.attempts, e.error FROM effect e
     JOIN outbox o ON o.id = e.key WHERE e.kind = 'reply' AND e.attempts > 0 ORDER BY e.seq`).all()
     .map(row => ({ ...JSON.parse(String(row.value)) as Receipt, attempts: Number(row.attempts), error: String(row.error) })),
+  /**
+   * The reply queue as one summary for the overview: how many messages wait, how many have failed at least once, when
+   * the oldest started waiting (`since`, always set) and when the earliest one is due (`due`, a millisecond stamp).
+   */
+  replyQueue: (): ReplyQueue => {
+    const row = db.prepare(`SELECT COUNT(*) AS pending, SUM(CASE WHEN attempts > 0 THEN 1 ELSE 0 END) AS failing,
+      MIN(since) AS since, MIN(due) AS due FROM effect WHERE kind = 'reply'`).get() as
+      { pending: number; failing: number | null; since: string | null; due: number | null }
+    return { pending: Number(row.pending), failing: Number(row.failing ?? 0), oldestAt: row.since ?? undefined,
+      nextAt: row.due === null ? undefined : new Date(Number(row.due)).toISOString() }
+  },
   droppedReplies: (limit = 20): Dropped[] =>
     values('SELECT value FROM outbox WHERE dropped IS NOT NULL ORDER BY dropped DESC LIMIT ?', limit),
   droppedSince: (since: string): number => Number(db.prepare('SELECT COUNT(*) AS n FROM outbox WHERE dropped >= ?').get(since)?.n ?? 0),

@@ -16,7 +16,7 @@ export const HEALTH_TEXT = {
   pollFailures: '{count} consecutive failed polls; last: {error}',
 } as const
 export type HealthCode = keyof typeof HEALTH_TEXT
-export type Health = { state: 'starting' | 'ready' | 'paused' | 'error'; detail: string; at?: string; code?: HealthCode; values?: Record<string, string> }
+export type Health = { state: 'starting' | 'ready' | 'paused' | 'error'; detail: string; at?: string; nextAt?: string; code?: HealthCode; values?: Record<string, string> }
 export function health(state: Health['state'], code: HealthCode, values: Record<string, string> = {}): Health {
   return { state, detail: fill(HEALTH_TEXT[code], values), code, ...Object.keys(values).length ? { values } : {} }
 }
@@ -65,3 +65,4 @@ export interface SourceContext {
   report(entry: string, health: Health): void
 }
 export const sourceContext = (host: SourceHost, kind: { kind: string; health: readonly string[] }): SourceContext => host.context(kind)
+
