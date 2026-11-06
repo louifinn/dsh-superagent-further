@@ -356,13 +356,15 @@ it('discovers the real process table without crashing when no fake table is inje
 }, 20_000)
 it('reports a stopped service cleanly when the recorded PID has exited', async () => {
   // `status` and `stop` check a recorded PID with a per-process query: `ps -p <dead pid>` exits 1 and CIM returns no row,
-  // so neither may turn a cleanly exited service into a failed command.
+  // so neither may turn a cleanly exited service into a failed command. The profile name is unique so a service an operator
+  // runs while the suite runs (`--profile superagent`) is not mistaken for the dead one.
   const exited = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
   const dead = exited.pid!
   await new Promise<void>(resolve => exited.once('exit', () => resolve()))
-  mkdirSync(control('superagent'), { recursive: true })
-  writeFileSync(join(control('superagent'), 'service.pid'), String(dead))
-  const result = await runWith({ DSH_SUPERAGENT_PROCESS_TABLE: '' }, 'status', '--profile', 'superagent', '--url', 'http://127.0.0.1:9')
+  const profile = `stopped-pid-${process.pid}`
+  mkdirSync(control(profile), { recursive: true })
+  writeFileSync(join(control(profile), 'service.pid'), String(dead))
+  const result = await runWith({ DSH_SUPERAGENT_PROCESS_TABLE: '' }, 'status', '--profile', profile, '--url', 'http://127.0.0.1:9')
   expect(result.stderr).not.toContain('Command failed')
   expect(JSON.parse(result.stdout) as { pids: number[] }).toMatchObject({ pids: [] })
   expect(result.code).toBe(1)
