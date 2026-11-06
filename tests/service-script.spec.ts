@@ -354,6 +354,19 @@ it('discovers the real process table without crashing when no fake table is inje
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
 }, 20_000)
+it('reports a stopped service cleanly when the recorded PID has exited', async () => {
+  // `status` and `stop` check a recorded PID with a per-process query: `ps -p <dead pid>` exits 1 and CIM returns no row,
+  // so neither may turn a cleanly exited service into a failed command.
+  const exited = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
+  const dead = exited.pid!
+  await new Promise<void>(resolve => exited.once('exit', () => resolve()))
+  mkdirSync(control('superagent'), { recursive: true })
+  writeFileSync(join(control('superagent'), 'service.pid'), String(dead))
+  const result = await runWith({ DSH_SUPERAGENT_PROCESS_TABLE: '' }, 'status', '--profile', 'superagent', '--url', 'http://127.0.0.1:9')
+  expect(result.stderr).not.toContain('Command failed')
+  expect(JSON.parse(result.stdout) as { pids: number[] }).toMatchObject({ pids: [] })
+  expect(result.code).toBe(1)
+}, 20_000)
 it('does not count a run of this script itself as the service, whatever its path spelling', async () => {
   // A `status` or `stop` command carries the same `--profile` words a service does; counting one would let the script see
   // (and on POSIX stop) itself. The Windows branch is saved from that only by also requiring a `cli.js` word.

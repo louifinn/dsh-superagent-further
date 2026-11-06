@@ -242,7 +242,15 @@ function windowsProcessTable(pid) {
 /** Read POSIX processes through `ps`; with a `pid`, query only that process. */
 function posixProcessTable(pid) {
   const options = pid === undefined ? ['-ww', '-ax', '-o', 'pid=,ucomm=,args='] : ['-ww', '-p', String(pid), '-o', 'pid=,ucomm=,args=']
-  const output = execFileSync('ps', options, { encoding: 'utf8', timeout: 30_000 })
+  let output
+  try {
+    output = execFileSync('ps', options, { encoding: 'utf8', timeout: 30_000 })
+  } catch (error) {
+    // `ps -p <pid>` exits 1 when the process is gone: that means "no such process", not a failure to read the table. A
+    // dead recorded PID is checked on every `status` and `stop`, so throwing here would fail both after a clean exit.
+    if (pid !== undefined) return []
+    throw error
+  }
   const entries = []
   for (const line of output.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line)
