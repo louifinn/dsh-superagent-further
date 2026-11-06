@@ -7,7 +7,7 @@ import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { Runtime } from '../src/app/runtime.ts'
+import { hostedElsewhere, Runtime } from '../src/app/runtime.ts'
 import { jobRegistry } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
@@ -1386,8 +1386,19 @@ it('keeps replies and acknowledgements to an IM conversation within the IM limit
   await expect(runTool(sessionId, 'orchestrator_ack', { trigger_id: follow.id, text: long })).rejects.toThrow(`at most ${IM_WORDS} words`)
 })
 
-it('refuses a second process on the same state directory before it opens the database, so it migrates nothing', () => {
-  // A database the running build would read as schema 10 stays as it is.
+it('says which host holds the orchestrator Session, and how to switch, instead of the storage wording', () => {
+  const original = Object.assign(new Error('session "orchestrator-1" is already owned by an active write handle'), { code: 'session/writer-held' })
+  const said = hostedElsewhere(original, 'C:/state/superagent', 'orchestrator-1')
+  expect(said).toBeInstanceOf(Error)
+  expect((said as Error).message).toContain('already hosted for C:/state/superagent')
+  expect((said as Error).message).toContain('quit and reopen the DeepSeek Harness application')
+  expect((said as Error).cause).toBe(original)
+  // Any other failure passes through unchanged.
+  const other = new Error('Unsupported orchestrator database version 99')
+  expect(hostedElsewhere(other, 'C:/state/superagent', 'orchestrator-1')).toBe(other)
+})
+
+it('refuses a second process on the same state directory before it opens the database, so it migrates nothing', () => {  // A database the running build would read as schema 10 stays as it is.
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='10' WHERE key='schema'").run()
   db.close()

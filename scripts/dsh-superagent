@@ -173,6 +173,38 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * The error a host wrote to its log after `since`, if it never answered.
+ *
+ * A second host refuses to start on a held state-directory lock and writes why; the command line only sees that no
+ * health arrived, so it repeats the host's own message instead of "inspect the log".
+ */
+function startupFailure(profile, since) {
+  const name = new RegExp(`^${escapeRegExp(`dsh-superagent-${profile}-`)}\\d{8}-\\d{6}-\\d+\\.log$`)
+  let files = []
+  try {
+    files = readdirSync(ARTIFACTS).filter(entry => name.test(entry))
+      .map(entry => ({ path: join(ARTIFACTS, entry), mtime: statSync(join(ARTIFACTS, entry)).mtimeMs }))
+      .filter(file => file.mtime >= since)
+  } catch {
+    return undefined
+  }
+  files.sort((left, right) => right.mtime - left.mtime)
+  for (const file of files) {
+    let text = ''
+    try { text = readFileSync(file.path, 'utf8') } catch { continue }
+    const lines = text.split(/\r?\n/)
+    // The host's own explanation wins over the lock library's, which follows it on the stack.
+    const hosted = lines.find(line => line.includes('dsh-superagent is already hosted for '))
+    const chosen = hosted ?? [...lines].reverse().find(line => line.includes('Error: '))
+    if (chosen !== undefined) {
+      const at = chosen.indexOf('Error: ')
+      return (at >= 0 ? chosen.slice(at + 'Error: '.length) : chosen).trim()
+    }
+  }
+  return undefined
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Process discovery
 
@@ -532,6 +564,8 @@ function resolveOnPath(name) {
 }
 
 async function start(args) {
+  const began = Date.now()
+  let launched
   const directory = control(args.profile)
   const pids = processes(args.profile)
   if (pids.length > 1) {
@@ -561,8 +595,15 @@ async function start(args) {
       closeSync(logFd)
     }
     child.unref()
+    launched = child
     console.log('Log: ' + log)
   } else {
+    // A host that started without an orchestrator — a refused lock, a failed plugin — keeps its web server running.
+    // Report why instead of waiting the whole timeout for a runtime it will never have.
+    if (await state(args.url) === undefined) {
+      const failure = startupFailure(args.profile, 0)
+      throw new Error(failure ?? `A dsh process (PID ${pids[0]}) serves this profile, but no orchestrator answers at ${args.url}. Stop it: scripts/dsh-superagent stop`)
+    }
     writeFileSync(join(directory, 'service.pid'), `${pids[0]}\n`)
     console.log(`dsh-superagent already running (PID ${pids[0]}); no duplicate started.`)
   }
@@ -590,6 +631,13 @@ async function start(args) {
     await sleep(1_000)
   }
   await printStatus(args)
+  const failure = startupFailure(args.profile, began)
+  // Another host holds the state directory: this host will never have a runtime, so take it down again.
+  if (failure !== undefined && failure.includes('already hosted for') && launched?.pid !== undefined) {
+    forceStop(launched.pid)
+    throw new Error(failure)
+  }
+  if (failure !== undefined) throw new Error(failure)
   throw new Error('Startup health check timed out; inspect the log. Any running process was left intact.')
 }
 

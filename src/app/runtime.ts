@@ -53,6 +53,16 @@ declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceH
 const now = (): string => new Date().toISOString()
 
 /**
+ * DSH's session-ownership failure, said as the operator's action: which state directory another host holds, and how to
+ * switch. DSH keeps a Session's write handle until that host process exits, so quitting the host — not only disabling
+ * the plugin — is what releases it.
+ */
+export function hostedElsewhere(error: unknown, stateDir: string, masterId: string): unknown {
+  if ((error as { code?: string } | undefined)?.code !== 'session/writer-held') return error
+  return new Error(`dsh-superagent is already hosted for ${stateDir}: another DeepSeek Harness process still holds the orchestrator Session (${masterId}). Stop the other host: scripts/dsh-superagent stop for the service, or quit and reopen the DeepSeek Harness application, then start this one.`, { cause: error })
+}
+
+/**
  * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
  * Locks the state directory before opening SQLite so concurrent processes cannot corrupt or double-migrate state.
@@ -217,7 +227,11 @@ export class Runtime extends Service implements SourceHost {
     }
     this.sessions.install()
     this.executor.install()
-    await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
+    try {
+      await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
+    } catch (error) {
+      throw hostedElsewhere(error, this.machine.stateDir, this.masterId)
+    }
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return

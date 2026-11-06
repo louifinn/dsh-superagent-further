@@ -307,6 +307,27 @@ it('exits 1 when the started service does not answer in time, and leaves its pro
   const pid = tableEntries()[0]!.pid
   expect(() => process.kill(pid, 0)).not.toThrow()
 }, 20_000)
+it('repeats the host\'s own reason when another host keeps the state directory, and stops the host it started for nothing', async () => {
+  writeFileSync(join(root, 'fake-launcher.mjs'), `import { appendFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+const profile = args.includes('--profile') ? args[args.indexOf('--profile') + 1] : ''
+writeFileSync(process.env.DSH_TEST_LAUNCH_RECORD, JSON.stringify({ argv: args, cwd: process.cwd(), pid: process.pid }))
+appendFileSync(process.env.DSH_TEST_LAUNCHER_PIDS, process.pid + '\\n')
+writeFileSync(process.env.DSH_SUPERAGENT_PROCESS_TABLE, JSON.stringify([
+  { pid: process.pid, name: 'node', args: ['node', '/opt/my tools/dsh/lib/cli.js', '--profile', profile, '--no-open'] },
+]))
+process.stderr.write('dsh-superagent (dsh-superagent): Error: dsh-superagent is already hosted for C:/state\\n')
+process.stderr.write('Error: Lock file is already being held\\n')
+setInterval(() => {}, 1000)
+`)
+  const result = await run('start', '--url', 'http://127.0.0.1:9', '--timeout', '2')
+  expect(result).toMatchObject({ code: 1, stderr: expect.stringContaining('already hosted for C:/state') })
+  // The refused host had no runtime to offer: this start took it down again instead of leaving it holding the port.
+  const pid = tableEntries()[0]!.pid
+  await new Promise(resolve => setTimeout(resolve, 500))
+  expect(() => process.kill(pid, 0)).toThrow()
+}, 20_000)
+
 it('does not force a process that took the recorded service PID, and keeps a stop that timed out', async () => {
   mkdirSync(control('superagent'), { recursive: true })
   const other = sleeper()

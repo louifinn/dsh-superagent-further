@@ -98,6 +98,17 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
+### Where the secrets live, and how to rotate them
+
+Nothing in this guide writes a secret into the repository. A copy of the values for convenience belongs in the workspace `.env`, which is ignored by git (`git check-ignore .env` prints it); check before committing that no `.env` file is staged.
+
+| Secret | Where it lives | How to rotate |
+| --- | --- | --- |
+| Agent GitHub token | The `gh-agent` CLI's own store: the OS keychain (Windows Credential Manager, macOS Keychain, Linux libsecret), or `~/.config/gh-agent/hosts.yml` when the CLI stores it as text | Create a new token on GitHub, run `gh-agent auth login --with-token` (or `gh auth refresh`) with it, verify `gh-agent api user --jq .login`, then delete the old token |
+| Feishu app secret | The keychain entry `lark-cli` uses for the app id; the bot configuration directory holds the app id, brand and bot `open_id`, not the secret | In the Feishu console, reset the app secret, publish the version, rerun `lark-cli config init --app-id <cli_…> --force-init --app-secret-stdin`, restart the host, and update the `.env` copy |
+
+Use a fine-grained token rather than a classic one. It needs access to the agent's repository only — Contents, Issues and Pull requests read and write, Metadata read — and no administration, workflow or repository-deletion permissions. A classic token with `admin:org` and `delete_repo` turns one leaked file into a whole-account loss.
+
 ## Install
 
 Run this block once, on a machine that has no `superagent` profile yet:
@@ -131,6 +142,8 @@ dsh plugin --profile desktop add "link:$PWD"
 Add the machine configuration to that profile's own `cordis.patch.yml` instead of copying the template: an entry `- id: dsh-superagent` with `stateDir`, and `- id: dsh-superagent-feishu` with `disabled: false` when Feishu is used. The application picks the change up on restart, and `dsh --profile desktop --dump-config` does not work because the application manages that profile exclusively.
 
 A profile has one host at a time. Point the application and `scripts/dsh-superagent` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
+
+Switching hosts means quitting the current one, not only unloading the plugin: DeepSeek Harness keeps the orchestrator Session's write handle until the host process exits. Quit the application (or run `scripts/dsh-superagent stop`) and then start the other host. The host that is refused names the state directory the other one holds, the orchestrator Session, and both commands that stop it.
 
 The orchestrator applies the worker environment to its whole host process: `PATH` gains `worker-bin`, so `gh` and `lark-cli` resolve to the worker's shims, and `GIT_CONFIG_GLOBAL` points at the agent's git configuration. Installing into a profile you also work in therefore applies those settings to your own Sessions in that application, and the commands you run there act as the agent's accounts. When that separation matters, install into a separate `superagent` profile, as this guide's default does, and restart the application after switching hosts.
 
