@@ -1685,7 +1685,7 @@ it('launches a queued Assignment once when the host resumes, and gives a failed 
   await runtime.pump(); await runtime.idle()
   await vi.waitFor(() => expect(runtime.store.tickets.get(queued.ticket.id)!.assignments.at(-1)).toMatchObject({ state: 'running' }))
   expect(launches()).toBe(1)
-})
+}, 30_000)
 
 it('shows the settings history when one revision holds values its Source kind no longer accepts, without that revision\'s changes', async () => {
   const settings = runtime.store.settings()

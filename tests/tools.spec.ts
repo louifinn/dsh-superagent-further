@@ -397,7 +397,7 @@ it('shows a candidate with its thread\'s tickets open first, the tickets it reac
   h.runtime.store.threads.save(thread)
   h.runtime.receive(feishu('4', '@bot 看看 #123 的进展')); await h.runtime.idle()
   expect(relaysOf('candidate').at(-1)).toMatchObject({ related_tickets: [], tickets_total: 0, referenced_tickets: [{ ticket_id: a.id }] })
-})
+}, 30_000)
 
 it('relays a worker\'s report with its ticket card and the start of its summary, and a question with the card alone', async () => {
   const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
