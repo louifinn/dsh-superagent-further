@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1247 passed and 5 skipped (1252) on Windows, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1256 passed and 5 skipped (1261) on Windows, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` is committed but has never run: the repository has no remote yet.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
@@ -73,7 +73,7 @@ The P1 scope.
 The P2 scope, in the order this session takes it.
 
 - [x] Trigger trust and prompt injection: 007 documents which Trigger fields are trusted and which are not, the
-  untime/admission, untime/work and skill/github parts state the untrusted-data rule, and 	ests/trust.spec.ts
+  `runtime/admission`, `runtime/work` and `skill/github` parts state the untrusted-data rule, and `tests/trust.spec.ts`
   pins the gates down: a body that claims to be an explicit request, a human, or an administrator changes no decision,
   and no prompt in either role contains it verbatim.
 - [x] Several repositories or projects: one profile per project (its own state directory, Sources and panel port),
@@ -94,6 +94,23 @@ The P2 scope, in the order this session takes it.
   for the 0.2.0 build are committed in 005 and attached to the v0.2.0 release (taken with Playwright's Chromium, since
   the system Chrome cannot start headless here); 006 keeps the visible-rendering and real-account steps for a release.
   strings.
+## Sprint 4 checklist
+
+One installation, several projects. Sprint 3's "several repositories" item used one profile per project; the management
+surface now replaces that workaround with a project list inside the Execution settings.
+
+- [x] Register projects: each has an ID, a name, an absolute local workspace, an `owner/name` remote repository and an
+  optional base branch; the panel edits them in Execution, and a tool-originated save cannot change them
+  (`tests/projects.spec.ts`, `tests/settings.spec.ts`).
+- [ ] Sources poll every project: the GitHub Source checks each project's repository, and Triggers and Threads carry the
+  project so `github:<number>` keys from different repositories cannot collide (with a migration for existing records).
+- [ ] Tickets belong to a project: the Executor creates each Ticket's checkout from that project's local clone
+  (`git worktree add` under `stateDir/work/<project>/<ticket>`), and the worker environment names the project, workspace
+  and repository.
+- [ ] The panel and the digest show the project: Tickets and Triggers list it, the overview can filter by it, and the
+  daily digest groups waiting Tickets by project.
+- [ ] Feishu routing: one group manages all projects; a Feishu Trigger's project is resolved per message (the project it
+  names first, the configured default otherwise) rather than bound to a chat.
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

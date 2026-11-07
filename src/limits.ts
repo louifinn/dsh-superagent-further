@@ -8,4 +8,9 @@ export const LIMITS = {
   promptMaxChars: { min: 1000, max: 1_000_000 },
   admissionContextMaxPages: { min: 1, max: 100 },
   admissionContextTimeoutMs: { min: 1, max: 90_000 },
+  projects: 50,
+  projectName: 80,
+  projectPath: 500,
+  projectRepository: 200,
+  projectBranch: 200,
 } as const

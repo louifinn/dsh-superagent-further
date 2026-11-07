@@ -110,3 +110,17 @@ it('accepts an unbound GitHub Source when it validates a save, so an installatio
   const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { repository: 'acme/widgets' } } } }
   await expect(setup.checkAccounts('source:github', partial)).rejects.toThrow(SetupError)
 })
+
+it("refuses a tool-originated change of the registered projects, and accepts the panel's", async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const executor = store.settings().executor
+  const revision = store.blockRevision('executor')
+  const workspace = process.platform === 'win32' ? 'C:/src/app' : '/src/app'
+  const projects = [{ id: 'app', name: 'App', workspace, repository: 'owner/app', branch: '' }]
+  await expect(settings.save('executor', { ...executor, projects }, revision, 'tool')).rejects.toThrow(UserError)
+  expect(store.settings().executor.projects).toEqual([])
+  const saved = await settings.save('executor', { ...executor, projects }, revision, 'panel')
+  expect(saved.saved).toBe(true)
+  expect(store.settings().executor.projects).toEqual(projects)
+})

@@ -2,8 +2,9 @@
 import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
+import type { Project } from '../projects.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -72,6 +73,38 @@ function EnvironmentVariables({ groups, sources,
     </div>
   </DisclosureRow>
 }
+function Projects({ projects, onChange }: { projects: Project[]; onChange: (next: Project[]) => void }) {
+  const { t } = usePanel()
+  const set = (index: number, next: Partial<Project>) => onChange(projects.map((item, at) => at === index ? { ...item, ...next } : item))
+  const remove = (index: number) => onChange(projects.filter((_, at) => at !== index))
+  return <Section title={t('projects')} hint={t('projectsHint')} action={<Button variant="ghost" size="sm" icon={<Icon name="plus" />}
+    onClick={() => onChange([...projects, { id: '', name: '', workspace: '', repository: '', branch: '' }])}>{t('projectAdd')}</Button>}>
+    {projects.length ? <ul className="dt-rules">{projects.map((project, index) => <li key={index} className="dt-rule">
+      <div className="dt-rule-body">
+        <div className="dt-grid3">
+          <Field label={t('projectId')} hint={t('projectIdHint')}><Input className="dt-mono" required maxLength={40}
+            pattern="[a-z0-9][a-z0-9\-]*" spellCheck={false} placeholder="app" value={project.id}
+            onChange={event => set(index, { id: event.target.value })} /></Field>
+          <Field label={t('projectName')}><Input required maxLength={LIMITS.projectName} value={project.name}
+            onChange={event => set(index, { name: event.target.value })} /></Field>
+          <Field label={t('projectRepository')} hint={t('projectRepositoryHint')}><Input className="dt-mono" required
+            spellCheck={false} placeholder="owner/name" maxLength={LIMITS.projectRepository} value={project.repository}
+            onChange={event => set(index, { repository: event.target.value })} /></Field>
+        </div>
+        <Field label={t('projectWorkspace')} hint={t('projectWorkspaceHint')}><Input className="dt-mono" required spellCheck={false}
+          maxLength={LIMITS.projectPath} value={project.workspace}
+          onChange={event => set(index, { workspace: event.target.value })} /></Field>
+        <Field label={t('projectBranch')} hint={t('projectBranchHint')} note={project.branch ? undefined : t('projectBranchEmpty')}>
+          <Input className="dt-mono" maxLength={LIMITS.projectBranch} spellCheck={false} value={project.branch}
+            onChange={event => set(index, { branch: event.target.value })} />
+        </Field>
+        <div className="dt-actions">
+          <Button variant="ghost" size="sm" icon={<Icon name="trash" />} onClick={() => remove(index)}>{t('projectRemove')}</Button>
+        </div>
+      </div>
+    </li>)}</ul> : <Hint>{t('projectsEmpty')}</Hint>}
+  </Section>
+}
 export function ExecutionSettings() {
   const { t } = usePanel()
   const { blocks, environment, sources } = useSettings().settings
@@ -100,6 +133,9 @@ export function ExecutionSettings() {
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />
           </Field>
+        </div>
+        <div className="dt-form dt-block">
+          <Projects projects={value.projects} onChange={projects => edit({ projects })} />
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
