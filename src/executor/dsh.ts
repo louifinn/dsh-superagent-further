@@ -64,7 +64,7 @@ export interface ExecutorHost {
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
     | 'assignmentInterrupted'>
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit' | 'leads'>
   /** Durable effect queue through which launches and input deliveries run. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   /** The `worker` health entry, which reports whether background worker event handling failed. */
@@ -549,6 +549,11 @@ export class DshExecutor implements Executor {
       const activation = await this.leads.start(executorActivation({ childId: sessionId, title: ticket.title, cwd: workspace,
         text, lead, signal: this.host.lifetime, preset: WORKER_PRESET }))
       if (!current()) { void activation.dispose().catch(() => {}); return }
+      // The dispatch is recorded against the Lead and marked delivered once its child runs, so the panel's waiting count and
+      // the Lead's message history describe the same dispatch.
+      const dispatch = this.host.store.leads.send({ project: project.id, kind: 'assignment', from: 'orchestrator',
+        to: 'lead', requestId: assignment.id, ticketId: ticket.id, body: text })
+      this.host.store.leads.deliver(dispatch.id)
       this.host.engine.assignmentStarted(ticket.id, assignment.id)
       return
     }

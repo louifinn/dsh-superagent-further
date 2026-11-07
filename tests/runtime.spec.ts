@@ -1798,6 +1798,11 @@ it('starts a Ticket executor as a child of its project Lead when Orchestration i
   // The panel's Lead row names the Session and the project it serves.
   expect(runtime.leadOverview()).toEqual([{ project: 'app', name: 'App', session: 'lead-app', status: expect.any(String),
     running: 0, waiting: 0 }])
+  // The launch records the dispatch to the Lead and marks it delivered once the child runs.
+  const messages = runtime.store.leads.list('app')
+  expect(messages).toHaveLength(1)
+  expect(messages[0]!).toMatchObject({ kind: 'assignment', from: 'orchestrator', to: 'lead', ticketId: ticket.id })
+  expect(messages[0]!.deliveredAt).toBeDefined()
 })
 
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
