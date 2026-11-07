@@ -75,6 +75,13 @@ describe('the activations a host keeps', () => {
     expect(await leads.steer('worker-unknown', 'x', signal)).toBe(false)
   })
 
+  it('sends from a Lead after a restart lost the activation map', async () => {
+    const sendMessage = vi.fn(async () => 'message-1')
+    const leads = new LeadActivations(() => ({ startActivation: vi.fn(async () => { throw new Error('unused') }), sendMessage }))
+    await leads.send(lead, 'worker-a', 'hello', signal)
+    expect(sendMessage).toHaveBeenCalledWith(lead, 'worker-a', [{ type: 'text', text: 'hello' }], { signal })
+  })
+
   it('forgets an activation that settled on its own, without disposing it', async () => {
     const dispose = vi.fn(async () => {})
     const settled = Promise.resolve('done')

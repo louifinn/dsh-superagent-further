@@ -86,7 +86,7 @@ export class LeadActivations {
       // reserved worker id, so starting a second child with it is refused. Wake the existing child with this message instead.
       if (!/already exists/.test(String(error))) throw error
       await service.sendMessage(spec.request.parent, spec.childId, spec.request.prompt, { signal: spec.signal })
-      activation = { childId: spec.childId, result: Promise.resolve(), dispose: async () => {
+      activation = { childId: spec.childId, result: new Promise(() => {}), dispose: async () => {
         service.interrupt?.(spec.childId, { kind: 'ancestor', agent: spec.request.parent })
       } }
     }
@@ -113,6 +113,13 @@ export class LeadActivations {
     if (!spec || !service) return false
     await service.sendMessage(spec.request.parent, childId, [{ type: 'text', text }], { signal })
     return true
+  }
+
+  /** Sends one message from a Lead to its child, for a delivery after a restart lost the activation map. */
+  async send(lead: Agent, childId: string, text: string, signal: AbortSignal): Promise<void> {
+    const service = this.service()
+    if (!service) throw new Error('This host has no subagent service, so a Lead cannot reach its executor; use executor.orchestration root')
+    await service.sendMessage(lead, childId, [{ type: 'text', text }], { signal })
   }
 
   /** Removes an activation from the map and returns it, for its owner to dispose. */

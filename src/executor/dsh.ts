@@ -350,7 +350,7 @@ export class DshExecutor implements Executor {
         try {
           // Recreate the worker session if it was externally deleted. A Lead-hosted child is owned by its Lead, not by this
           // host as a root Session, so it is never recreated here.
-          if (!this.leads.holds(sessionId) && !this.host.context.agents.get(sessionId as SessionId)) {
+          if (!this.leadProject(ticket) && !this.leads.holds(sessionId) && !this.host.context.agents.get(sessionId as SessionId)) {
             await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker')
           }
           if (input) await this.deliverInput(ticket, assignment, input)
@@ -378,9 +378,19 @@ export class DshExecutor implements Executor {
     const message = inputMessage(input, trigger)
     if (message === undefined) return
     const text = message.length > ASSIGNMENT_CHARS ? JSON.stringify(capped(message, ASSIGNMENT_CHARS, inputResource(ticket.id, input.id))) : message
-    // A Lead-hosted child's Session is subagent-owned and refuses a root prompt, so the Lead steers the message instead.
-    if (await this.leads.steer(workerSessionId(ticket.id), text, this.host.lifetime)) return
-    await this.host.sessions.prompt(workerSessionId(ticket.id), input.id, text, 'steer', live)
+    // A Lead-hosted child's Session is subagent-owned and refuses a root prompt, so the Lead steers the message instead;
+    // after a restart the activation map is empty, but the durable child still takes a message from its Lead.
+    const leadProject = this.leadProject(ticket)
+    if (leadProject) {
+      const lead = await this.host.sessions.ensureLead(leadProject.id, leadProject.workspace, `Lead · ${leadProject.name}`)
+      await this.leads.send(lead, workerSessionId(ticket.id), text, this.host.lifetime)
+    } else await this.host.sessions.prompt(workerSessionId(ticket.id), input.id, text, 'steer', live)
+  }
+  /** The project whose Lead hosts this Ticket's executor, when Orchestration is `lead`. */
+  private leadProject(ticket: Ticket): Project | undefined {
+    const settings = this.host.store.settings()
+    if (settings.executor.orchestration !== 'lead' || ticket.project === undefined) return undefined
+    return projectOf(settings.executor.projects, ticket.project)
   }
   /** Formats a trigger on `ticket` for the worker, including a preview of the replied-to message when the worker has not yet seen it. */
   private async triggerCard(ticket: Ticket, triggerId: string, note?: string): Promise<object | undefined> {
