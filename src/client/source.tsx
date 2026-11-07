@@ -21,6 +21,15 @@ function SourceCard({ source }: { source: SourceView }) {
   const draft = useBlockDraft(`source:${source.id}`, source.value, source.revision)
   const value = draft.value
   const { problem, value: saved } = source
+  const { settings } = useSettings()
+  // The GitHub Source watches its deployment repository and every registered project's repository, so the card lists them all.
+  const projects = source.id === 'github' ? settings.blocks.executor.value.projects : []
+  const primary = String(saved.config.repository ?? '')
+  const watched = source.id === 'github'
+    ? [{ repository: primary, label: t('sourceWatchedPrimary') },
+      ...projects.filter(project => project.repository && project.repository.toLowerCase() !== primary.toLowerCase())
+        .map(project => ({ repository: project.repository, label: project.name }))].filter(item => item.repository)
+    : []
   const changed = (key: string) => String(value.config[key] ?? '') !== String(saved.config[key] ?? '')
   // Saving a modified setup-sensitive field restarts dsh-superagent, interrupting running Assignments.
   const restarts = draft.dirty && source.restarts.some(changed)
@@ -48,6 +57,13 @@ function SourceCard({ source }: { source: SourceView }) {
       </div>}
       {!source.installed && <Hint>{t('sourceNotInstalledHint')}</Hint>}
       {source.installed && source.fields.filter(spec => !spec.advanced).map(field)}
+      {source.installed && watched.length > 0 && <div className="dt-field">
+        <span className="dt-field-head">{t('sourceWatchedRepositories')}<InfoTip text={t('sourceWatchedHint')} /></span>
+        <ul className="dt-list">{watched.map(item => <li key={item.repository} className="dt-row">
+          <div className="dt-row-main"><span className="dt-mono">{item.repository}</span></div>
+          <Tag tone="outline">{item.label}</Tag>
+        </li>)}</ul>
+      </div>}
       {source.installed && advanced.length > 0 && <DisclosureRow icon={<Icon name="settings" />} title={t('advanced')} open={advancedOpen}
         onToggle={() => setAdvancedOpen(!advancedOpen)}>
         <div className="dt-disclosure-body">{advanced.map(field)}</div>
