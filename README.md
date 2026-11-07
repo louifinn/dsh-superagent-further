@@ -37,6 +37,10 @@ Read the numbered documents in order; each builds only on the ones before it.
 
 `pnpm check` runs the typecheck, the tests and the build. CI runs the same command on Linux, macOS and Windows with Node.js 22 and 24, so the Windows-only code paths are exercised on every push.
 
+## Releases
+
+`CHANGELOG.md` records what each version changed, following semantic versioning. A `v*` tag runs the same checks and then packs `dsh-superagent-<version>.tgz`, checks that the bundle is inside it, and attaches it to a GitHub release. Install a release with `dsh plugin --profile superagent add "file:<path to the tarball>"` as [006](docs/006-deployment.md) describes.
+
 ## License
 
 [MIT](LICENSE)

@@ -80,8 +80,10 @@ The P2 scope, in the order this session takes it.
   documented in 006, with `scripts/switch-project` stopping the service-hosted other projects before it starts the named
   one and a test (`tests/switch-project.spec.ts`) covering the switch, the refusals and the port it cannot know; verified
   live with two profiles on this machine.
-- [ ] Release engineering: semver, a CHANGELOG, a packed tarball installed with dsh plugin add <file>, and the
-  install steps in 006 using it.
+- [x] Release engineering: 0.2.0 with a CHANGELOG in Keep a Changelog form; pnpm pack produces a tarball that installs
+  with dsh plugin --profile <name> add "file:<tarball>" (verified on this machine, no checkout needed); 006 documented
+  both install forms; .github/workflows/release.yml runs the checks on a `v*` tag, verifies the tarball contents and
+  creates the GitHub release with it.
 - [ ] Feishu breadth: direct messages, unlisted chats, attachments and several chats, each with a test and documented
   behaviour, plus history backfill paging and rate limits.
 - [ ] Platform and experience: a macOS checklist, panel screenshots in the release check, and a pass for untranslated

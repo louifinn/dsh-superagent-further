@@ -129,6 +129,15 @@ On Windows, run the same commands from PowerShell or `cmd`: create the profile w
 
 The fourth command creates `~/.dsh/profiles/superagent` from the DeepSeek Harness Web template. The fifth installs this bundle. Set `DSH_HOME` to relocate the default `~/.dsh` directory.
 
+A release tarball installs without a checkout: download `dsh-superagent-<version>.tgz` from the project's GitHub releases, then install it by file path instead of `link:`:
+
+```sh
+dsh superagent --from-default-profile web --dump-config > /dev/null
+dsh plugin --profile superagent add "file:$HOME/Downloads/dsh-superagent-0.2.0.tgz"
+```
+
+On Windows use the downloaded path in the same form, for example `dsh plugin --profile superagent add "file:C:/Users/me/Downloads/dsh-superagent-0.2.0.tgz"`. `link:` follows your checkout while you develop; a tarball stays at the version it was packed from, which is what a machine that only runs the agent should use. The tarball contains the built `lib`, the prompts, the skills and the locale files, so no build step is needed after installing it.
+
 Run the profile-creation command only for a new installation. If the profile already exists, that command replaces it and deletes its `cordis.patch.yml`, including machine configuration. Do not use it for upgrades.
 
 ### Install into an existing profile
