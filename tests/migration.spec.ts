@@ -571,3 +571,26 @@ it('fills in the project of Tickets accepted before projects existed', () => {
   expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
   store.close()
 })
+it('groups a Ticket from before Requests existed under a Request of its own', () => {
+  const path = join(directory, 'requests.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  const at = '2026-01-01T00:00:00.000Z'
+  const stored = (id: string) => db.prepare('INSERT INTO ticket VALUES (?,?)')
+    .run(id, JSON.stringify({ id, title: `Fix ${id}`, decisionId: `d-${id}`, mandate: { strength: 'explicit', policyVersion: 'v1', scope: 'repo',
+      basis: { source: 'github', human: true, addressed: true }, actor: { source: 'github', id: 'alice' } }, channels: [],
+      assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at, origin: { triggerId: 'tr-1', triggerIds: ['tr-1'] } }))
+  stored('t-old')
+  db.prepare("UPDATE kv SET value='13' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  const ticket = store.tickets.get('t-old')
+  expect(ticket?.requestId).toBe('t-old')
+  const request = store.requests.get('t-old')
+  expect(request?.title).toBe('Fix t-old')
+  expect(request?.decisionId).toBe('d-t-old')
+  expect(request?.ticketIds).toEqual(['t-old'])
+  expect(request?.ended).toBeUndefined()
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  store.close()
+})

@@ -273,12 +273,33 @@ export type TicketEndBy = 'executor' | 'human'
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
 /** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
 export interface Attention { id: string; question: string; triggerId?: string }
+/**
+ * The accepted human ask a Ticket belongs to. One Request may deliver through several Tickets, one per delivery unit; the
+ * Orchestrator creates it with its Tickets in the accept, orders them by their `after` edges, and reports one result.
+ */
+export interface Request {
+  id: string
+  title: string
+  decisionId: string
+  mandate: Mandate
+  /** The Channels of the messages it was accepted from, which its replies go to. */
+  channels: ChannelRef[]
+  /** The Tickets that deliver it, oldest first. */
+  ticketIds: string[]
+  createdAt: string
+  /** When, by whom, and how it ended; absent while it is open. */
+  ended?: { at: string; by: TicketEndBy; outcome: 'done' | 'partial' | 'stopped'; reason?: string }
+}
 /** Ticket aggregate: an authorized work item with its assignments, channels, thread bindings, and inputs. */
 export interface Ticket {
   id: string
   title: string
   decisionId: string
   mandate: Mandate
+  /** The Request it belongs to; absent only on records from before schema 14 until the upgrade fills it in. */
+  requestId?: string
+  /** Tickets of the same Request it waits on; the Orchestrator dispatches it only after they end. */
+  after?: string[]
   /** The Channels of the messages it was accepted from, which its replies go to. */
   channels: ChannelRef[]
   /** When, by whom, and how the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */

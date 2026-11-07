@@ -4,10 +4,10 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { restrictToOwner } from '../infra/acl.ts'
 import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
-  type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
+  type Request, type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, tooOld } from './migration.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
@@ -91,13 +91,14 @@ export class Store implements Repositories {
             CREATE INDEX IF NOT EXISTS trigger_thread_at ON trigger_thread(thread, at);
             CREATE INDEX IF NOT EXISTS decision_thread ON decision(thread);
             CREATE INDEX IF NOT EXISTS effect_due ON effect(kind, due, seq);
+            CREATE TABLE IF NOT EXISTS request (id TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS lead_message (id TEXT PRIMARY KEY, project TEXT NOT NULL, recipient TEXT NOT NULL,
               request TEXT NOT NULL, at TEXT NOT NULL, value TEXT NOT NULL, UNIQUE (recipient, request));
             CREATE INDEX IF NOT EXISTS lead_message_project ON lead_message(project, at);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {
@@ -250,6 +251,12 @@ export class Store implements Repositories {
     open: (): Ticket[] => this.values('SELECT value FROM ticket WHERE open = 1 ORDER BY rowid DESC'),
     /** Newest first. */
     active: (): Ticket[] => this.values('SELECT value FROM ticket WHERE active = 1 ORDER BY rowid DESC'),
+  }
+  readonly requests = {
+    get: (id: string): Request | undefined => { const row = this.db.prepare('SELECT value FROM request WHERE id=?').get(id); return row ? JSON.parse(String(row.value)) as Request : undefined },
+    save: (request: Request): void => { this.db.prepare('INSERT INTO request VALUES (?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value').run(request.id, JSON.stringify(request)) },
+    /** Newest first. */
+    list: (): Request[] => this.values('SELECT value FROM request ORDER BY rowid DESC'),
   }
   readonly decisions = {
     get: (id: string): Decision | undefined => { const row = this.db.prepare('SELECT value FROM decision WHERE id=?').get(id); return row ? JSON.parse(String(row.value)) as Decision : undefined },

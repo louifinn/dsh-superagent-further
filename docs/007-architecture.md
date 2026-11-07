@@ -170,7 +170,7 @@ Its interfaces are grouped by purpose:
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12).
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13 and 13 to 14).
 
 ### Effects
 
@@ -334,7 +334,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
-| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, and 12 to 13 introduces the Lead Session and message records |
+| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, and 13 to 14 groups each existing Ticket under a Request of its own |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
@@ -514,7 +514,7 @@ Read caches use bounded in-memory `TextCache` instances and are lost on restart.
 
 Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records), and refuses an older one.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request), and refuses an older one.
 
 ## Model-facing interfaces
 

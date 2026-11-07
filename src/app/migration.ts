@@ -7,7 +7,7 @@
 import { basename } from 'node:path'
 import { z } from 'zod'
 import { isoTime, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
-  type Reason, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
+  type Reason, type Request, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
 import { projectByRepository } from '../projects.ts'
 import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 13
+export const SCHEMA_VERSION = 14
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -118,6 +118,30 @@ export function migrateTo12(store: Store): void {
  * the same single transaction as every other upgrade.
  */
 export function migrateTo13(_store: Store): void {}
+
+/**
+ * Schema 14 groups Tickets under a Request — the accepted human ask, which may deliver through several Tickets. A database
+ * from before this version has one Ticket per accepted ask, so each Ticket becomes its own Request: the migration records
+ * the Request and points the Ticket at it. New Requests are created by the Engine with their Tickets from now on.
+ */
+export function migrateTo14(store: Store): void {
+  for (const ticket of store.tickets.list()) {
+    if (ticket.requestId) continue
+    const request: Request = {
+      id: ticket.id,
+      title: ticket.title,
+      decisionId: ticket.decisionId,
+      mandate: ticket.mandate,
+      channels: ticket.channels,
+      ticketIds: [ticket.id],
+      createdAt: ticket.createdAt,
+    }
+    step(`request ${request.id}`, () => {
+      store.requests.save(request)
+      store.tickets.save({ ...ticket, requestId: request.id })
+    })
+  }
+}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

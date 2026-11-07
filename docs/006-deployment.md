@@ -434,8 +434,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 13 (current)`, or
-   `schema 10 migrates to 13 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 14 (current)`, or
+   `schema 10 migrates to 14 on start` when the next start is the one that upgrades the database.
 
 Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
 **Default updated** after upgrading.
