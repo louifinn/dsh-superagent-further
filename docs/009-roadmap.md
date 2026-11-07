@@ -103,8 +103,11 @@ surface now replaces that workaround with a project list inside the Execution se
 - [x] Register projects: each has an ID, a name, an absolute local workspace, an `owner/name` remote repository and an
   optional base branch; the panel edits them in Execution, and a tool-originated save cannot change them
   (`tests/projects.spec.ts`, `tests/settings.spec.ts`).
-- [ ] Sources poll every project: the GitHub Source checks each project's repository, and Triggers and Threads carry the
-  project so `github:<number>` keys from different repositories cannot collide (with a migration for existing records).
+- [x] Sources poll every project: the GitHub Source checks its own repository and every registered project's repository in
+  one round, accepted notifications are filtered to those repositories, each repository keeps its own streams,
+  default-branch CI and read positions, and an Issue or PR from another project's repository gets a Thread id qualified as
+  `github:<owner>/<name>#<ref>` (the deployment's repository keeps the legacy numeric ids), so equal numbers in two
+  repositories cannot collide (`tests/sources.spec.ts`).
 - [x] Tickets belong to a project: a Trigger's repository selects the registered project, the Ticket records it, the
   Executor creates the checkout from that project's local clone (`git worktree add -b agent/<name>` under
   `stateDir/work/<project>/<name>` unless a prepare command is configured), and the worker environment names the project,

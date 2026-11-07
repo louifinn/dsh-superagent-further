@@ -93,9 +93,9 @@ const notification = (number: number, kind: 'issues' | 'pulls' = 'issues') => ({
     type: kind === 'pulls' ? 'PullRequest' : 'Issue', title: '' } })
 const refused = (status: number, text: string) => commandError({ stderr: `gh: ${text} (HTTP ${status})`, code: 1 })
 /** Stubs `gh api` calls against `acme/widgets` and returns the requested paths in order. */
-function github(h: ReturnType<typeof host>, routes: Record<string, unknown>): string[] {
+function github(h: ReturnType<typeof host>, routes: Record<string, unknown>, prototype = false): string[] {
   const reads: string[] = []
-  vi.spyOn(h.commands, 'run').mockImplementation(async (_program, args) => {
+  const read = async (_program: string, args: string[]): Promise<string> => {
     reads.push(args[1]!.replace(/^repos\/acme\/widgets\//, ''))
     const path = reads.at(-1)!.split('?')[0]!
     const list = /\/(comments|reviews|statuses)$/.test(path) ? [] : refused(404, 'Not Found')
@@ -104,7 +104,10 @@ function github(h: ReturnType<typeof host>, routes: Record<string, unknown>): st
     if (value instanceof Error) throw value
     if (args.includes('--include')) return `HTTP/2.0 200 OK\r\nX-Poll-Interval: 60\r\n\r\n${JSON.stringify(value)}`
     return JSON.stringify(args.includes('--slurp') ? [value] : value)
-  })
+  }
+  // A repository-scoped Commands is a new instance, so a test that polls a project stubs the prototype instead.
+  if (prototype) vi.spyOn(Commands.prototype, 'run').mockImplementation(read)
+  else vi.spyOn(h.commands, 'run').mockImplementation(read)
   return reads
 }
 const bare = (reads: string[]) => reads.map(path => path.split('?')[0])
@@ -586,6 +589,42 @@ describe('github source', () => {
     await pollGithubThreads(h)
     expect(h.receive).toHaveBeenCalledTimes(1)
     expect(h.receive.mock.calls[0]![0]).toMatchObject({ actor: { id: 'carol' }, text: 'APPROVED review of commit abc123', meta: { kind: 'review' } })
+    h.store.close()
+  })
+  it('polls every registered project repository and keeps its Threads apart from the deployment repository\'s', async () => {
+    const h = host()
+    h.store.set('github-since', '2026-09-01T00:00:00.000Z')
+    const settings = h.store.settings()
+    h.store.saveSettings({ ...settings, executor: { ...settings.executor,
+      projects: [{ id: 'other', name: 'Other', workspace: '/w/other', repository: 'acme/other', branch: 'main' }] } })
+    const other = (number: number) => ({ id: `n${number}`, updated_at: '2026-09-09T00:00:00Z', reason: 'mention',
+      repository: { full_name: 'acme/other' }, subject: { url: `https://api.github.com/repos/acme/other/issues/${number}`, type: 'Issue', title: '' } })
+    const reads = github(h, { notifications: [other(9)], 'repos/acme/other/issues/9': issue(9, { created_at: '2026-09-09T00:00:00Z' }) }, true)
+    const context = h.context({ kind: 'github', health: ['github'] })
+    await pollRound(context)
+    expect(h.receive.mock.calls.map(([trigger]) => trigger.meta)).toEqual([expect.objectContaining({ number: 9, repository: 'acme/other' })])
+    const trigger = h.receive.mock.calls[0]![0]
+    // The ref is qualified with the repository, so a project's Issue 9 cannot collide with the deployment repository's Issue 9.
+    expect(trigger.threads).toEqual([{ source: 'github', id: 'acme/other#9' }])
+    expect(trigger.channel).toMatchObject({ source: 'github', thread: 'github:acme/other#9', address: { number: '9', repository: 'acme/other' } })
+    expect(h.store.threads.get('github:acme/other#9')).toBeDefined()
+    expect(reads).toContain('repos/acme/other/issues/9')
+    vi.restoreAllMocks()
+    h.store.close()
+  })
+  it('reports a project repository the agent cannot read in health instead of failing the round', async () => {
+    const h = host()
+    h.store.set('github-since', '2026-09-01T00:00:00.000Z')
+    const settings = h.store.settings()
+    h.store.saveSettings({ ...settings,
+      executor: { ...settings.executor, projects: [{ id: 'locked', name: 'Locked', workspace: '/w/locked', repository: 'acme/locked', branch: 'main' }] },
+      sources: { ...settings.sources, github: { enabled: true, config: { repository: 'acme/widgets', cli: '/bin/false', observeIssues: true } } } })
+    // The deployment's Issue stream answers; the locked project's answers 404, as a repository the agent cannot see does.
+    github(h, { notifications: [], issues: [] }, true)
+    const context = h.context({ kind: 'github', health: ['github'] })
+    await expect(pollRound(context)).resolves.toBe(60)
+    expect(h.health.github).toMatchObject({ state: 'ready', detail: expect.stringContaining('project repositories unreadable: acme/locked') })
+    vi.restoreAllMocks()
     h.store.close()
   })
   it('reads each PR once per round and takes its end, auto-merge and CI from that read', async () => {

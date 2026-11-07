@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { z } from 'zod'
 import type { Deployment } from '../deployment.ts'
 import { batchArguments, expandsInBatch, isBatchFile } from './batch.ts'
+import { sameName } from './text.ts'
 
 const exec = promisify(execFile)
 const TIMEOUT_MS = 90_000
@@ -115,10 +116,18 @@ export class Commands {
    * @param resolved - returns the resolved deployment setup, or throws while setup is still pending.
    * @param environment - variables overriding `process.env` for every command (such as isolated git settings).
    */
-  constructor(private readonly resolved: () => Deployment, private readonly environment: Record<string, string | undefined>, private readonly signal: AbortSignal) {}
+  constructor(private readonly resolved: () => Deployment, private readonly environment: Record<string, string | undefined>, private readonly signal: AbortSignal,
+    private readonly scoped?: string) {}
   get deployment(): Deployment { return this.resolved() }
-  get repository(): string { return this.deployment.repository }
-  withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
+  /** The repository GitHub calls address: the deployment's, or the project's this instance is scoped to. */
+  get repository(): string { return this.scoped ?? this.deployment.repository }
+  withSignal(signal?: AbortSignal): Commands {
+    return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal]), this.scoped) : this
+  }
+  /** A view of these commands whose GitHub API calls address `repository` (a registered project's) instead of the deployment's. */
+  withRepository(repository: string): Commands {
+    return sameName(repository, this.repository) ? this : new Commands(this.resolved, this.environment, this.signal, repository)
+  }
   async run(program: string, args: string[], cwd?: string, stdin?: string): Promise<string> {
     const environment = { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' }
     try {
@@ -158,6 +167,7 @@ export class Commands {
   private path(path: string): string {
     const outside = /^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)/i.test(path)
     if (outside) throw new Error('GitHub calls are restricted to the configured repository')
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(this.repository)) throw new Error('GitHub calls are restricted to an owner/name repository')
     return path ? `repos/${this.repository}/${path}` : `repos/${this.repository}`
   }
   /**
