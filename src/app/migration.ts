@@ -1,6 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
- * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed.
+ * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -19,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 12
+export const SCHEMA_VERSION = 13
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -110,6 +111,13 @@ export function migrateTo12(store: Store): void {
     if (project) step(`ticket ${ticket.id}`, () => { store.tickets.save({ ...ticket, project: project.id }) })
   }
 }
+/**
+ * Schema 13 keeps the Lead Session id in `KV.lead.sessions` and the project messages in the `lead_message` table, both
+ * created by the Store before this runs; no schema 12 record changes shape here. The step stays in the sequence so a later
+ * record rewrite that belongs to this version has one place to live, and so a schema 12 database still reaches 13 through
+ * the same single transaction as every other upgrade.
+ */
+export function migrateTo13(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

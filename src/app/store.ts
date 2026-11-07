@@ -7,7 +7,8 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, tooOld } from './migration.ts'
+import { LeadMessages } from './lead-messages.ts'
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
 
@@ -51,6 +52,8 @@ export { SCHEMA_VERSION }
  */
 export class Store implements Repositories {
   readonly db: DatabaseSync
+  /** Records exchanged between the Orchestrator and each project's Lead Session (docs/010-project-orchestrator.md). */
+  readonly leads: LeadMessages
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
@@ -59,6 +62,7 @@ export class Store implements Repositories {
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
+    this.leads = new LeadMessages(this.db)
     this.read = storeReads(this.db)
     // Windows ignores the directory mode above, so the directory and the database are given an owner-only ACL; on Unix this is
     // the 0700 directory and 0600 file mode the rest of the code expects.
@@ -87,10 +91,13 @@ export class Store implements Repositories {
             CREATE INDEX IF NOT EXISTS trigger_thread_at ON trigger_thread(thread, at);
             CREATE INDEX IF NOT EXISTS decision_thread ON decision(thread);
             CREATE INDEX IF NOT EXISTS effect_due ON effect(kind, due, seq);
+            CREATE TABLE IF NOT EXISTS lead_message (id TEXT PRIMARY KEY, project TEXT NOT NULL, recipient TEXT NOT NULL,
+              request TEXT NOT NULL, at TEXT NOT NULL, value TEXT NOT NULL, UNIQUE (recipient, request));
+            CREATE INDEX IF NOT EXISTS lead_message_project ON lead_message(project, at);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {

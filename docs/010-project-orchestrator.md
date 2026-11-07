@@ -1,6 +1,6 @@
 # 010 Project-level orchestrator
 
-Status: **proposed** (2026-11-08). The operator opened the design with two observations: the total
+Status: **accepted** (2026-11-08). The operator opened the design with two observations: the total
 Orchestrator and the executors have no project-level layer between them, and executors are root
 Sessions in the session list; and the panel's GitHub Source card showed one watched repository even
 though the Source polls every registered project. The card is fixed (`2b36d37`). This document plans
@@ -164,6 +164,10 @@ Executor (interfaces only, old path still used); recovery scaffolding (`adoptLea
 Acceptance: existing `pnpm check` stays green; new unit tests cover message records, idempotent
 delivery, Lead ensure/decorate, and `ticketOfSession` for a subagent worker; a manual script creates a
 Lead Session, round-trips one message and disposes it on the real host.
+
+Status (2026-11-08): built — schema 13 with the `lead_message` table and `LeadMessages`, the
+`dsh-superagent-lead` preset and its prompt section, `ensureLead`/`adoptLead` with reserved ids, and the
+project-aware interfaces. The manual round-trip on the real host follows once P2 exercises a Lead.
 
 **P2 — Execution path.** `DshExecutor` can start a worker as a Lead subagent when
 `executor.orchestration = 'lead'`: `startActivation` with the reserved id, `delivery: 'parent'`,

@@ -15,8 +15,9 @@ import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
-import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
+import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import type { Store } from './store.ts'
+import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
 
@@ -44,8 +45,13 @@ export interface SessionsHost {
  */
 interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
 
-/** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
-export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
+/** The agent presets Executor Sessions, the main Session and project Lead Sessions are created with, which the bundle's patch defines. */
+export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router', LEAD_PRESET = 'dsh-superagent-lead'
+/** The Session id of a project's Lead: one persistent Session per registered project (docs/010-project-orchestrator.md). */
+export const leadSessionId = (projectId: string): string => `lead-${projectId}`
+/** The project a Session id names as its Lead, if it is a Lead Session's id. */
+export const leadProjectOf = (sessionId: string): string | undefined =>
+  sessionId.startsWith('lead-') ? sessionId.slice('lead-'.length) || undefined : undefined
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /** DSH's agent preset registry selected `agentPreset` for a Session. */
@@ -133,8 +139,9 @@ export class Sessions {
     // its first turn DSH refuses any selection, which leaves it as it is.
     ctx.inject(['agentPresets'], child => {
       child.on('agent-preset/selected', (sessionId, preset) => {
-        const ticketId = ticketOfSession(sessionId), agent = ctx.agents.get(sessionId as SessionId)
-        const ours = sessionId === this.host.masterId ? ROUTER_PRESET : ticketId && this.host.store.tickets.get(ticketId) ? WORKER_PRESET : undefined
+        const ticketId = ticketOfSession(sessionId), projectId = leadProjectOf(sessionId), agent = ctx.agents.get(sessionId as SessionId)
+        const ours = sessionId === this.host.masterId ? ROUTER_PRESET : projectId ? LEAD_PRESET
+          : ticketId && this.host.store.tickets.get(ticketId) ? WORKER_PRESET : undefined
         if (!ours || preset === ours || !agent) return
         const presets = child.get('agentPresets') as { select(agent: Agent, preset: string): Promise<string> }
         presets.select(agent, ours).catch(() => {})
@@ -145,14 +152,14 @@ export class Sessions {
     })
   }
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
-  async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker'): Promise<Agent> {
+  async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'lead'): Promise<Agent> {
     const ctx = this.ctx
     let result = await ctx.sessionController.resolveAgent(id as SessionId)
     if ('error' in result && result.error.code === 'session/not-found') {
       const workspace = await ctx.workspaceRegistry.create(cwd)
       // A Session keeps the preset it was created with, one of the bundle's own (cordis.patch.yml).
       await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id,
-        agentPreset: role === 'worker' ? WORKER_PRESET : ROUTER_PRESET })
+        agentPreset: role === 'worker' ? WORKER_PRESET : role === 'lead' ? LEAD_PRESET : ROUTER_PRESET })
       result = await ctx.sessionController.resolveAgent(id as SessionId)
     }
     if ('error' in result) throw result.error
@@ -162,6 +169,31 @@ export class Sessions {
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
     return result.agent
+  }
+  /**
+   * Resolves or creates the Lead Session of a registered project and records its Session id in `KV.lead.sessions`, so a
+   * later startup and the panel find the same Session. Decorating the Session happens in `ensure`; the Lead's own tools and
+   * the executors it directs arrive in the execution phase.
+   */
+  async ensureLead(projectId: string, cwd: string, title: string): Promise<Agent> {
+    const agent = await this.ensure(leadSessionId(projectId), cwd, title, 'lead')
+    this.host.store.set(KV.lead.sessions(projectId), agent.id)
+    return agent
+  }
+  /**
+   * Returns a project's Lead Session, recovered from the Store's recorded id or recreated when it is not loaded, and
+   * re-decorates the recovered agent. Executors already running under it are adopted in the execution phase; this is the
+   * recovery entry point that phase builds on.
+   */
+  async adoptLead(projectId: string, cwd: string, title: string): Promise<Agent> {
+    const recorded = this.host.store.get(KV.lead.sessions(projectId)) ?? leadSessionId(projectId)
+    const result = await this.ctx.sessionController.resolveAgent(recorded as SessionId)
+    if (!('error' in result)) {
+      await this.decorate(result.agent)
+      this.host.store.set(KV.lead.sessions(projectId), result.agent.id)
+      return result.agent
+    }
+    return this.ensureLead(projectId, cwd, title)
   }
   /** Returns whether `sessionId` already holds the message delivered under `requestId`, or `false` if the session does not exist. */
   async holds(sessionId: string, requestId: string): Promise<boolean> {
@@ -243,8 +275,9 @@ export class Sessions {
     if (this.bindings.has(agent)) return
     const host = this.host
     const master = agent.id === host.masterId
-    const ticket = master ? undefined : this.ticketOf(agent)
-    if (!master && !ticket) { this.limitSubagent(agent); return }
+    const project = master ? undefined : this.leadProject(agent)
+    const ticket = master || project ? undefined : this.ticketOf(agent)
+    if (!master && !project && !ticket) { this.limitSubagent(agent); return }
     const binding: SessionBinding = { disposers: [] }
     this.bindings.set(agent, binding)
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
@@ -254,7 +287,8 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
+      const composed = project ? composeLeadPrompt(version.config, project)
+        : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
@@ -268,14 +302,21 @@ export class Sessions {
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
     const register = this.registerTool(agent, binding)
-    for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+    // A Lead gets the preset's native tools (including delegation) and no application tools yet: its assignment tools are
+    // part of the execution phase. An Executor Session gets the application tools its worker uses.
+    if (!project) for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
     if (master) {
       binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', SHELL_TOOL, 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
-    } else {
+    } else if (!project) {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
       binding.disposers.push(...this.workOnly(agent, ticket!.id))
     }
+  }
+  /** The registered project whose Lead Session `agent` is, if its Session id names one and the project is still registered. */
+  private leadProject(agent: Agent): Project | undefined {
+    const projectId = leadProjectOf(agent.id)
+    return projectId === undefined ? undefined : this.host.store.settings().executor.projects.find(project => project.id === projectId)
   }
   /**
    * Whether a Session runs the router preset: as DSH's preset registry last selected it, read through the session projection

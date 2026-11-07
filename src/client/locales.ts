@@ -542,6 +542,7 @@ const TEXT = {
   'promptPart.runtime/shared': ['共享约定', 'Shared rules'],
   'promptPart.runtime/orchestrator': ['主 Session 角色', 'Main Session role'],
   'promptPart.runtime/worker': ['执行器角色', 'Executor role'],
+  'promptPart.runtime/lead': ['项目 Lead 角色', 'Project Lead role'],
   'promptPart.runtime/subscriptions': ['订阅', 'Subscriptions'],
   'promptPart.runtime/replies': ['回复与确认', 'Replies and acknowledgements'],
   'promptPart.runtime/dispatch': ['路由', 'Routing'],

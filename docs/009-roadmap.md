@@ -126,7 +126,7 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
 
 - [ ] P1 Foundation: Lead agent preset and prompt section, `LeadMessages` records with idempotent delivery, the `Sessions`
   Lead branch (ensure, decoration, disposal, reserved ids), recovery scaffolding, and project-aware interfaces — no
-  entry-point change.
+  entry-point change. (Built: preset, prompt, records, schema 13 and the Session branch; the live round-trip follows P2.)
 - [ ] P2 Execution path: an executor runs as a Lead subagent under `executor.orchestration = 'lead'`, reports settle through
   the Lead, interrupt and stop work, adoption after a restart, per-project concurrency.
 - [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead, notices and replies route through

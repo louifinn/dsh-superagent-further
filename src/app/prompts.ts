@@ -2,9 +2,10 @@
 import { z } from 'zod'
 import { UserError, key } from '../core/index.ts'
 import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
-import { masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
+import { leadPrompt, masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
 import { environmentLines, type Variable } from './execution-environment.ts'
 import { promptsNotice } from './notices.ts'
+import type { Project } from '../projects.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
@@ -21,7 +22,7 @@ export const SKILL_PREFIX = 'dsh-superagent-'
 const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.keys(sourceSkills) as string[]).includes(name),
   'This name belongs to a built-in skill')
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
-const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
+const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/lead', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
   'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github'] as const
 export type PartKey = typeof PART_KEYS[number]
@@ -54,7 +55,7 @@ let parts: Readonly<Record<PartKey, BuiltInPart>> | undefined
  */
 export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts ??= {
   'runtime/shared': { roles: BOTH, text: sharedPrompt }, 'runtime/orchestrator': { roles: MAIN, text: masterPrompt },
-  'runtime/worker': { roles: WORKER, text: workerPrompt },
+  'runtime/worker': { roles: WORKER, text: workerPrompt }, 'runtime/lead': { roles: [], text: leadPrompt },
   'runtime/subscriptions': { roles: BOTH, text: `## subscriptions\n${guides.subscriptions}` },
   'runtime/replies': { roles: BOTH, text: `## replies\n${guides.replies}` },
   'runtime/dispatch': { roles: MAIN, text: `## dispatch\n${guides.dispatch}` }, 'runtime/work': { roles: WORKER, text: `## work\n${guides.work}` },
@@ -119,6 +120,23 @@ export function composePrompt(config: PromptConfig, role: Role, environment?: st
 }
 export function composeSkill(config: PromptConfig, name: string): string {
   return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
+}
+/**
+ * The prompt of a project's Lead Session: the shared rules and the Lead's own instructions, the team's sections, the two
+ * conversation guides, the execution environment, and the project the Lead owns. It leaves out the Orchestrator's admission
+ * and Policy sections and the worker's work section, which do not apply to a Lead.
+ */
+export function composeLeadPrompt(config: PromptConfig, project: Project, variables?: Variable[]): string {
+  const team = (name: TeamSection) => config[name] ? `## ${TEAM_HEADINGS[name]}\n${config[name]}` : ''
+  return [builtIn(config, 'runtime/shared'), builtIn(config, 'runtime/lead'), ...TEAM_SECTIONS.map(team),
+    builtIn(config, 'runtime/subscriptions'), builtIn(config, 'runtime/replies'), environmentSection(config, variables),
+    projectSection(project)].filter(Boolean).join('\n\n')
+}
+/** The project a Lead owns, named so the Lead knows its clone, repository and base branch; a person may talk to it. */
+function projectSection(project: Project): string {
+  return ['## project', `Project ${project.name} (${project.id}).`, `Local clone ${project.workspace}; repository ${project.repository}; `
+    + `base branch ${project.branch || 'the repository default branch'}.`, 'Tickets the Orchestrator hands you are worked in a '
+    + 'worktree created from this clone; a person may write to you directly in the panel.'].join('\n')
 }
 
 /** An override whose built-in text changed since its `base`, with that text when kept, or whose part this version no longer has. */

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { ROUTER_PRESET, WORKER_PRESET } from '../src/app/sessions.ts'
+import { LEAD_PRESET, ROUTER_PRESET, WORKER_PRESET } from '../src/app/sessions.ts'
 
 interface Row { id?: string; name: string; disabled?: unknown; config?: Record<string, unknown> & { plugins?: Row[] } | Row[] }
 /** The patch as DSH reads it: Cordis's include plugin parses `!!js` scalars, and applies the inserts to an entry list. */
@@ -29,7 +29,7 @@ const presetOf = (rows: readonly Row[], id: string) => rows.map(row => row.confi
 it('defines the worker preset Executor Sessions run under, with a shell that moves long commands to the background', async () => {
   const rows = await patched()
   expect(rows.map(row => row.id)).toEqual(['dsh-superagent', 'dsh-superagent-github', 'dsh-superagent-feishu', 'dsh-superagent-worker-preset',
-    'dsh-superagent-router-preset'])
+    'dsh-superagent-router-preset', 'dsh-superagent-lead-preset'])
   const preset = presetOf(rows, WORKER_PRESET)
   expect(preset.id).toBe(WORKER_PRESET)
   const plugins = flat(preset.plugins)
@@ -70,4 +70,29 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
     '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-plan-mode',
     '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal',
     '@deepseek-ai/dsh-command-goal', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
+})
+
+it('defines the project Lead preset: read-only files, code search, and delegation that spawns executors', async () => {
+  const rows = await patched()
+  const lead = presetOf(rows, LEAD_PRESET), worker = presetOf(rows, WORKER_PRESET)
+  expect(lead.order).toBe(89)
+  const plugins = flat(lead.plugins)
+  const named = (name: string) => plugins.filter(row => row.name === name).map(row => row.config)
+  // The same 5-second shell and job waits as the other managed Sessions.
+  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox', '@deepseek-ai/dsh-tool-jobs']) {
+    expect(named(name), name).toEqual(flat(worker.plugins).filter(row => row.name === name).map(row => row.config))
+  }
+  // It reads files and searches code, but does not write or edit: its executors do that in their worktrees.
+  expect(named('@deepseek-ai/dsh-tool-fs')).toEqual([{ write: false, edit: false }])
+  for (const name of ['@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-skill-filesystem',
+    '@deepseek-ai/dsh-agent-instructions']) expect(named(name).length, name).toBeGreaterThan(0)
+  // The delegation tools spawn Executor Sessions under the worker preset.
+  expect(named('@deepseek-ai/dsh-tool-subagent')).toEqual([expect.objectContaining({ provider: 'spawn', agentPreset: WORKER_PRESET })])
+  expect(named('@deepseek-ai/dsh-tool-subagent-control').length).toBeGreaterThan(0)
+  // Workflow, structured-question, presentation, scheduling and goal tools are not a Lead's.
+  const names = plugins.map(row => row.name)
+  for (const name of ['@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-ask-user',
+    '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-plan-mode', '@deepseek-ai/dsh-plugin-manager/tools',
+    '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal', '@deepseek-ai/dsh-command-goal'])
+    expect(names, name).not.toContain(name)
 })
