@@ -131,7 +131,7 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
   the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the setting, the
   activation request and tracking, the Lead-hosted launch path, disposal on stop and shutdown, Lead-steered input
   delivery across a restart, the merged-PR end, and the project-aware `WorkerSlots` (per-project `projectWorkers` beside the global `maxWorkers`); the host-level fake-subagent test and the recovery-adoption test pass.)
-- [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead, notices and replies route through
+- [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed: `leadOverview`, the overview `leads` payload and its Project Leads section), notices and replies route through
   it, the panel shows the Lead row and the settings, docs 001/003/004/006/007 are updated, and the default flips.
 - [ ] P4 Cleanup: remove the root-worker path, simplify Sessions/DshExecutor/panel links, and decide the deferred
   one-Ticket-to-many-executors question.

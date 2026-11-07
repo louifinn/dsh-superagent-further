@@ -1795,6 +1795,9 @@ it('starts a Ticket executor as a child of its project Lead when Orchestration i
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
   await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
+  // The panel's Lead row names the Session and the project it serves.
+  expect(runtime.leadOverview()).toEqual([{ project: 'app', name: 'App', session: 'lead-app', status: expect.any(String),
+    running: 0, waiting: 0 }])
 })
 
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {

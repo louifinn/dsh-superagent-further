@@ -6,7 +6,7 @@ import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
 import { healthText, localized, reasonLabel, valueLabel, readableMarkers, when } from './text.ts'
-import { CheckSetupButton, ConfirmButton, Hint, LoadState, Section, SetupMessage } from './widgets.tsx'
+import { CheckSetupButton, ConfirmButton, Hint, LabelValue, LoadState, Section, SetupMessage } from './widgets.tsx'
 
 function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () => Promise<void> }) {
   const { t, call, navigate } = usePanel()
@@ -87,6 +87,22 @@ export function OverviewPage() {
         onChanged={reload} />)}</ul>
         : <Hint>{t('needsYouNone')}</Hint>}
     </Section>
+    {/* One row per registered project: its Lead Session, and the executors and messages the project holds. */}
+    {data.leads.length > 0 && <Section title={t('leadsTitle')} count={data.leads.length}>
+      <ul className="dt-list">
+        {data.leads.map(lead => <li key={lead.project} className="dt-row">
+          <div className="dt-row-main">
+            <div className="dt-att-what">{lead.name}</div>
+            <div className="dt-row-meta">
+              <LabelValue label={t('leadStateLabel')} value={lead.status === 'running' ? t('leadRunning')
+                : lead.status === 'absent' ? t('leadAbsent') : t('leadIdle')} />
+              <LabelValue label={t('leadExecutorsLabel')} value={String(lead.running)} />
+              <LabelValue label={t('leadWaitingLabel')} value={String(lead.waiting)} />
+            </div>
+          </div>
+        </li>)}
+      </ul>
+    </Section>}
     {data.problems.length > 0 && <Section title={t('problems')} count={data.problems.length}>
       <ul className="dt-list dt-cards">{data.problems.map((problem, index) => <ProblemLine key={index} problem={problem}
         onChanged={reload} />)}</ul>

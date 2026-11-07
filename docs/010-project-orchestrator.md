@@ -193,6 +193,8 @@ Lead-hosted child after a restart instead of starting a new Session"). P2 is com
 real-host run used a GitHub Source Ticket because no ticket-creation route exists yet; P3 adds it. The live run used a
 GitHub Source Ticket because no ticket-creation route exists yet; creating one is P3.
 
+Status (2026-11-08, P3 start): the overview payload carries one `LeadRow` per registered project (`runtime.leadOverview()`: project, name, Lead Session id and state, running executors, undelivered messages), and the Overview renders a Project Leads section; dispatching accepted Tickets to the Lead, the Lead application tools, and flipping the default remain.
+
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of
 creating a root worker Session; notices/replies route through the Lead; the panel shows a project row
 (Lead Session, running executors, waiting messages) on the Overview and lets a person open the Lead;

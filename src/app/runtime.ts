@@ -26,7 +26,7 @@ import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
 import { Store } from './store.ts'
-import { evalsHealth } from './views/overview.ts'
+import { evalsHealth, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
@@ -259,10 +259,25 @@ export class Runtime extends Service implements SourceHost {
       try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
     }
   }
+  /**
+   * One row per registered project for the panel: its Lead Session, whether that Session runs, and how many executors and
+   * undelivered messages the project holds. A project whose Lead was never started has no session and reports `absent`.
+   */
+  leadOverview(): LeadRow[] {
+    const open = this.store.tickets.open()
+    return this.store.settings().executor.projects.map(project => {
+      const session = this.store.get(KV.lead.sessions(project.id))
+      const agent = session === undefined ? undefined : this.ctx.agents.get(session as SessionId)
+      return { project: project.id, name: project.name, session: session ?? '', status: agent?.status ?? 'absent',
+        running: open.filter(ticket => ticket.project === project.id && ticket.assignments.at(-1)?.state === 'running').length,
+        waiting: this.store.leads.waiting('lead', project.id).length }
+    })
+  }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+      leadOverview: () => runtime.leadOverview(),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

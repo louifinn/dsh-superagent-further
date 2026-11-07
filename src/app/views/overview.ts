@@ -7,6 +7,9 @@ import type { Store } from '../store.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
+
+/** One project's Lead in the panel: its Session, and the executors and messages the project holds. */
+export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number }
 import { preview } from './text.ts'
 
 /** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
@@ -35,7 +38,9 @@ export function evalsHealth(store: Store, now = Date.now()): Health {
  * Builds the operator overview: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow.
  * @param setup - Setup problem to surface first (where setup stopped, or a Source paused by setup).
  */
-export function overview(host: ViewHost, health: HealthMap, policyVersionValue: string, load: ExecutorLoad, setup?: SetupProblem) {
+export function overview(host: ViewHost, health: HealthMap, policyVersionValue: string, load: ExecutorLoad, setup?: SetupProblem,
+  /** One row per registered project, so the panel can show each Lead and what it holds. */
+  leads: LeadRow[] = []) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -79,6 +84,7 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     // The panel filters the waiting list by project; ids are stable, names are what a person recognises.
     projects: settings.executor.projects.map(({ id, name }) => ({ id, name })),
     policyVersion: policyVersionValue,
+    leads,
   }
 }
 export type OverviewView = ReturnType<typeof overview>

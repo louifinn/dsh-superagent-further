@@ -26,6 +26,24 @@ it('leads the overview with the pending Tickets, then problems, the last day and
   expect(tab(zh['tab.execution']).getAttribute('aria-selected')).toBe('true')
 })
 
+it('shows one row per registered project with its Lead Session, executors and waiting messages', async () => {
+  server.settings.executor.projects = [
+    { id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' },
+    { id: 'lib', name: 'Lib', workspace: '/w/lib', repository: 'acme/lib', branch: '' }]
+  server.leads = [
+    { project: 'app', name: 'App', session: 'lead-app', status: 'running', running: 2, waiting: 1 },
+    { project: 'lib', name: 'Lib', session: '', status: 'absent', running: 0, waiting: 0 }]
+  await mount()
+  expect(all('.dt-section-title').map(title => title.textContent)).toContain('项目 Lead2')
+  const titles = all('.dt-section').find(section => section.querySelector('.dt-section-title')?.textContent === '项目 Lead2')!
+  const rows = [...titles.querySelectorAll('.dt-row')].map(row => row.textContent ?? '')
+  expect(rows[0]).toContain('App')
+  expect(rows[0]).toContain(zh.leadRunning)
+  expect(rows[0]).toContain('2')
+  expect(rows[0]).toContain(zh.leadWaitingLabel)
+  expect(rows[1]).toContain(zh.leadAbsent)
+})
+
 it('names the project a Ticket belongs to', async () => {
   server.person = [ticketSummary({ id: 't7', title: '项目里的工单', project: 'napkid' }, { stage: 'person', action: 'review' })]
   await mount()
