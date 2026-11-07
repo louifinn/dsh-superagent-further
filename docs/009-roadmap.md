@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1260 passed and 5 skipped (1265) on Windows, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1262 passed and 5 skipped (1267) on Windows, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` is committed but has never run: the repository has no remote yet.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
@@ -56,7 +56,8 @@ The P1 scope.
   through the child's own lifetime instead of a stopwatch. Ten consecutive full runs were green, one next to a concurrent
   WSL suite.
 - [x] Upgrade and migration: `scripts/verify-install` reads the state database read-only and fails when it is newer than
-  the checkout; 006 lists the upgrade steps and the rollback; `tests/migration.spec.ts` covers schema 10 to 11.
+  the checkout; 006 lists the upgrade steps and the rollback; `tests/migration.spec.ts` covers schema 10 to 12, including
+  filling in the project of Tickets accepted before projects existed.
 - [x] Observability: a polling Source reports when it next checks and, while it keeps failing, the consecutive count and
   the last error; the overview reports outbox waiting and failing counts, the oldest wait and the next attempt; the panel
   shows each Ticket's stage age; each host keeps a bounded log history.
@@ -109,8 +110,9 @@ surface now replaces that workaround with a project list inside the Execution se
   `stateDir/work/<project>/<name>` unless a prepare command is configured), and the worker environment names the project,
   workspace and repository (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`, `DSH_SUPERAGENT_GITHUB_REPOSITORY`).
 - [~] The panel and the digest show the project: the overview filters waiting Tickets by project and every Ticket line
-  names it; the Triggers list and the daily digest still show all projects together, and the panel has no per-project
-  page yet.
+  names it; the daily digest groups waiting Tickets under their project names (Tickets without one last); the Triggers
+  list still shows all projects together, and the panel has no per-project page yet. A schema 11 database fills in the
+  project of Tickets accepted before projects existed (`tests/migration.spec.ts`).
 - [ ] Feishu routing: one group manages all projects; a Feishu Trigger's project is resolved per message (the project it
   names first, the configured default otherwise) rather than bound to a chat.
 ## Sprint 1 checklist

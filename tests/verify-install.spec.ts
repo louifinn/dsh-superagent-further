@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
+import { SCHEMA_VERSION } from '../src/app/migration.ts'
 
 interface Check { ok: boolean; name: string; detail: string }
 
@@ -111,9 +112,9 @@ it('reports the current schema version when the database matches this checkout',
   const dshHome = home()
   const stateDir = join(dshHome, 'state')
   profile(dshHome, stateDir)
-  database(stateDir, 11)
+  database(stateDir, SCHEMA_VERSION)
   const { code, checks } = await verify(dshHome, await serve(stateDir))
-  expect(schema(checks)).toMatchObject({ ok: true, detail: 'schema 11 (current)' })
+  expect(schema(checks)).toMatchObject({ ok: true, detail: `schema ${SCHEMA_VERSION} (current)` })
   expect(code).toBe(0)
 }, 30_000)
 
@@ -121,19 +122,19 @@ it('reports a database from an older schema as one that migrates on start', asyn
   const dshHome = home()
   const stateDir = join(dshHome, 'state')
   profile(dshHome, stateDir)
-  database(stateDir, 10)
-  expect(schema((await verify(dshHome, await serve(stateDir))).checks)).toMatchObject({ ok: true, detail: 'schema 10 migrates to 11 on start' })
+  database(stateDir, SCHEMA_VERSION - 2)
+  expect(schema((await verify(dshHome, await serve(stateDir))).checks)).toMatchObject({ ok: true, detail: `schema ${SCHEMA_VERSION - 2} migrates to ${SCHEMA_VERSION} on start` })
 }, 30_000)
 
 it('fails on a database written by a newer checkout, naming the backup', async () => {
   const dshHome = home()
   const stateDir = join(dshHome, 'state')
   profile(dshHome, stateDir)
-  database(stateDir, 12)
+  database(stateDir, SCHEMA_VERSION + 1)
   const { code, checks } = await verify(dshHome, await serve(stateDir))
   const check = schema(checks)
   expect(check.ok).toBe(false)
-  expect(check.detail).toMatch(/schema 12 is newer than this checkout \(11\)/)
+  expect(check.detail).toMatch(new RegExp(`schema ${SCHEMA_VERSION + 1} is newer than this checkout \\(${SCHEMA_VERSION}\\)`))
   expect(check.detail).toMatch(/restore the backup/)
   expect(code).toBe(1)
 }, 30_000)

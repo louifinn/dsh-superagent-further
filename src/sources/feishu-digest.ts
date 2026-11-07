@@ -44,12 +44,38 @@ const waitingDays = (at: string | undefined, now: Date): number => {
   return Number.isNaN(then) ? 0 : Math.max(0, Math.floor((now.getTime() - then) / DAY))
 }
 
+/** One waiting Ticket's bullet, its waiting time, and its link; shared by the flat and the grouped list. */
+const entry = (ticket: Ticket, words: (typeof ACTIONS)['zh'] | (typeof ACTIONS)['en'], now: Date, speakChinese: boolean): string[] => {
+  const stage = ticketStage(ticket)
+  const action = stage.stage === 'person' ? words[stage.action] : ''
+  const days = waitingDays(ticket.updatedAt, now)
+  const waited = days === 0 ? '' : speakChinese ? `，已等 ${days} 天` : `, waiting ${days} ${days === 1 ? 'day' : 'days'}`
+  const lines = [`· ${ticket.title} — ${action}${waited}`]
+  const link = ticket.channels.map(channel => channel.address.url).find(url => typeof url === 'string' && url !== '')
+  if (link) lines.push(`  ${link}`)
+  return lines
+}
+
+/** Waiting Tickets by project id, named projects in id order first and Tickets without one last. */
+const byProject = (tickets: readonly Ticket[]): [string, Ticket[]][] => {
+  const groups = new Map<string, Ticket[]>()
+  for (const ticket of tickets) {
+    const id = ticket.project ?? ''
+    const group = groups.get(id)
+    if (group) group.push(ticket)
+    else groups.set(id, [ticket])
+  }
+  return [...groups.entries()].sort(([left], [right]) => (left === '' ? 1 : right === '' ? -1 : left.localeCompare(right)))
+}
+
 /**
  * The digest text for the open Tickets `tickets` at `now`: how many wait for a person, what each needs and
  * how long it has waited, and how many are working. It always says something, so a quiet day is still a
- * daily message; only a waiting Ticket speaks Chinese or English, an empty one says it in both.
+ * daily message; only a waiting Ticket speaks Chinese or English, an empty one says it in both. When any
+ * waiting Ticket names a project, the list is grouped under the project names in `names`; otherwise it
+ * stays one flat list, exactly as before projects existed.
  */
-export const digestText = (tickets: readonly Ticket[], now: Date): string => {
+export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonly<Record<string, string>> = {}): string => {
   const person = tickets.filter(ticket => ticketStage(ticket).stage === 'person')
   const working = tickets.length - person.length
   const speakChinese = person.length === 0
@@ -62,16 +88,27 @@ export const digestText = (tickets: readonly Ticket[], now: Date): string => {
   } else {
     lines.push(speakChinese ? `待你处理 ${person.length} 单：` : `${person.length} ${person.length === 1 ? 'Ticket waits' : 'Tickets wait'} for you:`)
     const ordered = person.slice().sort((left, right) => (left.updatedAt ?? '').localeCompare(right.updatedAt ?? ''))
-    for (const ticket of ordered.slice(0, SHOWN)) {
-      const stage = ticketStage(ticket)
-      const action = stage.stage === 'person' ? words[stage.action] : ''
-      const days = waitingDays(ticket.updatedAt, now)
-      const waited = days === 0 ? '' : speakChinese ? `，已等 ${days} 天` : `, waiting ${days} ${days === 1 ? 'day' : 'days'}`
-      lines.push(`· ${ticket.title} — ${action}${waited}`)
-      const link = ticket.channels.map(channel => channel.address.url).find(url => typeof url === 'string' && url !== '')
-      if (link) lines.push(`  ${link}`)
+    const grouped = ordered.some(ticket => ticket.project)
+    let shown = 0
+    if (grouped) {
+      for (const [id, group] of byProject(ordered)) {
+        if (shown >= SHOWN) break
+        lines.push(id === ''
+          ? speakChinese ? '未归属项目' : 'No project'
+          : speakChinese ? `项目 ${names[id] ?? id}` : `Project ${names[id] ?? id}`)
+        for (const ticket of group) {
+          if (shown >= SHOWN) break
+          lines.push(...entry(ticket, words, now, speakChinese))
+          shown += 1
+        }
+      }
+    } else {
+      for (const ticket of ordered.slice(0, SHOWN)) {
+        lines.push(...entry(ticket, words, now, speakChinese))
+        shown += 1
+      }
     }
-    if (ordered.length > SHOWN) lines.push(speakChinese ? `（其余 ${ordered.length - SHOWN} 单见面板。）` : `(${ordered.length - SHOWN} more are in the panel.)`)
+    if (ordered.length > shown) lines.push(speakChinese ? `（其余 ${ordered.length - shown} 单见面板。）` : `(${ordered.length - shown} more are in the panel.)`)
     if (working > 0) lines.push(speakChinese ? `另外 ${working} 单在进行。` : `${working} more ${working === 1 ? 'is' : 'are'} working.`)
   }
   lines.push(speakChinese ? '这条摘要每天一次；工单的实际状态以面板为准。' : 'This summary comes once a day; the panel has the current state.')
@@ -102,7 +139,8 @@ export async function digestTick(ctx: SourceContext, now = new Date()): Promise<
     return 'skipped'
   }
   try {
-    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now))
+    const names = Object.fromEntries((ctx.projects ?? []).map(({ id, name }) => [id, name]))
+    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now, names))
     ctx.state.set(KV.feishu.digest, { day, at: now.toISOString() })
     ctx.report('digest', { state: 'ready', detail: 'Sent today', nextAt })
     return 'sent'

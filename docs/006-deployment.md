@@ -98,7 +98,7 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
-   The Source can also post a **daily digest** to one chat: set **Daily digest chat** and **Digest hour (local)** in its settings below. Once a day, at that local hour, it posts a new message to the chat — not a Thread reply, and with no history to read — listing the Tickets that wait for a person, what each needs, how long it has waited, and how many are working. A quiet day still gets one line saying nothing waits. The digest reports its own `digest` health entry, so a failed send shows in the panel, and it tries again on its next minute check inside that hour.
+   The Source can also post a **daily digest** to one chat: set **Daily digest chat** and **Digest hour (local)** in its settings below. Once a day, at that local hour, it posts a new message to the chat — not a Thread reply, and with no history to read — listing the Tickets that wait for a person, what each needs, how long it has waited, and how many are working. When waiting Tickets name projects, the list is grouped under the project names from the Execution settings (Tickets without one come last as “No project”). A quiet day still gets one line saying nothing waits. The digest reports its own `digest` health entry, so a failed send shows in the panel, and it tries again on its next minute check inside that hour.
 
 #### What a Feishu Source receives
 
@@ -416,8 +416,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 11 (current)`, or
-   `schema 10 migrates to 11 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 12 (current)`, or
+   `schema 10 migrates to 12 on start` when the next start is the one that upgrades the database.
 
 Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
 **Default updated** after upgrading.

@@ -1,11 +1,13 @@
 /**
- * Migrates a schema 10 database to schema 11 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
+ * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
 import { z } from 'zod'
 import { isoTime, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
   type Reason, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
+import { projectByRepository } from '../projects.ts'
 import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
 import { SettingsSchema, policyVersion, type SettingsOrigin } from '../policy.ts'
@@ -17,7 +19,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 12
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -88,6 +90,25 @@ export function migrateTo11(store: Store): void {
   }
   step('the reasons', () => { reasonsAsCodes(store) })
   step('the Triggers\' times', () => { triggerTimes(store) })
+}
+/**
+ * Fills in the project each Ticket worked in, once the operator has registered projects. A Ticket accepted before
+ * projects existed worked in the repository its origin Trigger named, or in the Source's repository when the Trigger
+ * predates that field; the project registered for that repository is the one it belongs to.
+ */
+export function migrateTo12(store: Store): void {
+  const settings = store.settings()
+  if (!settings.executor.projects.length) return
+  const projects = settings.executor.projects
+  const configured = settings.sources.github?.config.repository
+  const primary = typeof configured === 'string' ? configured : ''
+  for (const ticket of store.tickets.list()) {
+    if (ticket.project) continue
+    const trigger = store.triggers.get(ticket.origin.triggerId)
+    const named = typeof trigger?.meta.repository === 'string' ? trigger.meta.repository : primary
+    const project = projectByRepository(projects, named)
+    if (project) step(`ticket ${ticket.id}`, () => { store.tickets.save({ ...ticket, project: project.id }) })
+  }
 }
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches

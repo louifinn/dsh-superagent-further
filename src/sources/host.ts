@@ -5,6 +5,7 @@ import type { Deployment } from '../deployment.ts'
 import type { SourceRegistry } from './registry.ts'
 import type { SetupProblem } from '../setup.ts'
 import type { Family, Key } from '../kv.ts'
+import type { Project } from '../projects.ts'
 import { fill } from '../infra/text.ts'
 
 /** Fixed English health templates (`{name}` placeholders); the panel localizes each `code` in the interface language. */
@@ -32,6 +33,8 @@ export interface SourceContext {
   readonly deployment: Deployment
   readonly commands: Commands
   readonly ready: Promise<void>
+  /** The projects the operator registered, so a Source can poll each repository and name it in what it says. */
+  readonly projects: readonly Project[]
   /** True once setup resolved the repository and accounts; Sources poll only then. */
   configured(): boolean
   /** Setup problem keeping this Source's account from running; only the Feishu bot check reports one. */

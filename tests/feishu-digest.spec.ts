@@ -41,6 +41,21 @@ describe('Feishu digest', () => {
     expect(nextDigest(9, new Date(2026, 10, 7, 10, 0)).getTime()).toBe(new Date(2026, 10, 8, 9, 0).getTime())
   })
 
+  it('groups the waiting Tickets under the project names when a project is named', () => {
+    const ready = { id: 'as-9', state: 'ended' as const, createdAt: '2026-11-01T00:00:00.000Z',
+      report: { state: 'ready' as const, summary: 'Done', at: '2026-11-01T00:00:00.000Z' } }
+    const text = digestText([
+      ticket({ id: 'a', title: 'Ship the widget', project: 'widgets', updatedAt: '2026-11-02T00:00:00.000Z', assignments: [ready] }),
+      ticket({ id: 'b', title: 'Write the handbook', updatedAt: '2026-11-03T00:00:00.000Z', assignments: [ready] }),
+      ticket({ id: 'c', title: 'Fix the app', project: 'app', updatedAt: '2026-11-04T00:00:00.000Z', assignments: [ready] }),
+    ], noon(), { widgets: 'Widgets', app: 'App' })
+    expect(text).toContain('Project App\n· Fix the app')
+    expect(text).toContain('Project Widgets\n· Ship the widget')
+    expect(text).toContain('No project\n· Write the handbook')
+    expect(text.indexOf('Project App')).toBeLessThan(text.indexOf('Project Widgets'))
+    expect(text.indexOf('Project Widgets')).toBeLessThan(text.indexOf('No project'))
+  })
+
   it("lists what each waiting Ticket needs, how long it waited, and its link, in the Tickets' language", () => {
     const text = digestText([
       ticket({ id: 'a', title: '添加 FEISHU-TEST-2.md', updatedAt: new Date(2026, 10, 4, 12, 0).toISOString(),
