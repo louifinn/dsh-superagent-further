@@ -1,12 +1,25 @@
 /** Validation of project registrations: one local workspace and one remote repository per project. */
 import { describe, expect, it } from 'vitest'
 import { ExecutorConfigSchema } from '../src/policy.ts'
-import { ProjectSchema, ProjectsSchema, projectOf } from '../src/projects.ts'
+import { ProjectSchema, ProjectsSchema, projectByRepository, projectOf } from '../src/projects.ts'
 
 /** An absolute path in the spelling of the platform the tests run on. */
 const workspace = (name: string): string => process.platform === 'win32' ? `C:/src/${name}` : `/src/${name}`
 const project = (overrides: Record<string, unknown> = {}) => ({ id: 'app', name: 'App', workspace: workspace('app'),
   repository: 'owner/app', branch: 'main', ...overrides })
+
+describe('looking a project up', () => {
+  it('finds the project by id, and by repository ignoring case and surrounding space', () => {
+    const projects = ProjectsSchema.parse([project(), project({ id: 'web', name: 'Web', workspace: workspace('web'),
+      repository: 'Owner/Web' })])
+    expect(projectOf(projects, 'web')?.name).toBe('Web')
+    expect(projectOf(projects, undefined)).toBeUndefined()
+    expect(projectByRepository(projects, 'owner/app')?.id).toBe('app')
+    expect(projectByRepository(projects, ' OWNER/WEB ')?.id).toBe('web')
+    expect(projectByRepository(projects, 'owner/other')).toBeUndefined()
+    expect(projectByRepository(projects, undefined)).toBeUndefined()
+  })
+})
 
 describe('a project', () => {
   it('names a local workspace and a remote repository, and defaults the branch to the repository default', () => {

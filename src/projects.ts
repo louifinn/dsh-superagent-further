@@ -31,3 +31,7 @@ export type Projects = z.infer<typeof ProjectsSchema>
 /** The project with `id`, or undefined when the installation has none by that ID. */
 export const projectOf = (projects: readonly Project[], id: string | undefined): Project | undefined =>
   id === undefined ? undefined : projects.find(project => project.id === id)
+
+/** The project whose repository is `repository` (owner/name, compared case-insensitively), or undefined. */
+export const projectByRepository = (projects: readonly Project[], repository: string | undefined): Project | undefined =>
+  repository === undefined ? undefined : projects.find(project => project.repository.toLowerCase() === repository.trim().toLowerCase())

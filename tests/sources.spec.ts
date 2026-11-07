@@ -886,7 +886,7 @@ describe('github source', () => {
     expect(h.receive.mock.calls[0]![0]).toEqual({ id, source: 'github', threads: [{ source: 'github', id: '12' }],
       actor: { source: 'github', id: 'alice' }, human: true, at: '2026-09-09T00:00:00Z',
       text: 'Login fails\n\n@agent-bot please fix the login', addressed: 'mention', channel: githubChannel(12, url), url,
-      meta: { number: 12, isPr: false, kind: 'issue' } })
+      meta: { number: 12, isPr: false, kind: 'issue', repository: 'acme/widgets' } })
     // An allowed sender's mention is an explicit request on that poll.
     expect(h.engine.candidate(id)?.strength).toBe('explicit')
     expect(h.store.threads.get('github:12')!.meta).toMatchObject({ title: 'Login fails', label: '#12 Login fails' })
@@ -899,7 +899,7 @@ describe('github source', () => {
       html_url: `${url}#issuecomment-5`, created_at: '2026-09-09T00:00:00Z', updated_at: '2026-09-09T00:00:00Z' }
     const { reads } = notify(h, [issue(12, { created_at: '2026-08-01T00:00:00Z' })], { 12: [comment] })
     await pollRound(h)
-    const expected = commentTrigger(comment, { number: 12, isPr: false, url }, 'conversation', 'agent-bot')
+    const expected = commentTrigger(comment, { number: 12, isPr: false, url }, 'conversation', 'agent-bot', 'acme/widgets')
     expect(h.receive.mock.calls.map(([trigger]) => trigger)).toEqual([expected])
     // An Issue has only its conversation; the comments are read since the notification cursor.
     const since = encodeURIComponent('2026-09-08T00:00:00.000Z')

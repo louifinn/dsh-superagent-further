@@ -104,9 +104,10 @@ surface now replaces that workaround with a project list inside the Execution se
   (`tests/projects.spec.ts`, `tests/settings.spec.ts`).
 - [ ] Sources poll every project: the GitHub Source checks each project's repository, and Triggers and Threads carry the
   project so `github:<number>` keys from different repositories cannot collide (with a migration for existing records).
-- [ ] Tickets belong to a project: the Executor creates each Ticket's checkout from that project's local clone
-  (`git worktree add` under `stateDir/work/<project>/<ticket>`), and the worker environment names the project, workspace
-  and repository.
+- [x] Tickets belong to a project: a Trigger's repository selects the registered project, the Ticket records it, the
+  Executor creates the checkout from that project's local clone (`git worktree add -b agent/<name>` under
+  `stateDir/work/<project>/<name>` unless a prepare command is configured), and the worker environment names the project,
+  workspace and repository (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`, `DSH_SUPERAGENT_GITHUB_REPOSITORY`).
 - [ ] The panel and the digest show the project: Tickets and Triggers list it, the overview can filter by it, and the
   daily digest groups waiting Tickets by project.
 - [ ] Feishu routing: one group manages all projects; a Feishu Trigger's project is resolved per message (the project it

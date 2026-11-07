@@ -1,9 +1,10 @@
 /** Concurrent runtime behavior across overlapping triggers, deliveries, and worker launches. */
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { latestAssignment, waitsForPerson, type Ticket, type Trigger } from '../src/core/index.ts'
 import { Later } from '../src/app/effects.ts'
 import { reportRelay } from '../src/app/notices.ts'
-import { WorkerSlots, inputMessage, mandateInstructions, ticketExecution, transient, triggerMessage } from '../src/executor/dsh.ts'
+import { WorkerSlots, inputMessage, mandateInstructions, ticketExecution, transient, triggerMessage, worktreePrepare } from '../src/executor/dsh.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { deferred, waitUntil } from './fixtures/async.ts'
@@ -900,6 +901,19 @@ describe('the Executor\'s parts', () => {
     expect(execution.assignment).not.toContain(mandateInstructions(ticket.mandate))
     expect(execution.assignment).toContain('- Copy fixes (copy): Fix typos only.')
     expect(mandateInstructions({ strength: 'explicit' })).toBe('')
+  })
+  it('keeps a project ticket under its project, and makes its worktree in that project clone', () => {
+    const settings = SettingsSchema.parse({ executor: { projects: [{ id: 'napkid', name: 'Napkid', workspace: '/src/napkid',
+      repository: 'louifinn/Napkid-Derivate', branch: 'main' }] } })
+    const ticket = { id: 'ticket-0123456789abcdef', project: 'napkid', origin: { triggerId: 'tr1', triggerIds: [] },
+      mandate: { strength: 'explicit', policyVersion: 'v1', basis: {}, actor: { source: 'github', id: 'alice' } } } as unknown as Ticket
+    const execution = ticketExecution(ticket, { kind: 'accept', title: 'Fix', scope: 'Fix', reason: 'r', name: 'fix-login' } as never, settings, '/state')
+    expect(execution.directory).toBe(join('/state', 'work', 'napkid', execution.name))
+    expect(worktreePrepare({ ...ticket, execution } as Ticket, settings.executor.projects[0]!))
+      .toEqual(['git', '-C', '/src/napkid', 'worktree', 'add', '-b', `agent/${execution.name}`, execution.directory, 'main'])
+    // Without a project the directory stays where it was, and there is no worktree command to run.
+    expect(ticketExecution({ ...ticket, project: undefined } as Ticket, { kind: 'accept', title: 'Fix', scope: 'Fix', reason: 'r',
+      name: 'fix-login' } as never, settings, '/state').directory).toBe(join('/state', 'work', execution.name))
   })
   it('renders each kind of Input as its worker reads it, inline, and no reopen Input', () => {
     const asked = { id: 'tr1', source: 'feishu', threads: [{ source: 'feishu', id: 'oc:om_1' }], actor: { source: 'feishu', id: 'ou_a' }, human: true,

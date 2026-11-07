@@ -303,6 +303,8 @@ export interface Ticket {
   origin: { triggerId: string; triggerIds: string[] }
   /** What its Executor chose: its short name, directory and assignment text. */
   execution?: Execution
+  /** The project it belongs to, whose local clone holds its worktree; absent for tickets that named no registered project. */
+  project?: string
   /** The latest failed delivery of an Input to its worker, until a delivery succeeds. */
   delivery?: { error: string; at: string }
 }

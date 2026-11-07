@@ -8,6 +8,7 @@ import { key, latestAssignment, latestReport, liveTicket, runningAssignment, thr
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
+import { projectByRepository, projectOf, type Project } from '../projects.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
@@ -107,8 +108,17 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
     ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
     : note.trim()
-  return { name, directory: join(executionRoot(settings, stateDir), name), assignment }
+  // A ticket of a registered project keeps its worktree inside that project's namespace, so two projects can both use `add-login`.
+  const directory = join(executionRoot(settings, stateDir), ...ticket.project ? [ticket.project] : [], name)
+  return { name, directory, assignment }
 }
+/**
+ * The git command that creates a ticket's worktree in its project's local clone. Used when the operator configured no
+ * prepare command: a new branch `agent/<name>` at the project's base branch, checked out in the ticket's directory.
+ */
+export const worktreePrepare = (ticket: Ticket, project: Project): string[] =>
+  ['git', '-C', project.workspace, 'worktree', 'add', '-b', `agent/${ticket.execution?.name ?? ''}`,
+    ticket.execution?.directory ?? '', project.branch || 'HEAD']
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */
 const ASSIGNMENT_CHARS = 1500, TRIGGER_CHARS = 600
 /** Returns `text` up to `limit` characters, or a truncated preview with total character count and the resource path to read the full text. */
@@ -236,7 +246,13 @@ export class DshExecutor implements Executor {
   }
   /** Populates a newly accepted ticket's `execution` attributes (worktree name, workspace directory, and assignment text). */
   prepare(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>): Ticket {
-    return { ...ticket, execution: ticketExecution(ticket, outcome, this.host.store.settings(), this.host.machine.stateDir) }
+    const settings = this.host.store.settings()
+    // The origin Trigger carries the repository the request came from; a registered project with that repository owns the worktree.
+    const origin = sourceTrigger(this.host, ticket)
+    const repository = typeof origin?.meta.repository === 'string' ? origin.meta.repository : undefined
+    const project = projectByRepository(settings.executor.projects, repository)
+    const placed: Ticket = project ? { ...ticket, project: project.id } : ticket
+    return { ...placed, execution: ticketExecution(placed, outcome, settings, this.host.machine.stateDir) }
   }
   /**
    * The command that runs an operator's prepare command: PowerShell on Windows, which the configuration mounts as the worker's
@@ -254,15 +270,18 @@ export class DshExecutor implements Executor {
   private async prepareDirectory(ticket: Ticket): Promise<void> {
     const directory = ticket.execution?.directory ?? ''
     await mkdir(dirname(directory), { recursive: true })
-    const command = this.host.store.settings().executor.prepare.trim()
+    const settings = this.host.store.settings()
+    const command = settings.executor.prepare.trim()
+    const project = projectOf(settings.executor.projects, ticket.project)
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
-    if (command) await runAsWorker(this.host.context.subprocess, this.prepareCommand(command), dirname(directory), signal, env)
+    const argv = command ? this.prepareCommand(command) : project ? worktreePrepare(ticket, project) : undefined
+    if (argv) await runAsWorker(this.host.context.subprocess, argv, dirname(directory), signal, env)
       .catch(async (error: unknown) => {
         // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
         await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })
-        throw new PrepareFailed(`The prepare command failed: ${error instanceof Error ? error.message : String(error)}`)
+        throw new PrepareFailed(`${command ? 'The prepare command' : `Creating the worktree in ${project?.workspace ?? ''}`} failed: ${error instanceof Error ? error.message : String(error)}`)
       })
     await mkdir(directory, { recursive: true })
     await verifyDirectory(directory, this.host.context.subprocess, this.host.lifetime)
