@@ -466,6 +466,9 @@ describe('github source', () => {
     // The notice its end gives follows the language of the source request.
     const notices = pullEndNotices(h.store.tickets.get('t1')!, request.text, 'acme/widgets')
     expect(notices).toEqual([expect.objectContaining({ kind: 'notice', channel: expect.objectContaining({ source: 'feishu' }), text: expect.stringContaining('已合并') })])
+    // A project's PR is linked in that project's repository, not in the deployment repository.
+    h.store.tickets.save({ ...h.store.tickets.get('t1')!, follows: [{ thread: 'github:acme/widgets#9', own: true, closed: { at: '2026-09-02T00:00:00.000Z', outcome: 'merged' } }] })
+    expect(pullEndNotices(h.store.tickets.get('t1')!, request.text, 'acme/primary')[0]!.text).toContain('https://github.com/acme/widgets/pull/9')
     expect(h.executor.stop).toHaveBeenCalledOnce()
     // Resumed after the merge, the ticket works on: a later look at the merged PR reports nothing again.
     h.store.tickets.save({ ...h.store.tickets.get('t1')!, ended: undefined, assignments: [...h.store.tickets.get('t1')!.assignments, { id: 'a2', state: 'pending', createdAt: '2026-09-03T00:00:00Z' }] })

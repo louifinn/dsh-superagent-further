@@ -110,7 +110,8 @@ export function pullEndNotices(ticket: Ticket, request: string, repository: stri
   const follow = latest(follows.filter(item => item.own)) ?? latest(follows)
   if ((outcome !== 'merged' && outcome !== 'closed') || !follow) return []
   const number = pullNumber(follow.thread)!
-  const url = githubPage(repository, number, true)
+  // A project's PR lives in that project's repository, not in the deployment repository the caller names.
+  const url = githubPage(githubThreadRef(follow.thread)?.repository ?? repository, number, true)
   const chinese = /\p{Script=Han}/u.test(request) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(request)
   const text = chinese
     ? outcome === 'merged' ? `[PR #${number}](${url}) 已合并。` : `[PR #${number}](${url}) 已关闭，未合并。`
