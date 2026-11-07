@@ -41,8 +41,10 @@ export const ticketBranch = (ticket: Pick<Ticket, 'execution'>, ref: string): bo
 const AUTO_MERGE_ON: ThreadFact = { label: { zh: '自动合并', en: 'Auto-merge' }, value: { zh: '已开启', en: 'on' } }
 
 /**
- * Validates and binds an open PR to a ticket when the PR is either the ticket's origin PR or an agent-authored PR on the ticket's branch, enforcing that one PR binds to at most one open ticket.
- * Returns an error message when binding is rejected, or undefined when the PR is bound or when the PR is not open (which is not an error).
+ * Validates and binds a PR to a ticket when it is either the ticket's origin PR or an agent-authored PR on the ticket's branch,
+ * enforcing that one PR binds to at most one open ticket. An open PR is followed; a merged one is bound too, so a report that
+ * arrives after a person merged can still end the ticket `merged` at the next poll.
+ * Returns an error message when binding is rejected, or undefined when the PR is bound, already followed, or closed unmerged.
  */
 export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): string | undefined {
   const ticket = ctx.tickets.get(ticketId)
@@ -59,7 +61,7 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const owner = ctx.tickets.open().find(item => (item.follows ?? []).some(follow => !follow.closed && follow.thread === thread))
   if (owner && owner.id !== ticketId) return 'PR already belongs to another active ticket'
   const follow = ticket.follows?.find(item => item.thread === thread)
-  if (pr.state === 'open' && (!follow || follow.closed || (opened && !follow.own))) bind(ctx, ticketId, pr, opened, thread)
+  if ((pr.state === 'open' || pr.merged === true) && (!follow || follow.closed || (opened && !follow.own))) bind(ctx, ticketId, pr, opened, thread)
   return undefined
 }
 /**

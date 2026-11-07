@@ -1053,6 +1053,19 @@ describe('github source', () => {
     expect(claimPull(h, 't1', openPull(30))).toBe('Ticket ended because its PR was closed')
     h.store.close()
   })
+  it('binds a merged PR a late report names, so the ticket can end merged', async () => {
+    const h = host()
+    h.store.tickets.save({ ...openTicket('t9'), execution: execution('fix-9') })
+    const merged = { ...openPull(61), user: { login: 'agent-bot' }, merged: true,
+      state: 'closed' as const, merged_at: '2026-09-09T00:00:00Z',
+      head: { sha: 'abc', ref: 'agent/fix-9', repo: { full_name: 'acme/widgets' } } }
+    // The report came after the merge; the PR is still the ticket's own, so bind it and let the next poll end the ticket.
+    expect(claimPull(h, 't9', merged)).toBeUndefined()
+    expect(pullOf(h.store.tickets.get('t9')!)).toBe(61)
+    expect(await observePull(h, merged)).toBe(true)
+    expect(h.store.tickets.get('t9')).toMatchObject({ ended: { outcome: 'merged' } })
+    h.store.close()
+  })
 })
 
 describe('source context', () => {
