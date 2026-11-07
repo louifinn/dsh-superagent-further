@@ -180,6 +180,32 @@ It checks the DSH version the launcher reports, the profile's `package.json` dep
 
 Exit codes: `0` every check passed, `1` at least one check failed, `2` the API answered but the installation waits for setup, which a person must finish before the panel can act.
 
+## Platform and release checks
+
+Two checks cannot run in CI or on the machine that hosts the agent, so a release does them by hand.
+
+### macOS checklist
+
+CI runs the whole suite on macOS, but nothing starts a real host there. On a Mac, once per release:
+
+1. `git pull && pnpm install --frozen-lockfile && pnpm build` and `pnpm check`; both exit 0.
+2. Create a profile, install the bundle with `link:` and set a `webserver` port and a `stateDir` as the [Install](#install) section shows.
+3. `scripts/dsh-superagent start` exits 3 with "The GitHub Source names no repository", then `status` exits 3; `scripts/dsh-superagent stop` exits 0 and `status` then exits 1.
+4. `scripts/verify-install --profile <name>` exits 2 before setup and 0 after the GitHub Source is saved; `--json` prints the schema line.
+5. The panel opens at the printed URL, and the Superagent sidebar entry renders.
+6. A direct message on Feishu and a comment that mentions the agent both reach the Source, and one of them ends as a merged pull request.
+7. `scripts/dsh-superagent logs` are the same shape as on Windows and Linux, and `stop` leaves no process behind (`pgrep -f dsh-superagent` is empty).
+
+Record the result in the release notes, with the macOS version and the DSH version.
+
+### Release check
+
+Before tagging:
+
+1. `pnpm check` green on all three platforms through CI (`.github/workflows/check.yml`), and the [macOS checklist](#macos-checklist) run once for this release.
+2. The panel renders in a desktop browser for the current build: the sidebar entry, the overview with its Source health and reply queue, one Ticket row, and one settings page. Save a screenshot next to the release notes; a screenshot is evidence for the whole panel, which CI cannot render.
+3. `pnpm pack --pack-destination dist` produces a tarball, `dsh plugin --profile <name> add "file:<tarball>"` installs it into a fresh profile, and `--dump-config` composes it. Then tag `v<version>`, and the release workflow packs again, attaches the tarball and creates the release.
+
 ## Machine configuration
 
 Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there. The `webserver` entry sets the panel's port.

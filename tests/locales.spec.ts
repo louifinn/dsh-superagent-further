@@ -44,3 +44,11 @@ it('has words for every reason code the core records', () => {
 it('words the reasons agents read in the glossary\'s words: a sender on the list, a Thread', () => {
   expect(Object.values(REASONS).filter(text => /\b(member|members|topic)\b/i.test(text))).toEqual([])
 })
+
+it('keeps only names and patterns untranslated: no sentence stays in English', () => {
+  const names = /Superagent|GitHub Issue|GitHub|dsh-superagent|English/g
+  const keys = Object.keys(zh) as DshSuperagentKey[]
+  const untranslated = keys.filter(key => zh[key] === en[key]
+    && /[a-z]/.test(zh[key].replace(/\{[a-z]+\}/g, '').replace(names, '')))
+  expect(untranslated).toEqual([])
+})

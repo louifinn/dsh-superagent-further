@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1244 passed and 5 skipped (1249) on Windows, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1247 passed and 5 skipped (1252) on Windows, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` is committed but has never run: the repository has no remote yet.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
@@ -88,7 +88,10 @@ The P2 scope, in the order this session takes it.
   `@ only` as the `other` row), several listed chats at once, and attachments (an image key is readable by the
   assessment, a file key is not downloaded) each have a test; 006 now states what the Source receives, how history
   backfill pages and keeps a cursor on failure, and how Feishu rate-limit and permission errors surface on `history`.
-- [ ] Platform and experience: a macOS checklist, panel screenshots in the release check, and a pass for untranslated
+- [~] Platform and experience: a macOS checklist and a release check are written in 006, and the untranslated-strings
+  pass is now a test (`tests/locales.spec.ts`: only names and placeholders may stay in English); the checklist cannot
+  run here for want of a Mac and the screenshot step for want of a desktop browser that renders in this environment, so
+  both stay open until a person runs them.
   strings.
 ## Sprint 1 checklist
 
