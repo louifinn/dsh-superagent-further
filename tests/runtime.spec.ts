@@ -1797,6 +1797,30 @@ it('starts a Ticket executor as a child of its project Lead when Orchestration i
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
 })
 
+it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, orchestration: 'lead',
+    projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  const trigger = feishu('63', '@bot 修 adopt', { root_id: undefined })
+  await receive(trigger)
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复 adopt', worktree_name: 'fix-adopt',
+    project: 'app', acknowledgement: '收到。' })
+  await runtime.idle()
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  const childId = `worker-${ticket.id}`
+  expect(agents.has(childId)).toBe(true)
+  subagents.sendMessage.mockClear()
+  await restart()
+  await runtime.ready
+  await runtime.idle()
+  // The reserved child id already exists, so the recovered host wakes that child from its Lead instead of creating a Session.
+  expect(subagents.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'lead-app' }), childId, expect.any(Array), expect.anything())
+  expect(agents.has(childId)).toBe(true)
+  await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
+  await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done after restart' })
+  expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
+})
+
 it('shows the settings history when one revision holds values its Source kind no longer accepts, without that revision\'s changes', async () => {
   const settings = runtime.store.settings()
   await runtime.settings.save('executor', { ...settings.executor, maxWorkers: 4 }, runtime.store.blockRevision('executor'), 'panel')
