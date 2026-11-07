@@ -61,7 +61,11 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const owner = ctx.tickets.open().find(item => (item.follows ?? []).some(follow => !follow.closed && follow.thread === thread))
   if (owner && owner.id !== ticketId) return 'PR already belongs to another active ticket'
   const follow = ticket.follows?.find(item => item.thread === thread)
-  if ((pr.state === 'open' || pr.merged === true) && (!follow || follow.closed || (opened && !follow.own))) bind(ctx, ticketId, pr, opened, thread)
+  if ((pr.state === 'open' || pr.merged === true) && (!follow || follow.closed || (opened && !follow.own))) {
+    bind(ctx, ticketId, pr, opened, thread)
+    // Binding a merged PR records its close at once, so the report that named it can end the ticket without another poll.
+    if (pr.merged === true) ctx.tickets.threadClosed({ source: SOURCE, id: threadRef(thread) }, 'merged', pr.merged_at ?? pr.closed_at ?? new Date().toISOString())
+  }
   return undefined
 }
 /**
