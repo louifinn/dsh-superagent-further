@@ -120,6 +120,20 @@ surface now replaces that workaround with a project list inside the Execution se
   lists the registered projects and the acceptance may name one (the message may name a project id itself); the Executor
   refuses an unknown project and refuses one that differs from a GitHub Trigger's own repository, and the Ticket then
   checks out in that project's workspace (`tests/runtime.spec.ts`).
+## Sprint 5 checklist
+
+The project layer is designed in `docs/010-project-orchestrator.md`. This is the implementation order; each item ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine.
+
+- [ ] P1 Foundation: Lead agent preset and prompt section, `LeadMessages` records with idempotent delivery, the `Sessions`
+  Lead branch (ensure, decoration, disposal, reserved ids), recovery scaffolding, and project-aware interfaces — no
+  entry-point change.
+- [ ] P2 Execution path: an executor runs as a Lead subagent under `executor.orchestration = 'lead'`, reports settle through
+  the Lead, interrupt and stop work, adoption after a restart, per-project concurrency.
+- [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead, notices and replies route through
+  it, the panel shows the Lead row and the settings, docs 001/003/004/006/007 are updated, and the default flips.
+- [ ] P4 Cleanup: remove the root-worker path, simplify Sessions/DshExecutor/panel links, and decide the deferred
+  one-Ticket-to-many-executors question.
+
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

@@ -32,6 +32,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 - [009 Roadmap](docs/009-roadmap.md): from research prototype to daily use
+- [010 Project-level orchestrator](docs/010-project-orchestrator.md): the proposed Orchestrator → Lead → Worker layer
 
 ## Development
 
