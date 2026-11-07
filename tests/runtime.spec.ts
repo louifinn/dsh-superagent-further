@@ -56,6 +56,9 @@ async function api(method: string, path: string): Promise<{ status: number; body
   return { status, body: JSON.parse(text) }
 }
 let agents: Map<string, { id: string; status: string; inbox: { nextTurn: UserMessage[]; nextStep: UserMessage[] }; cancel: ReturnType<typeof vi.fn>; inject: ReturnType<typeof vi.fn> }>
+/** The subagent service a Lead uses to start and reach its executor children, and the host uses to wait for and drain them. */
+let subagents: { startActivation: ReturnType<typeof vi.fn>; sendMessage: ReturnType<typeof vi.fn>; interrupt: ReturnType<typeof vi.fn>
+  waitForChildren: ReturnType<typeof vi.fn>; listChildren: ReturnType<typeof vi.fn>; drainChildren: ReturnType<typeof vi.fn>; drainDescendants: ReturnType<typeof vi.fn> }
 const runTool = async (sessionId: string, name: string, args: unknown) => {
   const tool = tools.get(sessionId)?.get(name)
   if (!tool) throw new Error(`Tool ${name} is not registered for ${sessionId}`)
@@ -219,8 +222,22 @@ beforeEach(async () => {
     prompt: vi.fn(() => { throw new Error('Plugin delivery must not use user RPC') }),
     inspect: vi.fn(async () => ({ events: [] })),
   }
+  subagents = {
+    startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string }; agentPreset: string } }) => {
+      if (agents.has(spec.childId)) throw new Error(`subagent "${spec.childId}" already exists`)
+      await (controller.create as (spec: { sessionId: string; agentPreset: string }) => Promise<void>)({ sessionId: spec.childId, agentPreset: spec.request.agentPreset })
+      agents.get(spec.childId)!.status = 'running'
+      return { childId: spec.childId, result: new Promise(() => {}), dispose: vi.fn(async () => {}) }
+    }),
+    sendMessage: vi.fn(async () => 'message'),
+    interrupt: vi.fn(),
+    waitForChildren: vi.fn(async () => {}),
+    listChildren: vi.fn(async () => []),
+    drainChildren: vi.fn(async () => {}),
+    drainDescendants: vi.fn(async () => {}),
+  }
   jobs = jobRegistry()
-  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
+  services = { agents, subagents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
@@ -1754,6 +1771,30 @@ it('refuses an accepted project the settings do not register', async () => {
   await expect(route({ kind: 'accept', trigger_id: trigger.id, title: '修复 x', worktree_name: 'fix-x',
     project: 'nope', acknowledgement: '收到。' })).rejects.toThrow(/Unknown project nope/)
   expect(runtime.store.tickets.open()).toEqual([])
+})
+
+it('starts a Ticket executor as a child of its project Lead when Orchestration is lead', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, orchestration: 'lead',
+    projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  const trigger = feishu('62', '@bot 修 lead', { root_id: undefined })
+  await receive(trigger)
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复 lead', worktree_name: 'fix-lead',
+    project: 'app', acknowledgement: '收到。' })
+  await runtime.idle()
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  const childId = `worker-${ticket.id}`
+  expect(ticket.project).toBe('app')
+  expect(agents.has('lead-app')).toBe(true)
+  expect(agents.has(childId)).toBe(true)
+  const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;
+    request: { agentPreset: string; maxDepth: number; parent: { id: string } } }
+  expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'parent',
+    request: { agentPreset: 'dsh-superagent-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
+  // The child's report reaches the Ticket through its Lead, and a ready report ends it.
+  await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
+  await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done' })
+  expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
 })
 
 it('shows the settings history when one revision holds values its Source kind no longer accepts, without that revision\'s changes', async () => {

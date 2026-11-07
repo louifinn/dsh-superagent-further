@@ -186,8 +186,9 @@ operator merged it and the worker's final report reached the Lead. Inputs and st
 Lead-hosted child through its Lead (`LeadActivations.steer`/`send`), since a subagent-owned Session
 refuses a root prompt, and a report that names an already-merged PR now ends the Ticket merged at
 once. Concurrency is now project-aware: `WorkerSlots` enforces `executor.projectWorkers` (default 2) per
-project beside the global `maxWorkers`. Still to build: the host-level fake-subagent test and the
-recovery-adoption test. The live run used a
+project beside the global `maxWorkers`. The host-level test now drives the same path with the fake subagent service
+(`tests/runtime.spec.ts`, "starts a Ticket executor as a child of its project Lead"). Still to build:
+the recovery-adoption test. The live run used a
 GitHub Source Ticket because no ticket-creation route exists yet; creating one is P3.
 
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of

@@ -122,6 +122,20 @@ export function subagentRuntime(agents: Map<string, FakeAgent>) {
       }
     }),
     interrupt: vi.fn((id: string) => { settle(id) }),
+    // DSH's spawn provider starts a durable child with the reserved id and reports the same shape the Executor expects.
+    startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string } } }) => {
+      const parent = spec.request.parent.id
+      const id = spec.childId
+      if (agents.has(id)) throw new Error(`subagent "${id}" already exists`)
+      children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
+      agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { settle(id) } }
+    }),
+    // The Lead's message reaches the child, which this fake records as a follow-up step.
+    sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, _content: unknown[]) => {
+      agents.get(targetId)?.followup(notice(`message-${targetId}`, 'A message arrived'))
+      return `message-${targetId}`
+    }),
   }
   const spawn = (parent: string) => {
     if (closed.has(parent)) throw new Error('DRAINING: the Session admits no new subagents')
