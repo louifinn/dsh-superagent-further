@@ -274,8 +274,10 @@ export class DshExecutor implements Executor {
     // The origin Trigger carries the repository the request came from; a registered project with that repository owns the worktree.
     const origin = sourceTrigger(this.host, ticket)
     const repository = typeof origin?.meta.repository === 'string' ? origin.meta.repository : undefined
-    const named = projectOf(settings.executor.projects, outcome.project)
-    if (outcome.project && !named) throw new Error(`Unknown project ${outcome.project}; register it in Execution first`)
+    // An accept may split its work across Tickets, and the Engine sets the project on each of them; a single delivery gets one here.
+    const requested = ticket.project ?? outcome.project
+    const named = projectOf(settings.executor.projects, requested)
+    if (requested && !named) throw new Error(`Unknown project ${requested}; register it in Execution first`)
     const fromRepository = projectByRepository(settings.executor.projects, repository)
     // A Feishu message names no repository, so the assessment may choose a project; a GitHub Trigger's own repository decides.
     if (named && fromRepository && named.id !== fromRepository.id) {

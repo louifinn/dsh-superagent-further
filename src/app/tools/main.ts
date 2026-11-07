@@ -54,6 +54,11 @@ const RouteItemSchema = z.object({
   acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source on acceptance, so do not quote the source; quote an earlier proposal briefly only when the trigger merely confirms it and the sentence does not already state it. No generic I will handle it.`),
   note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
   project: z.string().nullish().describe('accept: the id of a registered Execution project whose workspace and repository the work belongs to, for a request that names no repository such as a Feishu message; omit when the Trigger names it or no project fits.'),
+  deliverables: z.array(z.object({
+    project: z.string().nullish(),
+    title: z.string().nullish(),
+    after: z.array(z.number().int().min(0)).nullish(),
+  })).nullish().describe('accept: one entry per delivery unit when the request splits across projects; `after` names earlier indexes it waits on.'),
   reason: z.string().nullish().describe('ignore and stop: why, at most 500 characters; an ignore needs it.'),
 }).strict()
 type RouteItem = z.infer<typeof RouteItemSchema>
@@ -68,13 +73,16 @@ const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: r
   note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
   project: { check: z.string().trim().min(1).max(40), reads: ['accept'], needs: [] },
   reason: { check: z.string().max(500), reads: ['ignore', 'stop'], needs: ['ignore'] },
+  deliverables: { check: z.array(z.object({ project: z.string().trim().min(1).max(40).nullish(), title: z.string().max(200).nullish(),
+    after: z.array(z.number().int().min(0)).nullish() })).max(8), reads: ['accept'], needs: [] },
 }
 /** Why an item cannot run: a field its kind needs is missing, or one it reads breaks its limit. */
 function invalid(item: RouteItem): string | undefined {
   for (const [field, { check, reads, needs }] of Object.entries(FIELDS) as [Field, typeof FIELDS[Field]][]) {
     const value = item[field]
     if (!reads.includes(item.kind)) continue
-    if (value === undefined || value === null || value.trim() === '') {
+    const blank = typeof value === 'string' ? value.trim() === '' : Array.isArray(value) && value.length === 0
+    if (value === undefined || value === null || blank) {
       if (needs.includes(item.kind)) return `${item.kind} needs ${field}`
       continue
     }
@@ -117,7 +125,8 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       if (problem) return { refused: problem }
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId
       const decision = host.engine.decide(item.trigger_id, { kind: 'accept', title: item.title!, scope: item.title!, reason: { code: 'explicitRouted' },
-        acknowledgement: item.acknowledgement!, name: item.worktree_name!, ...(item.project ? { project: item.project } : {}), ...note })
+        acknowledgement: item.acknowledgement!, name: item.worktree_name!, ...(item.project ? { project: item.project } : {}),
+        ...(item.deliverables?.length ? { deliverables: item.deliverables.map(unit => ({ ...(unit.project ? { project: unit.project } : {}), ...(unit.title ? { title: unit.title } : {}), ...(unit.after?.length ? { after: unit.after } : {}) })) } : {}), ...note })
       // A Decision that created no ticket is the item's refusal; one that existed before keeps what it was accepted with.
       if (decision.kind !== 'accept' || !decision.ticketId) return { refused: `Ticket was not created: ${reasonText(decision.reason)}` }
       if (decision.id === before) {

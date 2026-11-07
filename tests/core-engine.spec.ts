@@ -1631,4 +1631,37 @@ describe('requests', () => {
     expect(ticket.requestId).toBe(requests[0]!.id)
     expect(h.repo.requests.get(requests[0]!.id)).toEqual(requests[0])
   })
+  it('splits an accept into one Ticket per deliverable, starts those whose `after` edges ended, and ends the Request once all end', () => {
+    const h = harness()
+    h.engine.receive(trigger('1', { threads: [{ source: 'chat', id: 't1' }] })); h.pump()
+    const decision = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Split', scope: 'small', reason: 'requested',
+      acknowledgement: 'ok', deliverables: [{ project: 'app', title: 'App part' }, { project: 'lib', title: 'Lib part', after: [0] }] })
+    h.settle()
+    const request = h.repo.requests.list()[0]!
+    expect(request.ticketIds).toHaveLength(2)
+    const [firstId, secondId] = request.ticketIds
+    expect(h.repo.tickets.get(firstId!)).toMatchObject({ title: 'App part', project: 'app' })
+    expect(h.repo.tickets.get(secondId!)).toMatchObject({ title: 'Lib part', project: 'lib', after: [firstId] })
+    expect(h.repo.tickets.get(secondId!)!.assignments).toHaveLength(0)
+    expect(h.executor.start).toHaveBeenCalledOnce()
+    h.engine.report(firstId!, { state: 'ready', summary: 'done' })
+    expect(h.repo.tickets.get(secondId!)!.assignments).toHaveLength(1)
+    expect(h.executor.start).toHaveBeenCalledTimes(2)
+    h.settle()
+    h.engine.report(secondId!, { state: 'ready', summary: 'done' })
+    expect(h.repo.requests.get(request.id)!.ended).toMatchObject({ by: 'executor', outcome: 'done' })
+    expect(decision.ticketId).toBe(firstId)
+  })
+  it('ends a split Request as stopped when every Ticket was stopped', () => {
+    const h = harness()
+    h.engine.receive(trigger('1', { threads: [{ source: 'chat', id: 't1' }] })); h.pump()
+    h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Split', scope: 'small', reason: 'requested',
+      deliverables: [{ title: 'One' }, { title: 'Two', after: [0] }] })
+    h.settle()
+    const [firstId, secondId] = h.repo.requests.list()[0]!.ticketIds
+    h.engine.stopTicket(firstId!, 'not needed')
+    h.settle()
+    h.engine.stopTicket(secondId!, 'not needed either')
+    expect(h.repo.requests.list()[0]!.ended).toMatchObject({ by: 'human', outcome: 'stopped' })
+  })
 })

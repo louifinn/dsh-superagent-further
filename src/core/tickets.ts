@@ -40,24 +40,58 @@ export class Tickets extends EnginePart {
     // Fall back to the last trigger for Evals recorded before `primary` existed.
     const primary = this.repo.triggers.get(evaluation.primary ?? triggerIds.at(-1)!)
     const origin = { triggerId: primary?.id ?? triggerIds[0]!, triggerIds }
-    let ticket: Ticket = { id, title: outcome.title, decisionId, mandate, channels: [], assignments: [], inputs: [], undelivered: [],
-      createdAt: at, updatedAt: at, origin }
+    const channels: ChannelRef[] = []
     for (const triggerId of triggerIds) {
       const channel = this.repo.triggers.get(triggerId)?.channel
-      if (channel && !ticket.channels.some(item => sameChannel(item, channel))) ticket.channels.push(channel)
+      if (channel && !channels.some(item => sameChannel(item, channel))) channels.push(channel)
     }
-    ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
-    // One accepted ask is one Request; an accept that names several delivery units creates several Tickets for it later.
-    const request: Request = { id: key('request', decisionId), title: ticket.title, decisionId, mandate,
-      channels: ticket.channels.map(channel => ({ ...channel })), ticketIds: [id], createdAt: at }
-    ticket.requestId = request.id
-    const assignment = this.newAssignment(ticket)
+    // One accepted ask is one Request. An accept that names delivery units creates one Ticket for each of them, in the project
+    // that unit names, with `after` edges between them; a single delivery keeps the id the Decision recorded for its Ticket.
+    const units = outcome.deliverables?.length ? outcome.deliverables : [{ title: outcome.title, project: outcome.project }]
+    const ids = units.map((_, index) => index === 0 ? id : key('ticket', decisionId, String(index)))
+    const request: Request = { id: key('request', decisionId), title: outcome.title, decisionId, mandate,
+      channels: channels.map(channel => ({ ...channel })), ticketIds: ids, createdAt: at }
     this.repo.requests.save(request)
-    this.repo.tickets.save(ticket)
-    for (const triggerId of triggerIds) for (const ref of this.repo.triggers.get(triggerId)?.threads ?? []) this.subscribe(id, ref)
-    if (outcome.acknowledgement && primary) this.replies.acknowledgeAccepted(id, primary, outcome.acknowledgement)
-    this.options.executor.start(this.require(id), assignment)
-    this.emit('ticket.created', { ticketId: id, decisionId, strength: mandate.strength })
+    units.forEach((unit, index) => {
+      const waits = (unit.after ?? []).filter(waited => waited >= 0 && waited < index)
+      let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, requestId: request.id,
+        ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}),
+        channels: channels.map(channel => ({ ...channel })), assignments: [], inputs: [], undelivered: [],
+        createdAt: at, updatedAt: at, origin }
+      if (unit.project) ticket.project = unit.project
+      ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
+      const assignment = waits.length ? undefined : this.newAssignment(ticket)
+      this.repo.tickets.save(ticket)
+      for (const triggerId of triggerIds) for (const ref of this.repo.triggers.get(triggerId)?.threads ?? []) this.subscribe(ticket.id, ref)
+      if (outcome.acknowledgement && primary && index === 0) this.replies.acknowledgeAccepted(ticket.id, primary, outcome.acknowledgement)
+      if (assignment) this.options.executor.start(this.require(ticket.id), assignment)
+      this.emit('ticket.created', { ticketId: ticket.id, decisionId, strength: mandate.strength })
+    })
+    this.dispatchRequest(request.id)
+  }
+
+  /**
+   * Starts a Request's Tickets whose `after` edges have all ended, and ends the Request once every Ticket has ended: `done` when
+   * every outcome was merged, closed or completed, `stopped` when every Ticket was stopped, `partial` otherwise.
+   */
+  private dispatchRequest(requestId: string): void {
+    const request = this.repo.requests.get(requestId)
+    if (!request) return
+    const tickets = request.ticketIds.map(ticketId => this.repo.tickets.get(ticketId))
+      .filter((ticket): ticket is Ticket => ticket !== undefined)
+    for (const ticket of tickets) {
+      if (ticket.ended || ticket.assignments.length || !ticket.after?.length) continue
+      if (!ticket.after.every(waited => this.repo.tickets.get(waited)?.ended)) continue
+      const assignment = this.newAssignment(ticket)
+      this.repo.tickets.save(ticket)
+      this.options.executor.start(this.require(ticket.id), assignment)
+    }
+    if (request.ended || tickets.some(ticket => !ticket.ended)) return
+    const outcomes = tickets.map(ticket => ticket.ended!.outcome)
+    const outcome = outcomes.every(item => item === 'stopped') ? 'stopped'
+      : outcomes.every(item => item === 'merged' || item === 'closed' || item === 'completed') ? 'done' : 'partial'
+    const by = tickets.some(ticket => ticket.ended!.by === 'human') ? 'human' : 'executor'
+    this.repo.requests.save({ ...request, ended: { at: this.now(), by, outcome } })
   }
   /**
    * Subscribes an open ticket to `thread` and records it in `ticket.follows` (`own` when opened by the ticket).
@@ -365,6 +399,7 @@ export class Tickets extends EnginePart {
     this.letGo(ticketId, waiting, left)
     this.emit('ticket.ended', { ticketId, by, outcome, ...why })
     for (const assignment of stopping) this.options.executor.stop(ticket, assignment, reason ?? outcome)
+    if (ticket.requestId) this.dispatchRequest(ticket.requestId)
   }
   /**
    * Whether a ticket's work has not finished at a close at `at`: its worker took up a person's message the ticket decides and

@@ -37,12 +37,21 @@ export interface Candidate {
   tickets: Ticket[]
 }
 
+/** One delivery unit of an accepted ask: a Request creates one Ticket for each, in its own project, ordered by `after`. */
+export interface Deliverable {
+  /** The registered project whose checkout and repository deliver this Ticket. */
+  project?: string
+  /** A short label for this Ticket; the accept's title when omitted. */
+  title?: string
+  /** Indexes of earlier deliverables of the same accept this one waits on. */
+  after?: number[]
+}
 export type AssessmentOutcome =
   | { kind: 'ignore'; reason: string | Reason; audit?: Record<string, unknown> }
   | { kind: 'unavailable'; reason: string | Reason; audit?: Record<string, unknown> }
   /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `project` the registered project whose checkout the work uses, and `note` a routing note for its worker. */
   | { kind: 'accept'; title: string; scope: string; reason: string | Reason; acknowledgement?: string; rules?: string[]; audit?: Record<string, unknown>;
-    name?: string; project?: string; note?: string }
+    name?: string; project?: string; note?: string; deliverables?: Deliverable[] }
   | { kind: 'stop'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
 
 /** Semantic judgement. `request` queues the assessment, idempotently per `evalId`; the outcome returns through `Engine.decide`. */
