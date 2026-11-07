@@ -3,7 +3,8 @@ import { Engine, MemoryRepositories, key, type Assessor, type Executor, type Thr
 import { backfillChat, consumerRetry, feishuKind, feishuTriggerId, feishuRef, feishuTime, feishuTrigger, historyEvent }
   from '../src/sources/feishu.ts'
 import { KV } from '../src/kv.ts'
-import { apply as applyFeishu, pollThreads as pollFeishuThreads } from '../src/sources/feishu.ts'
+import { apply as applyFeishu, pollThreads as pollFeishuThreads, type FeishuConfig } from '../src/sources/feishu.ts'
+import { admissionImageKeys } from '../src/sources/feishu-image.ts'
 import { runFeishu } from '../src/sources/feishu-loops.ts'
 import { commentTrigger, githubAddress, githubChannel, issueTrigger, type GithubComment, type GithubIssue } from '../src/sources/github-trigger.ts'
 import { claimPull, observePull, pullEndNotices, pullOf, ticketBranch, type Pull } from '../src/sources/github-pull.ts'
@@ -139,6 +140,30 @@ describe('feishu source', () => {
     expect(feishuRef(trigger)).toEqual({ triggerId: trigger.id, chatId: 'oc_1', messageId: 'om_2', at: trigger.at })
     expect(feishuTrigger({ message_id: 'om_3', chat_id: 'oc_1', chat_type: 'p2p', sender_id: 'ou_bot', sender_type: 'bot', content: 'me', create_time: '1' }, 'ou_bot', 'cli_bot')).toBeUndefined()
     expect(feishuTrigger(historyEvent({ message_id: 'om_4', chat_id: 'oc_1', create_time: '2', sender: { id: 'ou_x', sender_type: 'app' }, body: { content: '{"text":"from app"}' } }, 'oc_1', false), 'ou_bot', 'cli_bot')).toMatchObject({ human: false, text: 'from app', threads: [{ id: 'oc_1:om_4' }] })
+  })
+  it('keeps an image key and a file key in the text, so assessment can read an image but not a file', () => {
+    const image = feishuTrigger({ message_id: 'om_img', chat_id: 'oc_1', chat_type: 'group', sender_id: MEMBER, sender_type: 'user',
+      content: '{"image_key":"img_abc"}', create_time: '1', mentions: [{ id: 'ou_bot' }] }, 'ou_bot', 'cli_bot')!
+    expect(image.text).toBe('{"image_key":"img_abc"}')
+    expect(admissionImageKeys(image.text)).toEqual(['img_abc'])
+    const file = feishuTrigger({ message_id: 'om_file', chat_id: 'oc_1', chat_type: 'group', sender_id: MEMBER, sender_type: 'user',
+      content: '{"file_key":"file_v2_abc","file_name":"notes.txt"}', create_time: '1' }, 'ou_bot', 'cli_bot')!
+    expect(file.text).toContain('notes.txt')
+    // A file is not an image, so the admission image tool cannot be pointed at it.
+    expect(admissionImageKeys(file.text)).toEqual([])
+  })
+  it('receives each listed chat, direct messages, and mentions in an unlisted chat only when the card allows them', () => {
+    const config: FeishuConfig = { cli: 'lark', readPageSize: 20, linkTimeoutMs: 5000, digestChat: '', digestHour: 9,
+      chats: [{ chatId: 'oc_a', listen: 'mentions' }, { chatId: 'oc_b', listen: 'all' }],
+      directMessages: true, otherChats: 'none' }
+    const scope = (meta: Record<string, unknown>, other: Partial<FeishuConfig> = {}) =>
+      feishuKind.scope!({ meta } as never, { ...config, ...other })
+    expect(scope({ chatId: 'oc_a', direct: false, mentioned: true })).toEqual({ listened: true, observed: false, row: 'oc_a' })
+    expect(scope({ chatId: 'oc_b', direct: false, mentioned: false })).toEqual({ listened: true, observed: true, row: 'oc_b' })
+    expect(scope({ chatId: 'p2p', direct: true, mentioned: false })).toEqual({ listened: true, observed: false, row: 'direct' })
+    expect(scope({ chatId: 'oc_c', direct: false, mentioned: true })).toEqual({ listened: false, reason: 'chat_not_allowed' })
+    expect(scope({ chatId: 'oc_c', direct: false, mentioned: true }, { otherChats: 'mentions' }))
+      .toEqual({ listened: true, observed: false, row: 'other' })
   })
   it('polls subscribed threads and stores unseen replies as triggers on that thread', async () => {
     const h = host()

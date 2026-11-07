@@ -100,6 +100,15 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
    The Source can also post a **daily digest** to one chat: set **Daily digest chat** and **Digest hour (local)** in its settings below. Once a day, at that local hour, it posts a new message to the chat — not a Thread reply, and with no history to read — listing the Tickets that wait for a person, what each needs, how long it has waited, and how many are working. A quiet day still gets one line saying nothing waits. The digest reports its own `digest` health entry, so a failed send shows in the panel, and it tries again on its next minute check inside that hour.
 
+#### What a Feishu Source receives
+
+- **Chats it lists.** Each entry takes `@`-mentions only or all messages. Several chats can be listed, and each keeps its own history cursor and its own reads; a message is received once, from the chat it was sent in.
+- **Chats it does not list.** The bot may already be in other chats. With **Other chats** set to `@ only`, a mention there is received and the Policy's `other` row decides whether it may start work; otherwise those messages are dropped and counted under the Source's health.
+- **Direct messages.** With **Receive direct messages** on, a message to the bot is an `explicit` request from its sender, and the Source also recovers direct chats it has seen before. Turning it off stops both; the Policy reports `direct_messages_not_allowed` for one that arrives meanwhile.
+- **History.** When the Source is switched on it starts reading each listed chat (and each known direct chat) from that moment, page by page in time order, up to 50 messages per page. It also follows topics that had a message in the last two weeks, and a Thread that still has an open Ticket. A page that does not advance fails that chat's read instead of looping, a failed read keeps the chat's cursor at the previous good position and reports on `history`, and the next minute tries again. `readPageSize` changes the page size for the panel's reads.
+- **Attachments.** An image message keeps its `image_key` in the text, and the assessment can read that image (PNG, JPEG, WebP or GIF) when the Source message is admitted; a file keeps its `file_key` and name as text, and the Source does not download it. Forwarded messages keep the forwarded text and any image keys in it.
+- **Rate limits and failures.** Feishu's limits and permission errors come back from `lark-cli` as errors (`99991400` for a rate limit, `99991672` and `230027` for a missing scope). The Source never hides them: a history read reports the error on its `history` entry and retries on the next minute round, and the event consumer is restarted with a one-second delay after a run that stayed up a minute and with exponential backoff up to sixty seconds otherwise.
+
 ### Where the secrets live, and how to rotate them
 
 Nothing in this guide writes a secret into the repository. A copy of the values for convenience belongs in the workspace `.env`, which is ignored by git (`git check-ignore .env` prints it); check before committing that no `.env` file is staged.

@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed.
+- `pnpm check` is green: 1218 passed and 5 skipped on Windows, 1208 passed and 12 skipped on Linux. The process-script and Feishu failures found by the first real Linux run are fixed. Later work brings the suite to 1244 passed and 5 skipped (1249) on Windows, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` is committed but has never run: the repository has no remote yet.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
@@ -84,8 +84,10 @@ The P2 scope, in the order this session takes it.
   with dsh plugin --profile <name> add "file:<tarball>" (verified on this machine, no checkout needed); 006 documented
   both install forms; .github/workflows/release.yml runs the checks on a `v*` tag, verifies the tarball contents and
   creates the GitHub release with it.
-- [ ] Feishu breadth: direct messages, unlisted chats, attachments and several chats, each with a test and documented
-  behaviour, plus history backfill paging and rate limits.
+- [x] Feishu breadth: direct messages (their own row and `direct_messages_not_allowed`), unlisted chats (`otherChats`
+  `@ only` as the `other` row), several listed chats at once, and attachments (an image key is readable by the
+  assessment, a file key is not downloaded) each have a test; 006 now states what the Source receives, how history
+  backfill pages and keeps a cursor on failure, and how Feishu rate-limit and permission errors surface on `history`.
 - [ ] Platform and experience: a macOS checklist, panel screenshots in the release check, and a pass for untranslated
   strings.
 ## Sprint 1 checklist
