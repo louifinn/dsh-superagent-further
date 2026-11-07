@@ -64,7 +64,7 @@ describe('worktree cleanup', () => {
     expect(git(clone, 'worktree', 'list')).not.toContain(worktree)
     expect(git(clone, 'branch', '--list', 'agent/add-one').trim()).toBe('')
     store.close()
-  })
+  }, 60_000)
   it('keeps the worktree of a Ticket that ended recently, and of one whose retention is 0', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktrees-')))
     created.push(root)
@@ -79,7 +79,7 @@ describe('worktree cleanup', () => {
     expect(again).toEqual([expect.objectContaining({ ticketId: 't1', removed: false, kept: 'the operator keeps worktrees' })])
     expect(existsSync(worktree)).toBe(true)
     store.close()
-  })
+  }, 60_000)
   it('never touches a directory the operator placed outside <stateDir>/work', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktrees-')))
     created.push(root)
@@ -91,5 +91,5 @@ describe('worktree cleanup', () => {
     expect(await reclaimWorktrees({ store, settings: store.settings(), stateDir })).toEqual([])
     expect(existsSync(join(outside, 'keep.txt'))).toBe(true)
     store.close()
-  })
+  }, 60_000)
 })

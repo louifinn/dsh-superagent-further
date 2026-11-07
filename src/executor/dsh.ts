@@ -64,7 +64,7 @@ export interface ExecutorHost {
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
     | 'assignmentInterrupted'>
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit' | 'leads'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit' | 'leads' | 'requests'>
   /** Durable effect queue through which launches and input deliveries run. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   /** The `worker` health entry, which reports whether background worker event handling failed. */
@@ -279,8 +279,10 @@ export class DshExecutor implements Executor {
     const named = projectOf(settings.executor.projects, requested)
     if (requested && !named) throw new Error(`Unknown project ${requested}; register it in Execution first`)
     const fromRepository = projectByRepository(settings.executor.projects, repository)
-    // A Feishu message names no repository, so the assessment may choose a project; a GitHub Trigger's own repository decides.
-    if (named && fromRepository && named.id !== fromRepository.id) {
+    // A Feishu message names no repository, so the assessment may choose a project; a GitHub Trigger's own repository decides,
+    // except that an accept split into several deliveries may place each one in its own project.
+    const split = ticket.requestId !== undefined && (this.host.store.requests.get(ticket.requestId)?.ticketIds.length ?? 1) > 1
+    if (named && fromRepository && named.id !== fromRepository.id && !split) {
       throw new Error(`The chosen project ${named.id} is not the project of the Trigger's repository ${repository}`)
     }
     const project = named ?? fromRepository

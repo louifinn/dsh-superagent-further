@@ -1831,6 +1831,39 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   expect(messages[0]!.deliveredAt).toBeDefined()
 })
 
+it('splits an accept into one Ticket per project, and starts the second once the first ends', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [
+    { id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' },
+    { id: 'lib', name: 'Lib', workspace: join(directory, 'lib'), repository: 'acme/lib', branch: '' }] } })
+  const trigger = feishu('64', '@bot 两个项目', { root_id: undefined })
+  await receive(trigger)
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '两个项目', worktree_name: 'two-projects',
+    acknowledgement: '收到。', deliverables: [{ project: 'app', title: 'App part' }, { project: 'lib', title: 'Lib part', after: [0] }] })
+  await runtime.idle()
+  const firstId = (result.ticket as { ticket_id: string }).ticket_id
+  const request = runtime.store.requests.list().at(-1)!
+  expect(request.ticketIds).toHaveLength(2)
+  const [first, second] = request.ticketIds.map(id => runtime.store.tickets.get(id)!)
+  expect(first!.id).toBe(firstId)
+  expect(first!.project).toBe('app')
+  expect(second!.project).toBe('lib')
+  expect(first!.execution!.directory).toBe(join(directory, 'work', 'app', first!.execution!.name))
+  expect(second!.execution!.directory).toBe(join(directory, 'work', 'lib', second!.execution!.name))
+  expect(second!.assignments).toHaveLength(0)
+  const secondChild = `worker-${second!.id}`
+  expect(agents.has(secondChild)).toBe(false)
+  const firstChild = `worker-${first!.id}`
+  await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(firstChild) } as never)
+  await runTool(firstChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
+  await runtime.idle()
+  expect(runtime.store.tickets.get(second!.id)!.assignments).toHaveLength(1)
+  expect(agents.has(secondChild)).toBe(true)
+  await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(secondChild) } as never)
+  await runTool(secondChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
+  await runtime.idle()
+  expect(runtime.store.requests.get(request.id)!.ended).toMatchObject({ outcome: 'done' })
+})
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
   const settings = runtime.store.settings()
   runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, 

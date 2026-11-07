@@ -53,7 +53,7 @@ const RouteItemSchema = z.object({
   worktree_name: z.string().nullish().describe(`accept: ${WorktreeNameSchema.description ?? ''}`),
   acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source on acceptance, so do not quote the source; quote an earlier proposal briefly only when the trigger merely confirms it and the sentence does not already state it. No generic I will handle it.`),
   note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
-  project: z.string().nullish().describe('accept: the id of a registered Execution project whose workspace and repository the work belongs to, for a request that names no repository such as a Feishu message; omit when the Trigger names it or no project fits.'),
+  project: z.string().nullish().describe('accept: the registered Execution project that owns the work, when the Trigger names no repository; omit otherwise.'),
   deliverables: z.array(z.object({
     project: z.string().nullish(),
     title: z.string().nullish(),
@@ -104,6 +104,13 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
   function projectProblem(): string | undefined {
     const projects = host.store.settings().executor.projects
     if (projects.length === 0) return undefined
+    if (item.deliverables?.length) {
+      for (const unit of item.deliverables) {
+        if (!unit.project) return 'Each deliverable names the registered project that owns it; register it in Execution → Projects'
+        if (!projectOf(projects, unit.project)) return `Unknown project ${unit.project}; register it in Execution → Projects`
+      }
+      return undefined
+    }
     if (item.project && !projectOf(projects, item.project)) {
       return `Unknown project ${item.project}; register it in Execution → Projects, or omit project to use the Trigger's repository`
     }

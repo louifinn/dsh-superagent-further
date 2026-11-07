@@ -27,7 +27,7 @@ export const AssessmentSchema = z.object({
   direction: AdmissionDirectionSchema.describe('Required for every decision.'),
   title: z.string().min(1).max(160),
   worktree_name: WorktreeNameSchema.optional(),
-  project: z.string().trim().min(1).max(40).optional().describe('The id of a registered Execution project whose workspace and repository this work belongs to, for a Trigger that names no repository such as a Feishu message; omit when the Trigger names it or none fits.'),
+  project: z.string().trim().min(1).max(40).optional().describe('The registered Execution project that owns the work, when the Trigger names no repository; omit otherwise.'),
   deliverables: z.array(z.object({
     project: z.string().trim().min(1).max(40).optional(),
     title: z.string().trim().min(1).max(160).optional(),
@@ -285,10 +285,18 @@ export class MasterAssessor implements Assessor {
     if (result.decision === 'accept' && result.project && !projectOf(this.host.settings().executor.projects, result.project)) {
       throw new Error(`Unknown project ${result.project}; register it in Execution first, or omit project to use the Trigger's repository`)
     }
+    if (result.deliverables?.length) {
+      const projects = this.host.settings().executor.projects
+      for (const unit of result.deliverables) {
+        if (!unit.project) throw new Error('Each deliverable names the registered project that owns it; register it in Execution first')
+        if (!projectOf(projects, unit.project)) throw new Error(`Unknown project ${unit.project}; register it in Execution first`)
+      }
+    }
     let outcome: AssessmentOutcome = assessmentOutcome(result, this.host.settings(), candidate.strength)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
-    if (outcome.kind === 'accept') {
+    if (outcome.kind === 'accept' && !outcome.deliverables?.length) {
       // A request belongs to a registered project; an installation with no project yet keeps the bootstrap root path.
+      // A split accept already named the project of each delivery, so the Trigger's repository need not own one.
       const projects = this.host.settings().executor.projects
       const named = typeof trigger.meta.repository === 'string' ? trigger.meta.repository : ''
       const project = outcome.project ? projectOf(projects, outcome.project) : projectByRepository(projects, named)
