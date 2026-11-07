@@ -202,6 +202,8 @@ Execution settings gain the orchestration toggle and concurrency fields; docs 00
 the panel test table are updated.
 Acceptance: a real GitHub request and a real Feishu request each become a Ticket executed by a worker
 subagent, merged, with the Lead visible and the executor hidden; `pnpm check` and CI green.
+The default flip moves with P4, which removes the root-worker path in the same change: flipping it while
+both paths exist would leave the root path as dead-but-tested code behind a setting nobody sets.
 
 **P4 — Clean up and widen.** Remove the root-worker path and its feature flag, simplify
 `Sessions`/`DshExecutor`/panel links, and consider the deferred items: splitting one Ticket across
