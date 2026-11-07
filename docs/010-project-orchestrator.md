@@ -179,6 +179,16 @@ reply with the fake subagent host; the real host runs one hand-made Ticket (crea
 management API, not a Source) end to end; recovery test interrupts a host mid-assignment and adopts
 the surviving subagent.
 
+Status (2026-11-08): the launch, report settlement, interrupt/stop and restart adoption are proven on
+the real host — Issue #9 in `louifinn/project-check` became Ticket `aaf66561…`, whose executor ran as
+the child Session of `lead-project-check`, opened PR #10, and the Ticket ended `merged` after the
+operator merged it and the worker's final report reached the Lead. Inputs and status requests reach a
+Lead-hosted child through its Lead (`LeadActivations.steer`/`send`), since a subagent-owned Session
+refuses a root prompt, and a report that names an already-merged PR now ends the Ticket merged at
+once. Still to build: the host-level fake-subagent test, the recovery-adoption test, and the
+project-aware scheduler (concurrency is still the single global `WorkerSlots`). The live run used a
+GitHub Source Ticket because no ticket-creation route exists yet; creating one is P3.
+
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of
 creating a root worker Session; notices/replies route through the Lead; the panel shows a project row
 (Lead Session, running executors, waiting messages) on the Overview and lets a person open the Lead;

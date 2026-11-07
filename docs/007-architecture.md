@@ -207,7 +207,7 @@ That context supplies deployment and commands, setup readiness (`ready`, `config
 
 ### DshExecutor
 
-`DshExecutor` (`src/executor/dsh.ts`) provides one Session and directory per Ticket. `start` and `deliver` enqueue `launch` and `delivery` effects. `stop` cancels the turn through `Store.afterCommit`, so a rolled-back end does not stop the worker. With `executor.orchestration = 'lead'` the launch starts the worker as a subagent of the Ticket project's Lead Session instead (`src/executor/lead-dispatch.ts`), under the same `worker-<ticketId>` id, and disposes that activation on stop and shutdown; the root Session path stays the default.
+`DshExecutor` (`src/executor/dsh.ts`) provides one Session and directory per Ticket. `start` and `deliver` enqueue `launch` and `delivery` effects. `stop` cancels the turn through `Store.afterCommit`, so a rolled-back end does not stop the worker. With `executor.orchestration = 'lead'` the launch starts the worker as a subagent of the Ticket project's Lead Session instead (`src/executor/lead-dispatch.ts`), under the same `worker-<ticketId>` id, and disposes that activation on stop and shutdown; input deliveries go through that Lead (`LeadActivations.steer`/`send`, also after a restart) because a subagent-owned Session refuses a root prompt; the root Session path stays the default.
 
 `prepare(ticket, outcome)` supplies the Engine's `prepareTicket` hook: short name, directory and `ticketExecution` assignment text. `workerSessionId(ticket.id)` derives the Session id.
 
