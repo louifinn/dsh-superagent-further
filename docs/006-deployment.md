@@ -120,6 +120,8 @@ Nothing in this guide writes a secret into the repository. A copy of the values 
 
 Use a fine-grained token rather than a classic one. It needs access to the agent's repository only — Contents, Issues and Pull requests read and write, Metadata read — and no administration, workflow or repository-deletion permissions. A classic token with `admin:org` and `delete_repo` turns one leaked file into a whole-account loss.
 
+A Session that runs with the worker environment applied has the agent's `gh` wrapper first on `PATH`, so a plain `gh` there acts as the agent, not as you. To act as the operator (editing a release, merging as yourself), call the real CLI with `GH_CONFIG_DIR` unset — `C:\Program Files\GitHub CLI\gh.exe` on Windows — and confirm the account with `gh auth status`; the same applies to `git push`, which the worker `insteadOf` rules otherwise rewrite to the agent's credentials.
+
 ## Install
 
 Run this block once, on a machine that has no `superagent` profile yet:

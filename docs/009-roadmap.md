@@ -90,8 +90,9 @@ The P2 scope, in the order this session takes it.
   backfill pages and keeps a cursor on failure, and how Feishu rate-limit and permission errors surface on `history`.
 - [~] Platform and experience: a macOS checklist and a release check are written in 006, the untranslated-strings pass
   is a test (`tests/locales.spec.ts`: only names and placeholders may stay in English), and the panel screenshots for
-  the 0.2.0 build are committed in 005 (taken with Playwright's Chromium, since the system Chrome cannot start headless
-  here); the macOS checklist still needs a Mac, so this item stays open until a person runs it.
+  the 0.2.0 build are committed in 005 and attached to the v0.2.0 release (taken with Playwright's Chromium, since the
+  system Chrome cannot start headless here); the macOS checklist still needs a Mac, so this item stays open until a
+  person runs it.
   strings.
 ## Sprint 1 checklist
 
