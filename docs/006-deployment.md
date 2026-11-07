@@ -200,17 +200,17 @@ Exit codes: `0` every check passed, `1` at least one check failed, `2` the API a
 
 ## Platform and release checks
 
-Two checks cannot run in CI or on the machine that hosts the agent, so a release does them by hand.
+Part of these checks run in CI; the visible part and the real accounts cannot, so a release does them by hand.
 
 ### macOS checklist
 
-CI runs the whole suite on macOS, but nothing starts a real host there. On a Mac, once per release:
+CI runs the whole suite on macOS. `.github/workflows/smoke.yml` also starts a real host on macOS on every push to `main`: it creates a profile, adds the bundle with `link:`, starts the service (expects exit 3, waiting for setup), signs into the panel with its token, checks that the orchestrator API answers, runs `verify-install` (expects exit 2 before setup) and stops the service — the same steps as 1–5 below, minus the visible rendering. What remains for a person, once per release, is the visible part and the real accounts:
 
 1. `git pull && pnpm install --frozen-lockfile && pnpm build` and `pnpm check`; both exit 0.
 2. Create a profile, install the bundle with `link:` and set a `webserver` port and a `stateDir` as the [Install](#install) section shows.
 3. `scripts/dsh-superagent start` exits 3 with "The GitHub Source names no repository", then `status` exits 3; `scripts/dsh-superagent stop` exits 0 and `status` then exits 1.
 4. `scripts/verify-install --profile <name>` exits 2 before setup and 0 after the GitHub Source is saved; `--json` prints the schema line.
-5. The panel opens at the printed URL, and the Superagent sidebar entry renders.
+5. The panel opens at the printed URL, and the Superagent sidebar entry renders — compare it with the committed screenshots in [005](005-panel.md).
 6. A direct message on Feishu and a comment that mentions the agent both reach the Source, and one of them ends as a merged pull request.
 7. `scripts/dsh-superagent logs` are the same shape as on Windows and Linux, and `stop` leaves no process behind (`pgrep -f dsh-superagent` is empty).
 

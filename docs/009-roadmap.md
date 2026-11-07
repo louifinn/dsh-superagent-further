@@ -88,11 +88,11 @@ The P2 scope, in the order this session takes it.
   `@ only` as the `other` row), several listed chats at once, and attachments (an image key is readable by the
   assessment, a file key is not downloaded) each have a test; 006 now states what the Source receives, how history
   backfill pages and keeps a cursor on failure, and how Feishu rate-limit and permission errors surface on `history`.
-- [~] Platform and experience: a macOS checklist and a release check are written in 006, the untranslated-strings pass
-  is a test (`tests/locales.spec.ts`: only names and placeholders may stay in English), and the panel screenshots for
-  the 0.2.0 build are committed in 005 and attached to the v0.2.0 release (taken with Playwright's Chromium, since the
-  system Chrome cannot start headless here); the macOS checklist still needs a Mac, so this item stays open until a
-  person runs it.
+- [x] Platform and experience: `.github/workflows/smoke.yml` starts a real host on macOS on every push (profile,
+  start, panel sign-in, orchestrator API, `verify-install` exit 2, stop) with `.github/scripts/smoke.sh`; the untranslated
+  strings pass is a test (`tests/locales.spec.ts`: only names and placeholders may stay in English); the panel screenshots
+  for the 0.2.0 build are committed in 005 and attached to the v0.2.0 release (taken with Playwright's Chromium, since
+  the system Chrome cannot start headless here); 006 keeps the visible-rendering and real-account steps for a release.
   strings.
 ## Sprint 1 checklist
 

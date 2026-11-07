@@ -1,0 +1,48 @@
+name: smoke
+
+# The unit tests never start a host. This job does, on the platform where
+# nothing else does: macOS. See docs/006-deployment.md, "macOS checklist".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Install the pinned DSH CLI
+        run: |
+          npm install -g @deepseek-ai/dsh@0.2.2-rc.1 \
+            --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs \
+            || npm install -g @deepseek-ai/dsh@0.2.2-rc.1
+          dsh --version
+      - run: bash .github/scripts/smoke.sh
+      - name: Keep the logs when a step fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: .artifacts/*.log
+          if-no-files-found: ignore
+      - name: Stop the host if the job is cancelled
+        if: always()
+        run: node scripts/dsh-superagent stop --profile smoke --url http://127.0.0.1:3099 || true
