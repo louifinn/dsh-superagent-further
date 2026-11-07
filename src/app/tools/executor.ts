@@ -23,6 +23,13 @@ export interface ExecutorToolsHost {
   sendReplies(): Promise<void>
 }
 
+/** A PR number the report links in its own summary, when the link is in the Ticket's repository. */
+const linkedPull = (summary: string, repository: string): number | undefined => {
+  const escaped = repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`github\\.com/${escaped}/pull/(\\d+)`).exec(summary)
+  return match ? Number(match[1]) : undefined
+}
+
 export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
   return [
@@ -89,7 +96,10 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
         // The PR lives in the Ticket's project repository, not in the deployment's own; reading it from the wrong repository refuses a valid claim.
-        const pull = args.pr_number != null ? await readPull(host.github, args.pr_number, signal, projectOf(host.projects(), current.project)?.repository) : undefined
+        const repository = projectOf(host.projects(), current.project)?.repository
+        // A worker may link its PR in the summary instead of passing pr_number; bind it anyway so the merge can end the Ticket.
+        const linked = args.pr_number ?? linkedPull(args.summary, repository ?? host.github.deployment.repository)
+        const pull = linked != null ? await readPull(host.github, linked, signal, repository) : undefined
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {
           const refused = pull && claimPull(host.github, ticketId, pull)

@@ -390,6 +390,28 @@ it('binds a PR the worker reports from the Ticket\'s own project repository', as
   expect(runtime.store.threads.get('github:acme/other#42')?.subscriptions).toEqual([ticket.id])
 })
 
+it('binds the PR a report links in its summary when it passes no pr_number', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const workspace = join(directory, 'other')
+  await runtime.settings.save('executor', { ...runtime.store.settings().executor,
+    projects: [{ id: 'other', name: 'Other', workspace, repository: 'acme/other', branch: '' }] }, runtime.store.blockRevision('executor'), 'panel')
+  runtime.store.tickets.save({ ...runtime.store.tickets.get(ticket.id)!, project: 'other' })
+  vi.mocked(Commands.prototype.gh).mockImplementation(async (args: string[]) => {
+    if (args[1] === 'user') return { login: 'agent-bot' } as never
+    if (args[1]?.includes('/pulls/')) {
+      const name = runtime.store.tickets.get(ticket.id)!.execution!.name
+      return { state: 'open', user: { login: 'agent-bot' }, html_url: 'https://github.com/acme/other/pull/42',
+        head: { sha: 'head-1', ref: `agent/${name}`, repo: { full_name: 'acme/other' } } } as never
+    }
+    return { default_branch: 'master', permissions: { push: true } } as never
+  })
+  // The worker may say only what is ready; the link in its words is enough to bind the PR.
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Ready for review: https://github.com/acme/other/pull/42' })
+  const bound = runtime.store.tickets.get(ticket.id)!
+  expect(pullOf(bound)).toBe(42)
+  expect(bound.follows).toContainEqual(expect.objectContaining({ thread: 'github:acme/other#42', own: true }))
+})
+
 it('lists each ticket with the Threads it subscribes to, as their Sources describe them', async () => {
   const { sessionId, ticket } = await acceptedTicket()
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42 })
