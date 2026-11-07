@@ -97,10 +97,12 @@ export const githubKind: SourceKind<GithubConfig> = {
       { key: 'DSH_SUPERAGENT_GITHUB_NUMBER', description: { zh: '接下工单的 Issue 或 PR 编号；工单不是从 GitHub 来的时为空', en: 'Number of the Issue or PR that started the ticket; empty when the ticket did not start on GitHub' } },
       { key: 'DSH_SUPERAGENT_GITHUB_PR_HEAD', description: { zh: '接下工单的 PR 的 head 引用 refs/pull/<编号>/head；不是 PR 时为空', en: 'Head ref refs/pull/<number>/head of the PR that started the ticket; empty when it was not a PR' } },
     ],
-    values: ({ deployment, trigger }) => {
+    values: ({ deployment, trigger, project }) => {
       const number = trigger?.threads[0]?.source === SOURCE ? Number(trigger.meta.number) || 0 : 0
-      // The Trigger names its repository once the Source can poll several; older Triggers and non-GitHub tickets fall back to the deployment's.
-      const repository = typeof trigger?.meta.repository === 'string' && trigger.meta.repository ? trigger.meta.repository : deployment.repository
+      // The Trigger names its repository once the Source can poll several; a project ticket knows its own repository;
+      // older Triggers and Tickets without project fall back to the deployment's.
+      const named = typeof trigger?.meta.repository === 'string' && trigger.meta.repository ? trigger.meta.repository : ''
+      const repository = named || project?.repository || deployment.repository
       return { DSH_SUPERAGENT_GITHUB_REPOSITORY: repository, DSH_SUPERAGENT_GITHUB_ACCOUNT: deployment.github.login, DSH_SUPERAGENT_GITHUB_COMMIT_EMAIL: deployment.github.noreply, DSH_SUPERAGENT_GITHUB_NUMBER: number ? String(number) : '',
         DSH_SUPERAGENT_GITHUB_PR_HEAD: number && trigger?.meta.isPr === true ? `refs/pull/${number}/head` : '' }
     },

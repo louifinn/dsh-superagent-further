@@ -1785,6 +1785,9 @@ it('starts a Ticket executor as a child of its project Lead when Orchestration i
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   const childId = `worker-${ticket.id}`
   expect(ticket.project).toBe('app')
+  // A Feishu Trigger names no repository, so the environment takes the project's repository, not the deployment's.
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({
+    DSH_SUPERAGENT_PROJECT: 'app', DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/app' })
   expect(agents.has('lead-app')).toBe(true)
   expect(agents.has(childId)).toBe(true)
   const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;

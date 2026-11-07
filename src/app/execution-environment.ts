@@ -35,7 +35,9 @@ export function environmentOf(input: { deployment: Deployment; sources: SourceRe
       DSH_SUPERAGENT_PROJECT: ticket.project ?? '', DSH_SUPERAGENT_PROJECT_WORKSPACE: project?.workspace ?? '' } : {} }
   const result: Variable[] = EXECUTOR_VARIABLES.filter(spec => !spec.ticket || ticket).map(spec => ({ key: spec.key, value: executor[spec.key] ?? '', description: spec.description, owner: 'executor' }))
   for (const { kind, environment, config } of sources.environments(settings)) {
-    const values = environment.values({ deployment, config, ...trigger ? { trigger } : {} })
+    // A Ticket accepted from a Source that names no repository (Feishu) still knows its project: pass it so a Source
+    // can resolve values such as the GitHub repository the executor works in.
+    const values = environment.values({ deployment, config, ...project ? { project } : {}, ...trigger ? { trigger } : {} })
     for (const spec of environment.variables) result.push({ key: spec.key, value: values[spec.key] ?? '', description: spec.description, owner: kind.kind })
   }
   return result
