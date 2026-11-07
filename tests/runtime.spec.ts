@@ -1710,6 +1710,30 @@ it('launches a queued Assignment once when the host resumes, and gives a failed 
   expect(launches()).toBe(1)
 }, 30_000)
 
+it('checks out a Feishu request in the project its assessment names', async () => {
+  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor,
+    projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  const trigger = feishu('60', '@bot 修 app', { root_id: undefined })
+  await receive(trigger)
+  expect(relays(runtime.masterId).some(item => item.trigger_id === trigger.id)).toBe(true)
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复 app', worktree_name: 'fix-app',
+    project: 'app', acknowledgement: '收到，修复 app。' })
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  expect(ticket.project).toBe('app')
+  expect(ticket.execution?.directory).toBe(join(directory, 'work', 'app', ticket.execution!.name))
+  // The candidate lists the registered projects, so the assessment can pick one for a message that names no repository.
+  const relayed = relays(runtime.masterId).find(item => item.trigger_id === trigger.id) as { projects?: unknown }
+  expect(relayed.projects).toEqual([{ id: 'app', name: 'App', repository: 'acme/app' }])
+})
+
+it('refuses an accepted project the settings do not register', async () => {
+  const trigger = feishu('61', '@bot 修 x', { root_id: undefined })
+  await receive(trigger)
+  await expect(route({ kind: 'accept', trigger_id: trigger.id, title: '修复 x', worktree_name: 'fix-x',
+    project: 'nope', acknowledgement: '收到。' })).rejects.toThrow(/Unknown project nope/)
+  expect(runtime.store.tickets.open()).toEqual([])
+})
+
 it('shows the settings history when one revision holds values its Source kind no longer accepts, without that revision\'s changes', async () => {
   const settings = runtime.store.settings()
   await runtime.settings.save('executor', { ...settings.executor, maxWorkers: 4 }, runtime.store.blockRevision('executor'), 'panel')

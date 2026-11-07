@@ -116,8 +116,10 @@ surface now replaces that workaround with a project list inside the Execution se
   names it; the daily digest groups waiting Tickets under their project names (Tickets without one last); the Triggers
   list still shows all projects together, and the panel has no per-project page yet. A schema 11 database fills in the
   project of Tickets accepted before projects existed (`tests/migration.spec.ts`).
-- [ ] Feishu routing: one group manages all projects; a Feishu Trigger's project is resolved per message (the project it
-  names first, the configured default otherwise) rather than bound to a chat.
+- [x] Feishu routing: one group manages all projects. A Feishu message names no repository, so the main Session's card
+  lists the registered projects and the acceptance may name one (the message may name a project id itself); the Executor
+  refuses an unknown project and refuses one that differs from a GitHub Trigger's own repository, and the Ticket then
+  checks out in that project's workspace (`tests/runtime.spec.ts`).
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

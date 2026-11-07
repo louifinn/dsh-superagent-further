@@ -8,6 +8,7 @@ import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
+import { projectOf } from '../projects.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
@@ -26,6 +27,7 @@ export const AssessmentSchema = z.object({
   direction: AdmissionDirectionSchema.describe('Required for every decision.'),
   title: z.string().min(1).max(160),
   worktree_name: WorktreeNameSchema.optional(),
+  project: z.string().trim().min(1).max(40).optional().describe('The id of a registered Execution project whose workspace and repository this work belongs to, for a Trigger that names no repository such as a Feishu message; omit when the Trigger names it or none fits.'),
   scope: z.string().max(1500),
   intent_evidence: z.string().trim().min(1).max(700).nullish().describe('For acceptance: the quotes that establish the three facts.'),
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),
@@ -210,6 +212,8 @@ export class MasterAssessor implements Assessor {
       source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
         ? { url: trigger.url } : {}) },
       ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
+      // A Feishu message names no repository; the registered projects let the assessment choose one (or none).
+      ...settings.executor.projects.length ? { projects: settings.executor.projects.map(({ id, name, repository, branch }) => ({ id, name, repository, ...branch ? { branch } : {} })) } : {},
       ...others.length ? { batch: others.map(item => {
         const text = cut(item.text, WINDOW_CHARS)
         return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...text, ...'chars' in text ? { read: `trigger/${item.id}` } : {} }
@@ -272,6 +276,10 @@ export class MasterAssessor implements Assessor {
   async decide(triggerId: string, result: z.infer<typeof AssessmentSchema>, signal?: AbortSignal): Promise<{ state: string; ticket_id?: string; reason: string }> {
     const { candidate } = this.evalFor(triggerId)
     signal?.throwIfAborted()
+    // A Feishu message names no repository, so the assessment may pick the project; the Executor checks that choice against a GitHub Trigger's repository.
+    if (result.decision === 'accept' && result.project && !projectOf(this.host.settings().executor.projects, result.project)) {
+      throw new Error(`Unknown project ${result.project}; register it in Execution first, or omit project to use the Trigger's repository`)
+    }
     let outcome: AssessmentOutcome = assessmentOutcome(result, this.host.settings(), candidate.strength)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
     const decision = this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId })
