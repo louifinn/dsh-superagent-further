@@ -169,6 +169,22 @@ Switching hosts means quitting the current one, not only unloading the plugin: D
 
 The orchestrator applies the worker environment to its whole host process: `PATH` gains `worker-bin`, so `gh` and `lark-cli` resolve to the worker's shims, and `GIT_CONFIG_GLOBAL` points at the agent's git configuration. Installing into a profile you also work in therefore applies those settings to your own Sessions in that application, and the commands you run there act as the agent's accounts. When that separation matters, install into a separate `superagent` profile, as this guide's default does, and restart the application after switching hosts.
 
+### A pinned DSH installation
+
+The desktop application updates itself, and an upgrade can change the Harness API the bundle builds against. A service can keep its own Harness launcher instead of the application's:
+
+```sh
+npm install -g --prefix "$HOME/.dsh-superagent/dsh" "@deepseek-ai/dsh@0.2.2-rc.1" \
+  --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs
+export DSH_SUPERAGENT_DSH="$HOME/.dsh-superagent/dsh/dsh"    # dsh.cmd on Windows
+scripts/dsh-superagent start
+scripts/verify-install --dsh "$DSH_SUPERAGENT_DSH"
+```
+
+The build scripts are not optional: without them `node-pty` and `koffi` keep no binaries, and the host starts a web server but never loads its plugins (the panel answers 401 and `/orchestrator/api/state` answers 404, with an empty service log). With the launcher pinned the service keeps running the tested version while the application updates, and `verify-install --dsh <path>` reports the version it finds. Profiles and the state database stay shared, so the one-host rule, the schema check and the rollback steps still apply; update the pinned launcher deliberately, together with the bundle, when it expects a newer Harness.
+
+Verified on 2026-11-07: a `@deepseek-ai/dsh@0.2.2-rc.1` prefix booted a profile on port 3088, served the panel and answered `GET /orchestrator/api/state`, and `verify-install --dsh <pinned>/dsh.cmd` reported that version.
+
 ### Verify an installation
 
 `scripts/verify-install` reads one installation and reports what it found, without changing anything. It has no dependency beyond Node's standard library, and needs no token on a loopback host:

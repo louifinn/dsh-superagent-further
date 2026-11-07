@@ -100,7 +100,7 @@ The P2 scope, in the order this session takes it.
   records where each secret lives and how to rotate it.
 - [x] `origin` added, `main` pushed, `check.yml` green on Linux, macOS and Windows with Node 22 and 24.
 - [x] One-host switching documented and enforced by a clear failure message from both hosts.
-- [x] 006 pins the tested DSH version; `scripts/verify-install` exists and passes in application mode and in service mode.
+- [x] 006 pins the tested DSH version, states that a service can also pin its own launcher (`DSH_SUPERAGENT_DSH`, 006 "A pinned DSH installation"); `scripts/verify-install` exists and passes in application mode and in service mode.
 - [x] `pnpm check` green on Windows, and both real end-to-end paths still run after the changes.
 
 ## Open questions

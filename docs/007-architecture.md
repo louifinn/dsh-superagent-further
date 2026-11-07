@@ -639,7 +639,7 @@ Every Trigger carries two kinds of fields, and the gates read only the first.
 - No untrusted field can change a role, a tool list, a Policy, an allowed list, or the strength of a request. `prompts/admission.md`, `prompts/work.md` and `prompts/cli.md` say so to the models; `orchestrator_eval` returns bodies as `{id, from, at, text}` data while the instructions stay in the `runtime/admission` prompt part; and every gate takes its decision from the trusted fields alone. `tests/trust.spec.ts` pins both halves down: the prompt statements stay, and a body that claims to be an explicit request, a human, or an administrator changes no decision.
 - A Source may turn a quoted link or a follow-up into context, but not into authority: a bot's message can at most become an inferred candidate whatever its text says, and a direct message from someone a Source's part does not list is refused before any text is read.
 
-## Open questions
+## Deployment isolation
 
-- Deployment isolation: the agent's profile on its own pinned DeepSeek Harness installation, so upgrading DeepSeek Harness elsewhere does not break it.
+A service can run its own Harness launcher: `DSH_SUPERAGENT_DSH` (006, "A pinned DSH installation") selects the CLI, so an upgrade of the desktop application elsewhere does not change the engine the service builds against. Profiles and the state schema stay shared, so the one-host rule, the schema check and the rollback steps still apply.
 
