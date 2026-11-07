@@ -213,8 +213,10 @@ Status (2026-11-08): the `executor.orchestration` switch is removed — a Projec
 its Lead, and an acceptance no registered project can own is refused with a pointer to **Execution →
 Projects** (the operator's decision: one path, no implicit fallback). The only remaining root path is
 the bootstrap exception for an installation with no project registered yet; P4b removes it by requiring
-a project during onboarding. The multi-executor design is recorded (not implemented) in the next
-section.
+a project during onboarding. That step and the bootstrap removal go together: the current host test
+harness accepts Tickets without projects and asserts a root worker Session, so P4b starts by moving the
+harness (and the specifications that assert root deliveries) onto Lead-hosted executors, then makes the
+setup require a project. The multi-executor design is recorded (not implemented) in the next section.
 
 ## Future: one Ticket, several executors
 

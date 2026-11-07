@@ -134,9 +134,10 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
 - [x] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), input and status requests reach a Lead-hosted child through its Lead, and both real entry points are proven end to end through a Lead (GitHub Issue #9 → PR #10 merged, Feishu message → PR #11 merged, each with the Lead visible and the executor a hidden child); docs 001/003/004/006/007 are updated.
 - [~] P4 Cleanup: the `executor.orchestration` switch is removed; a Project Ticket always runs under its
   Lead, an acceptance no registered project can own is refused with a pointer to **Execution → Projects**
-  (the operator's decision: one path, no implicit fallback). Left in P4b: make onboarding require a
-  project so the bootstrap root path can be removed too, and implement the deferred
-  one-Ticket-to-many-executors design recorded in `docs/010-project-orchestrator.md`.
+  (the operator's decision: one path, no implicit fallback). Left in P4b: move the host test harness
+  and its root-worker assertions onto Lead-hosted executors, then make onboarding require a project and
+  remove the bootstrap root path; the deferred one-Ticket-to-many-executors design is recorded in
+  `docs/010-project-orchestrator.md`.
 
 ## Sprint 1 checklist
 
