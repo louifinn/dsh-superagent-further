@@ -12,7 +12,7 @@ import { ciCounts, ciFact, ciSummary } from '../src/sources/github-read.ts'
 import { apply as applyGithub, githubKind, pollFailure, pollRound } from '../src/sources/github.ts'
 import { pollThreads as pollGithubThreads } from '../src/sources/github.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
-import { cursorAt, POLL_HORIZON_MS } from '../src/sources/poll.ts'
+import { cursorAt, lagged, POLL_HORIZON_MS } from '../src/sources/poll.ts'
 import { Store } from '../src/app/store.ts'
 import { Commands, commandError } from '../src/infra/commands.ts'
 import { HealthBoard } from '../src/infra/health.ts'
@@ -1358,12 +1358,12 @@ describe('observing the GitHub repository', () => {
     expect(h.receive.mock.calls.map(([trigger]) => [trigger.meta.number, trigger.meta.kind, trigger.id]))
       .toEqual([[4, 'issue', issueTrigger(issue(4), 'agent-bot').id], [5, 'pull', issueTrigger(issue(5), 'agent-bot').id]])
     const started = { issues: at(0), pulls: at(0) }
-    expect(h.store.get('github-stream:issues')).toEqual({ since: cursorAt(at(4)), started })
+    expect(h.store.get('github-stream:issues')).toEqual({ since: lagged(at(4)), started })
     const list = () => calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))
     expect(list()[0]![1]).toContain(`since=${encodeURIComponent(at(0))}`)
     // The next round repeats the request at the newest Issue, whose ETag the round after sends, which GitHub answers 304 for.
     await pollRound(h)
-    expect(h.store.get('github-stream:issues')).toEqual({ since: cursorAt(at(4)), started, etag: '"same"' })
+    expect(h.store.get('github-stream:issues')).toEqual({ since: lagged(at(4)), started, etag: '"same"' })
     h.receive.mockClear()
     await pollRound(h)
     expect(list().at(-1)).toEqual(expect.arrayContaining(['-H', 'If-None-Match: "same"']))
@@ -1372,6 +1372,25 @@ describe('observing the GitHub repository', () => {
     observe(h, {})
     await pollRound(h)
     expect(h.store.get('github-stream:issues')).toBeUndefined()
+    h.store.close()
+  })
+  it('keeps a stream position behind the newest item, so one GitHub indexed late is listed again as a duplicate', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) } })
+    // The Issue is newer than the stored position but older than the newest item the round read.
+    repository(h, { issues: [issue(7, { created_at: at(1), updated_at: at(1) }), issue(8, { created_at: at(2), updated_at: at(2) })] })
+    await pollRound(h)
+    expect(h.receive.mock.calls.map(([trigger]) => trigger.meta.number)).toEqual([7, 8])
+    // The position stays behind the newest item, so the next round lists the same Issues again; they are duplicates rather than
+    // a second Trigger, which is how a read that advances past a late-indexed item stops losing it.
+    expect(h.store.get<{ since: string }>('github-stream:issues')!.since).toBe(lagged(at(2)))
+    h.receive.mockClear()
+    await pollRound(h)
+    expect(h.receive).toHaveBeenCalledTimes(2)
+    expect(await h.receive.mock.results[0]!.value).toBe('duplicate')
+    expect(await h.receive.mock.results[1]!.value).toBe('duplicate')
     h.store.close()
   })
   it('takes in the repository\'s conversation and review comments, on the Issue or PR each is on', async () => {
@@ -1416,7 +1435,7 @@ describe('observing the GitHub repository', () => {
     await expect(pollRound(h)).rejects.toThrow(/issues: .*502/)
     expect(h.store.get('github-stream:issues')).toEqual({ since: at(0), started: { issues: at(0) } })
     expect(h.receive).toHaveBeenCalledWith(expect.objectContaining({ text: 'looks off' }))
-    expect(h.store.get('github-stream:comments')).toEqual({ since: cursorAt(at(1)), started: { comments: at(0) } })
+    expect(h.store.get('github-stream:comments')).toEqual({ since: lagged(at(1)), started: { comments: at(0) } })
     h.store.close()
   })
   it('reads a stream whose cursor is older than the polling horizon from the horizon, without the ETag of the older request', async () => {
@@ -1464,14 +1483,14 @@ describe('observing the GitHub repository', () => {
     expect(Object.keys(h.store.get<{ started: Record<string, string> }>('github-stream:issues')!.started)).toEqual(['pulls'])
     h.store.close()
   })
-  it('keeps a stream\'s cursor five seconds before its newest item, and a stale cursor on the hour, so the ETag is sent again', async () => {
+  it('keeps a stream\'s cursor behind its newest item, and a stale cursor on the hour, so the ETag is sent again', async () => {
     const h = host()
     observe(h, { observeIssues: true })
     h.store.set('github-since', at(-24))
     h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0) } })
     repository(h, { issues: [issue(6, { created_at: at(3), updated_at: at(3) })] })
     await pollRound(h)
-    expect(h.store.get<{ since: string }>('github-stream:issues')!.since).toBe(new Date(Date.parse(at(3)) - 5000).toISOString())
+    expect(h.store.get<{ since: string }>('github-stream:issues')!.since).toBe(lagged(at(3)))
     // A cursor behind the horizon reads from the horizon on the hour, the same in the next round, which sends the ETag.
     const old = new Date(Date.now() - 20 * 86_400_000).toISOString()
     h.store.set('github-stream:issues', { since: old, started: { issues: old } })

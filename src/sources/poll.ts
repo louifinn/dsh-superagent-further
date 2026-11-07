@@ -14,6 +14,15 @@ export function polled(ctx: SourceContext, thread: Thread, now = Date.now()): bo
 }
 /** Steps a poll start timestamp back by 5 seconds so late-arriving remote events are not missed; deterministic trigger IDs deduplicate overlaps. */
 export const cursorAt = (started: string): string => new Date(Date.parse(started) - 5000).toISOString()
+/**
+ * How far a read position stays behind the newest listed item. GitHub can index an item a few seconds after the listing
+ * that should have contained it advances the cursor, and a slow round over several repositories widens that window; keeping
+ * the position this far back means the next round lists the item again. Trigger IDs are deterministic, so `receive` reports
+ * the overlap as a duplicate instead of storing it twice.
+ */
+export const READ_LAG_MS = 10 * 60_000
+/** Steps a read position back by `READ_LAG_MS`, for the cursors that every round advances to "the newest item read". */
+export const lagged = (at: string): string => new Date(Date.parse(at) - READ_LAG_MS).toISOString()
 /** Polls each subscribed Thread of `source` within the horizon independently; records failures on the Thread as `pollError` (unless `stopped()`) and clears `pollError` on success. */
 export async function pollThreads(ctx: SourceContext, source: string, stopped: () => boolean, poll: (thread: Thread) => Promise<void>,
   skip: (thread: Thread) => boolean = () => false): Promise<void> {

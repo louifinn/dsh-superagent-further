@@ -12,7 +12,7 @@ import type { GithubComment, PullRef } from './github-trigger.ts'
 import { observePull, readPull, type Pull } from './github-pull.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
-import { cursorAt, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
+import { cursorAt, lagged, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
 import type { Localized, SourceKind } from './kind.ts'
 import { z } from 'zod'
 
@@ -279,7 +279,9 @@ async function readStream(ctx: SourceContext, round: Round, repo: GithubReposito
     if (trigger.text) await ctx.receive(trigger)
   }
   const newest = Math.max(...items.map(item => Date.parse(item.updated_at ?? '')).filter(Number.isFinite))
-  const moved = Number.isFinite(newest) ? cursorAt(new Date(newest).toISOString()) : since
+  // Keep the position behind the newest item: an item GitHub indexes late is listed again next round.
+  // `receive` drops the duplicate by its deterministic Trigger id.
+  const moved = Number.isFinite(newest) ? lagged(new Date(newest).toISOString()) : since
   const next = Date.parse(moved) > Date.parse(since) ? moved : since
   const etag = /^etag:\s*(.+)$/im.exec(headers)?.[1]?.trim()
   // The ETag belongs to this request, which the next round repeats only while the cursor stays unchanged.
@@ -390,7 +392,7 @@ async function pollNotifications(ctx: SourceContext, round: Round, repos: Github
     }
   }
   ctx.atomic(() => {
-    state.set(KV.github.since, cursorAt(round.started))
+    state.set(KV.github.since, lagged(round.started))
     for (const repo of repos) state.set(retriesOf(repo), records.get(repo)!)
   })
   return { count: notifications.length, interval }
@@ -425,7 +427,7 @@ async function readNotified(ctx: SourceContext, round: Round, repo: GithubReposi
     await intakeComments(ctx, repo, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
     if (pr.title) nameThread(ctx, repo, number, pr.title)
   }
-  ctx.state.set(cursorOf(repo, number), cursorAt(round.started))
+  ctx.state.set(cursorOf(repo, number), lagged(round.started))
   ctx.threads.patch(thread, { pollError: undefined })
 }
 /** Reads and observes a PR at most once per polling round. */
@@ -525,5 +527,5 @@ async function pollThread(ctx: SourceContext, round: Round, repo: GithubReposito
     const pr = await pull(ctx, round, repo, number)
     await intakeComments(ctx, repo, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since, round)
   } else await intakeComments(ctx, repo, { number, isPr: false }, since, round)
-  ctx.state.set(checkpoint, cursorAt(round.started))
+  ctx.state.set(checkpoint, lagged(round.started))
 }
