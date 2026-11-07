@@ -3,7 +3,7 @@
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, all, find, tab, click, text } from './fixtures/panel.tsx'
-import { server, droppedReply, threadSummary } from './fixtures/panel-server.ts'
+import { server, droppedReply, threadSummary, ticketSummary } from './fixtures/panel-server.ts'
 
 usePanel()
 it('leads the overview with the pending Tickets, then problems, the last day and the Executor, each linking to its stage', async () => {
@@ -68,6 +68,25 @@ it('offers each Ticket that needs a person its actions on the overview: answer i
   await click(zh.confirm)
   expect(server.requests.some(request => request.path === 'tickets/t4/stop' && request.method === 'POST')).toBe(true)
   expect(text()).not.toContain('截图工具')
+})
+
+it('says which action a waiting Ticket needs, and marks one nobody has acted on for days', async () => {
+  const day = 86_400_000
+  server.person = [
+    ticketSummary({ id: 't5', title: '确认新版本', updatedAt: new Date(Date.now() - 3 * day).toISOString() },
+      { stage: 'person', action: 'review' }),
+    ticketSummary({ id: 't6', title: '刚送来的', updatedAt: new Date(Date.now() - 600_000).toISOString(),
+      attention: { id: 'q2', question: '用蓝色还是绿色？' } }, { stage: 'person', action: 'answer' }),
+  ]
+  await mount()
+  const meta = (index: number) => all('.dt-ticket-meta')[index]!.textContent ?? ''
+  expect(meta(0)).toContain(zh.waitingForLabel)
+  expect(meta(0)).toContain(zh['waitingForAction.review'])
+  expect(meta(0)).toContain(zh.waitingLong.replace('{count}', '3'))
+  expect(meta(1)).toContain(zh['waitingForAction.answer'])
+  expect(meta(1)).not.toContain(zh.waitingLong.replace('{count}', '0'))
+  // Only the Ticket that has waited days carries the warning marker.
+  expect(all('.dt-ticket-meta .dt-tag').map(tag => tag.textContent)).toEqual([zh.waitingLong.replace('{count}', '3')])
 })
 
 it('shows paused processing as a system problem with its resume action, and says so on the Policy records', async () => {

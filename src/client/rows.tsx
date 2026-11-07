@@ -4,7 +4,7 @@ import type { DecisionRow, ThreadFacts, ThreadRow, TicketRow } from './api.ts'
 import { Icon, Tag } from './controls.tsx'
 import { decisionMark, threadMark, ticketMark } from './marks.ts'
 import { usePanel } from './provider.tsx'
-import { actorName, localized, readableMarkers, reasonLabel, valueLabel } from './text.ts'
+import { actorName, localized, readableMarkers, reasonLabel, valueLabel, waitingDays } from './text.ts'
 import { ActionLink, ConfirmButton, LabelValue, SessionButton, StageMark, When } from './widgets.tsx'
 
 export function TicketLine({ ticket, question, onChanged, context }: {
@@ -15,6 +15,10 @@ export function TicketLine({ ticket, question, onChanged, context }: {
   const after = async (request: Promise<unknown>) => { await request; await onChanged?.() }
   const note = question && ticket.note && { ...ticket.note, text: readableMarkers(t, ticket.note.text) }
   const answer = ticket.reply && ticket.stage === 'person' && ticket.action === 'answer' ? ticket.reply : undefined
+  // A waiting Ticket says which action it waits for, and how long it has waited for it; the age comes from `updatedAt`,
+  // which moves whenever the stage changes, so a fresh Ticket is never marked stale by a skewed clock.
+  const person = ticket.stage === 'person'
+  const waited = person ? waitingDays(ticket.updatedAt) : 0
   return <li className="dt-row dt-link dt-ticket" data-state={question ? status.dot : undefined}>
     <div className="dt-ticket-stage"><StageMark state={status.dot} icon={status.icon} label={status.label} /></div>
     <div className="dt-ticket-body">
@@ -24,6 +28,8 @@ export function TicketLine({ ticket, question, onChanged, context }: {
         {ticket.threads.map(thread => <ThreadChip key={thread.key} thread={thread} />)}
         {context && <ContextTag />}
         {ticket.undelivered > 0 && <LabelValue label={t('ticketUndeliveredLabel')} value={ticket.undelivered} />}
+        {person && <LabelValue label={t('waitingForLabel')} value={valueLabel(t, 'waitingForAction', ticket.action)} />}
+        {waited >= 1 && <Tag tone="warning" title={t('waitingLongHint')}>{t('waitingLong', { count: String(waited) })}</Tag>}
         {note ? <span className={note.error ? 'dt-ticket-note dt-ticket-note-error' : 'dt-ticket-note'} title={note.text}>{note.text}</span>
           : <When at={ticket.updatedAt} />}
       </div>

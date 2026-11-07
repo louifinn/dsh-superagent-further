@@ -61,3 +61,11 @@ export function fullTime(value: string | undefined, lang: string): string {
   const date = new Date(value ?? '')
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(timeLocale(lang))
 }
+/**
+ * Whole days a Ticket has waited in its current stage (its `updatedAt` moves when the stage changes).
+ * A missing or future timestamp counts as zero, so a clock skew never marks a fresh Ticket as stale.
+ */
+export function waitingDays(at: string | undefined, now = Date.now()): number {
+  const started = Date.parse(at ?? '')
+  return Number.isNaN(started) || started >= now ? 0 : Math.floor((now - started) / 86_400_000)
+}

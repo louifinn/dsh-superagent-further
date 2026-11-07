@@ -60,8 +60,11 @@ The P1 scope.
 - [x] Observability: a polling Source reports when it next checks and, while it keeps failing, the consecutive count and
   the last error; the overview reports outbox waiting and failing counts, the oldest wait and the next attempt; the panel
   shows each Ticket's stage age; each host keeps a bounded log history.
-- [ ] Ticket loop ergonomics: the panel lists waiting Tickets with their age and expected action, a failed worker can be
-  retried without a new trigger, and stale PRs are marked.
+- [x] Ticket loop ergonomics, except the daily digest: a waiting Ticket says which action it needs, and after a day it
+  carries a warning with the number of days it has waited (for a Ticket awaiting review that is how long its pull request
+  has waited); a failed or blocked worker is retried from the same row without a new trigger.
+- [ ] Daily digest: a summary of waiting Tickets and failures once a day. Needs a delivery target the operator picks
+  (a Feishu chat, a GitHub Issue, or the panel only).
 
 ## Sprint 1 checklist
 
