@@ -27,6 +27,7 @@ export function TicketLine({ ticket, question, onChanged, context }: {
       <div className="dt-row-meta dt-ticket-meta">
         {ticket.threads.map(thread => <ThreadChip key={thread.key} thread={thread} />)}
         {context && <ContextTag />}
+        {ticket.project && <LabelValue label={t('ticketProject')} value={ticket.project} />}
         {ticket.undelivered > 0 && <LabelValue label={t('ticketUndeliveredLabel')} value={ticket.undelivered} />}
         {person && <LabelValue label={t('waitingForLabel')} value={valueLabel(t, 'waitingForAction', ticket.action)} />}
         {waited >= 1 && <Tag tone="warning" title={t('waitingLongHint')}>{t('waitingLong', { count: String(waited) })}</Tag>}

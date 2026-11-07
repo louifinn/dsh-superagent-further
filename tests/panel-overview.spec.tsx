@@ -26,6 +26,13 @@ it('leads the overview with the pending Tickets, then problems, the last day and
   expect(tab(zh['tab.execution']).getAttribute('aria-selected')).toBe('true')
 })
 
+it('names the project a Ticket belongs to', async () => {
+  server.person = [ticketSummary({ id: 't7', title: '项目里的工单', project: 'napkid' }, { stage: 'person', action: 'review' })]
+  await mount()
+  const meta = all('.dt-ticket-meta')[0]!.textContent ?? ''
+  expect(meta).toContain(zh.ticketProject)
+  expect(meta).toContain('napkid')
+})
 it('re-evaluates or dismisses an unjudged Eval from the problem list', async () => {
   await mount()
   await click(zh.requeue)

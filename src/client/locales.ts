@@ -138,6 +138,7 @@ const TEXT = {
   problemRuntime: ['运行异常：{name}', '{name} failing'],
   problemEvalUnavailable: ['评估未完成：{thread}', 'Eval unavailable: {thread}'],
   sourceErrorHint: ['来源会在每次轮询时自动重试。持续出现时检查网络和该来源的登录状态。', 'The Source retries on every poll. If this persists, check the network and the Source\'s sign-in.'],
+  ticketProject: ['项目', 'Project'],
   sourceNextLabel: ['下次轮询', 'Next check'],
   outboxTitle: ['待发送回复', 'Reply queue'],
   outboxSummary: ['{pending} 条回复等待发送（{failing} 条已失败过）；最久自 {oldest} 起，下一次尝试 {next}。', '{pending} replies wait to be sent ({failing} failed at least once); the oldest since {oldest}, the next attempt {next}.'],
