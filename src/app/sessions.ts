@@ -16,6 +16,7 @@ import { RetryHealth } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
+import { leadTools } from './tools/lead.ts'
 import type { Store } from './store.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
@@ -25,7 +26,7 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
   readonly context: Context
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
@@ -302,9 +303,11 @@ export class Sessions {
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
     const register = this.registerTool(agent, binding)
-    // A Lead gets the preset's native tools (including delegation) and no application tools yet: its assignment tools are
-    // part of the execution phase. An Executor Session gets the application tools its worker uses.
-    if (!project) for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+    // A Lead gets the preset's native tools (including delegation) plus its read-only project tools; an Executor Session
+    // gets the application tools its worker uses.
+    for (const tool of project ? leadTools(host.store, project) : host.tools(agent, ticket)) {
+      register(tool.name, tool.description, tool.schema, tool.execute)
+    }
     if (master) {
       binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', SHELL_TOOL, 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))

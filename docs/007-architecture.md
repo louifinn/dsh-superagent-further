@@ -245,7 +245,7 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `Sessions` (`src/app/sessions.ts`) manages DeepSeek Harness Sessions for both roles. `ensure` creates a Session with its role's model. `install` follows agent events and registers prompts, skills and tools for managed Sessions.
 
-`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project, and takes no application tools yet; the assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
+`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
 
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
@@ -336,6 +336,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
 | `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, and 12 to 13 introduces the Lead Session and message records |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
+| `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
 | `src/app/effects.ts` | Effects |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |

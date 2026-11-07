@@ -5,11 +5,11 @@ import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
-import { healthText, localized, reasonLabel, valueLabel, readableMarkers, when } from './text.ts'
+import { errorText, healthText, localized, reasonLabel, valueLabel, readableMarkers, when } from './text.ts'
 import { CheckSetupButton, ConfirmButton, Hint, LabelValue, LoadState, Section, SetupMessage } from './widgets.tsx'
 
 function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () => Promise<void> }) {
-  const { t, call, navigate } = usePanel()
+  const { t, call, navigate, openSession, notify } = usePanel()
   const post = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
   const row = (title: string, detail: ReactNode, route: Route | undefined, hint?: string, actions?: ReactNode) => <li
     className="dt-row dt-link dt-att dt-att-error">
@@ -59,7 +59,7 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
 }
 
 export function OverviewPage() {
-  const { t, call, navigate } = usePanel()
+  const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
   const { data, error, reload } = usePoll(() => call('GET overview'), [])
   // Filtering happens here because the overview already carries the waiting list and the registered project names.
@@ -92,7 +92,9 @@ export function OverviewPage() {
       <ul className="dt-list">
         {data.leads.map(lead => <li key={lead.project} className="dt-row">
           <div className="dt-row-main">
-            <div className="dt-att-what">{lead.name}</div>
+            <div className="dt-att-what">{lead.session ? <button type="button" className="dt-open"
+              onClick={() => { openSession(lead.session).catch(failure => notify(errorText(failure))) }}>{lead.name}</button>
+              : lead.name}</div>
             <div className="dt-row-meta">
               <LabelValue label={t('leadStateLabel')} value={lead.status === 'running' ? t('leadRunning')
                 : lead.status === 'absent' ? t('leadAbsent') : t('leadIdle')} />

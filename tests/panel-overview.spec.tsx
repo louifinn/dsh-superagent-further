@@ -42,6 +42,10 @@ it('shows one row per registered project with its Lead Session, executors and wa
   expect(rows[0]).toContain('2')
   expect(rows[0]).toContain(zh.leadWaitingLabel)
   expect(rows[1]).toContain(zh.leadAbsent)
+  // The row opens the project's Lead Session, and a project whose Lead never started has nothing to open.
+  expect(titles.querySelectorAll('.dt-row-main .dt-open').length).toBe(1)
+  await click(titles.querySelector<HTMLElement>('.dt-row-main .dt-open')!)
+  expect(server.opened).toContain('lead-app')
 })
 
 it('names the project a Ticket belongs to', async () => {

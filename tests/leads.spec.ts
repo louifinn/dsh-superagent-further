@@ -49,6 +49,12 @@ describe('Lead Sessions', () => {
       // A second ensure resolves the loaded Session and does not create another one.
       const again = await host.runtime.sessions.ensureLead('app', join(host.directory, 'app'), 'Project App')
       expect(again.id).toBe('lead-app')
+      // The Lead's application tool reads its project, its Tickets and its waiting messages.
+      const status = await host.runTool('lead-app', 'lead_status', {}) as { project: Record<string, unknown>; tickets: { open: unknown[] };
+        messages: unknown[] }
+      expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })
+      expect(status.tickets.open).toEqual([])
+      expect(status.messages).toEqual([])
       // After the Session is gone from the host, the recorded Lead is recreated under its own id.
       host.agents.delete('lead-app')
       const recovered = await host.runtime.sessions.adoptLead('app', join(host.directory, 'app'), 'Project App')
