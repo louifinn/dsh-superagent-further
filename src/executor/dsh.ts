@@ -241,7 +241,8 @@ export class DshExecutor implements Executor {
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
       () => host.store.settings().executor.maxWorkers)
-    this.leads = new LeadActivations(() => (host.context as unknown as { subagents?: SubagentService }).subagents)
+    // A Cordis service is read through get: a plain property access throws unless the plugin injects it.
+    this.leads = new LeadActivations(() => host.context.get('subagents') as SubagentService | undefined)
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
       retry: [5000, 300_000] })

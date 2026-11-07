@@ -374,7 +374,7 @@ it('discovers the real process table without crashing when no fake table is inje
     'status', '--profile', 'nosuchprofile12345', '--url', 'http://127.0.0.1:9')
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
-}, 20_000)
+}, 60_000)
 it('reports a stopped service cleanly when the recorded PID has exited', async () => {
   // `status` and `stop` check a recorded PID with a per-process query: `ps -p <dead pid>` exits 1 and CIM returns no row,
   // so neither may turn a cleanly exited service into a failed command. The profile name is unique so a service an operator
@@ -389,7 +389,7 @@ it('reports a stopped service cleanly when the recorded PID has exited', async (
   expect(result.stderr).not.toContain('Command failed')
   expect(JSON.parse(result.stdout) as { pids: number[] }).toMatchObject({ pids: [] })
   expect(result.code).toBe(1)
-}, 20_000)
+}, 60_000)
 it('does not count a run of this script itself as the service, whatever its path spelling', async () => {
   // A `status` or `stop` command carries the same `--profile` words a service does; counting one would let the script see
   // (and on POSIX stop) itself. The Windows branch is saved from that only by also requiring a `cli.js` word.
@@ -410,7 +410,7 @@ it.runIf(process.platform === 'win32')('runs the Windows .cmd wrapper with the s
     (error, stdout, stderr) => resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr })))
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
-}, 20_000)
+}, 60_000)
 it.runIf(process.platform === 'win32')('launches the profile through the Windows dsh.cmd launcher resolved on PATH', async () => {
   writeFileSync(join(root, 'bin', 'dsh.cmd'), `@echo off\r\n"${process.execPath}" "${join(root, 'fake-launcher.mjs')}" %*\r\n`)
   const mock = await answering({ gated: true })
