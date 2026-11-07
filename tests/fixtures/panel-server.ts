@@ -199,6 +199,7 @@ const overviewView = (): ApiResponse<'GET overview'> => {
       ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
     person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
     outbox: server.outbox,
+    projects: server.settings.executor.projects.map(({ id, name }) => ({ id, name })),
     flow: { received: 12, filtered: 2, triggers: 10, judged: 5, accepted: 1, evaluating: 0,
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
     policyVersion: 'abcdef1234567890',

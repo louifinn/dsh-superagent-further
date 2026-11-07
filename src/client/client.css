@@ -295,6 +295,7 @@ div.dt-preview-head { color: var(--dsw-alias-label-secondary); }
 .dt-att-what { font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-state-warn-primary); }
 .dt-att-error .dt-att-what, .dt-att-error .dt-att-what .dt-open { color: var(--dsw-alias-state-error-primary); }
 .dt-stats { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.dt-project-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .dt-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-caption); }
 .dt-stat-value { font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
 .dt-more-link { font-size: 12px; font-weight: 400; }

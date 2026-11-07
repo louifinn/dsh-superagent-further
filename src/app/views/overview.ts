@@ -76,6 +76,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     outbox: store.read.replyQueue(),
     flow: { received, filtered, triggers: received - filtered, judged: judgement.judged, accepted: judgement.accepted,
       evaluating: evaluating.length, dropped: store.read.droppedSince(since) },
+    // The panel filters the waiting list by project; ids are stable, names are what a person recognises.
+    projects: settings.executor.projects.map(({ id, name }) => ({ id, name })),
     policyVersion: policyVersionValue,
   }
 }

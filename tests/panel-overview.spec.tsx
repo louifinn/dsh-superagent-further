@@ -33,6 +33,25 @@ it('names the project a Ticket belongs to', async () => {
   expect(meta).toContain(zh.ticketProject)
   expect(meta).toContain('napkid')
 })
+it('filters the waiting Tickets by project', async () => {
+  server.settings.executor.projects = [
+    { id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' },
+    { id: 'lib', name: 'Lib', workspace: '/w/lib', repository: 'acme/lib', branch: '' }]
+  server.person = [ticketSummary({ id: 't1', title: '修复登录', project: 'app' }), ticketSummary({ id: 't2', title: '更新依赖', project: 'lib' }),
+    ticketSummary({ id: 't3', title: '旧工单' })]
+  await mount()
+  expect(text()).toContain('修复登录')
+  expect(text()).toContain('更新依赖')
+  await click('App')
+  expect(text()).toContain('修复登录')
+  expect(text()).not.toContain('更新依赖')
+  expect(text()).not.toContain('旧工单')
+  await click(zh.projectFilterNone)
+  expect(text()).toContain('旧工单')
+  expect(text()).not.toContain('修复登录')
+  await click(zh.projectFilterAll)
+  expect(text()).toContain('更新依赖')
+})
 it('re-evaluates or dismisses an unjudged Eval from the problem list', async () => {
   await mount()
   await click(zh.requeue)

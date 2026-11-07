@@ -1,5 +1,5 @@
 /** Overview page: pending Tickets requiring human action, active system problems, 24-hour flow counts, and Executor load. */
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { usePoll, type Problem } from './api.ts'
 import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
@@ -62,6 +62,8 @@ export function OverviewPage() {
   const { t, call, navigate } = usePanel()
   const { setup } = usePanelData()
   const { data, error, reload } = usePoll(() => call('GET overview'), [])
+  // Filtering happens here because the overview already carries the waiting list and the registered project names.
+  const [project, setProject] = useState('')
   if (!data) return <LoadState error={error} loading />
   const stat = (label: string, value: ReactNode, route?: Route) => <span className="dt-stat">
     <span className="dt-stat-label">{label}</span>
@@ -70,10 +72,18 @@ export function OverviewPage() {
   </span>
   const more = (route: Route) => <button type="button" className="dt-textlink dt-more-link"
     onClick={() => navigate(route)}>{t('details')}</button>
+  const waiting = project ? data.person.filter(ticket => project === '-' ? !ticket.project : ticket.project === project) : data.person
+  const choices = [{ id: '', label: t('projectFilterAll') }, ...data.projects.map(item => ({ id: item.id, label: item.name })),
+    ...data.person.some(ticket => !ticket.project) ? [{ id: '-', label: t('projectFilterNone') }] : []]
   return <>
     {error && <LoadState error={error} loading={false} />}
-    <Section title={t('pendingTickets')} count={data.person.length}>
-      {data.person.length ? <ul className="dt-list dt-cards">{data.person.map(ticket => <TicketLine key={ticket.id} ticket={ticket} question
+    <Section title={t('pendingTickets')} count={waiting.length}>
+      {/* One project per local workspace: the filter names the project each waiting Ticket works in. */}
+      {data.projects.length > 0 && <div className="dt-project-filters" role="group" aria-label={t('projectFilterLabel')}>
+        {choices.map(choice => <Button key={choice.id} size="sm" variant={choice.id === project ? 'primary' : 'outline'}
+          onClick={() => setProject(choice.id)}>{choice.label}</Button>)}
+      </div>}
+      {waiting.length ? <ul className="dt-list dt-cards">{waiting.map(ticket => <TicketLine key={ticket.id} ticket={ticket} question
         onChanged={reload} />)}</ul>
         : <Hint>{t('needsYouNone')}</Hint>}
     </Section>
