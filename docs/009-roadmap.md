@@ -131,8 +131,7 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
   the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the setting, the
   activation request and tracking, the Lead-hosted launch path, disposal on stop and shutdown, Lead-steered input
   delivery across a restart, the merged-PR end, and the project-aware `WorkerSlots` (per-project `projectWorkers` beside the global `maxWorkers`); the host-level fake-subagent test and the recovery-adoption test pass.)
-- [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), notices and replies route through
-  it, the panel shows the Lead row and the settings, docs 001/003/004/006/007 are updated, and the default flips.
+- [x] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), input and status requests reach a Lead-hosted child through its Lead, and both real entry points are proven end to end through a Lead (GitHub Issue #9 → PR #10 merged, Feishu message → PR #11 merged, each with the Lead visible and the executor a hidden child); docs 001/003/004/006/007 are updated. The default flip stays paired with the P4 removal per `docs/010-project-orchestrator.md`.
 - [ ] P4 Cleanup: remove the root-worker path, simplify Sessions/DshExecutor/panel links, and decide the deferred
   one-Ticket-to-many-executors question.
 

@@ -21,7 +21,7 @@ Overrides use these keys:
 
 | Parts | Keys |
 | --- | --- |
-| Shared instructions and roles | `runtime/shared`, `runtime/orchestrator`, `runtime/worker` |
+| Shared instructions and roles | `runtime/shared`, `runtime/orchestrator`, `runtime/worker`, `runtime/lead` |
 | Working instructions | `runtime/subscriptions`, `runtime/replies`, `runtime/dispatch`, `runtime/work`, `runtime/admission` |
 | Handoff instructions | `runtime/handoff/orchestrator`, `runtime/handoff/worker` |
 | Source skills | `skill/feishu`, `skill/github` |
@@ -59,6 +59,8 @@ Admission instructions come from `prompts/admission.md`. They describe proactive
 The environment section gives the main Session deployment-wide values and each Executor its Ticket-specific values. The Policy section is regenerated from settings on every model request. It contains the Policy version, accept mode, the explicit-request exemption, and enabled rules as `- <name> (<id>): <instruction>`, or a statement that none is enabled. It is last so a Policy change leaves the preceding prompt text unchanged.
 
 Executors also read DeepSeek Harness's coding prompt and the repository's `AGENTS.md`; the main Session does not. An inferred Ticket adds a final note limiting its Executor to the matched rules. Assignments and incoming messages arrive inline as Trigger cards, with resource pointers only for truncated content.
+
+A Lead Session (see `docs/010-project-orchestrator.md`) is assembled from the shared instructions, the `runtime/lead` part, the team sections, subscriptions and replies, the environment, and a project section that names the project, its local clone, its repository and its base branch; it reads no admission, Policy or work instructions, and its tools are the preset's plus the read-only `lead_status`.
 
 Executors work unattended. Their tools exclude those that ask a person, present UI to them or change the profile, such as `ask_user_question`, `present` and `plugin_manager`.
 

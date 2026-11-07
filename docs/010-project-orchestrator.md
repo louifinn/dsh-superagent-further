@@ -189,11 +189,9 @@ once. Concurrency is now project-aware: `WorkerSlots` enforces `executor.project
 project beside the global `maxWorkers`. The host-level test drives the same path with the fake subagent service
 (`tests/runtime.spec.ts`, "starts a Ticket executor as a child of its project Lead"), and the recovery
 test interrupts a host mid-assignment and adopts the surviving child from its Lead ("adopts a
-Lead-hosted child after a restart instead of starting a new Session"). P2 is complete except that the
-real-host run used a GitHub Source Ticket because no ticket-creation route exists yet; P3 adds it. The live run used a
-GitHub Source Ticket because no ticket-creation route exists yet; creating one is P3.
+Lead-hosted child after a restart instead of starting a new Session"). P2 is complete; the real-host runs used Source Tickets, and a route that creates a Ticket from the panel is not part of P2 or P3.
 
-Status (2026-11-08, P3 start): the overview payload carries one `LeadRow` per registered project (`runtime.leadOverview()`: project, name, Lead Session id and state, running executors, undelivered messages), the Overview renders a Project Leads section whose rows open the Lead Session, a Lead Session carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered `assignment` message to the Lead; routing notices/replies through the Lead and flipping the default remain.
+Status (2026-11-08, P3 done): both entry points are proven through a Lead on the real host — Issue #9 in `louifinn/project-check` became Ticket `aaf66561…` (executor as the child of `lead-project-check`, PR #10, ended `merged`), and an operator Feishu message became Ticket `bb956598…` in the same project (child Session of the Lead, PR #11, ended `merged`; the acknowledgement, PR reply and merged notice were sent to the thread). The Overview carries one `LeadRow` per registered project and opens the Lead Session from it, a Lead carries the read-only `lead_status` tool, a lead-mode launch records its dispatch as a delivered `assignment` message, and input and status requests reach a Lead-hosted child through its Lead (`LeadActivations.steer`/`send`). A Feishu Ticket's environment now names its project's repository (`2b2f4db`). Docs 001/003/004/006/007 and the test tables describe the Lead; the default flip is paired with the P4 removal below.
 
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of
 creating a root worker Session; notices/replies route through the Lead; the panel shows a project row

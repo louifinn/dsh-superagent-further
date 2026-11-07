@@ -22,7 +22,9 @@ An `idle` Ticket has finished its turn without an outstanding question. A Trigge
 
 ## The Executor
 
-Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the configured execution root, which defaults to `<stateDir>/work`.
+Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the configured execution root, which defaults to `<stateDir>/work`, in a `<project>` subdirectory when the Ticket names a registered project.
+
+Executors run in one of two arrangements, chosen by `executor.orchestration`. With `root` (the default until the Lead path replaces it) the Executor Session is a root Session, as the next paragraphs describe. With `lead` each Executor runs as a subagent of its project's Lead Session: the Lead is the parent, the Executor stays out of the Session list, its reports settle through the Lead, and new input reaches it through the Lead rather than by prompting a Session it does not own. A Ticket with no registered project has no Lead, so it keeps running as a root Session.
 
 Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
 
