@@ -852,8 +852,8 @@ it('ends a worker\'s turn only when the stop that ended its Assignment commits',
 
 describe('the Executor\'s parts', () => {
   it('holds one worker slot per ticket that runs or starts, and lets launches take the slots no worker or wake holds', () => {
-    const running = ['t1']
-    const slots = new WorkerSlots(() => running, () => 3)
+    const running = [{ ticketId: 't1' }]
+    const slots = new WorkerSlots(() => running, () => 3, () => 2)
     slots.reserve('t2', 'launch')
     slots.reserve('t3', 'wake')
     expect(slots.used()).toBe(3)
@@ -867,8 +867,8 @@ describe('the Executor\'s parts', () => {
     expect(slots.used()).toBe(3)
   })
   it('wakes a worker for a person\'s message in the one slot beyond the limit, and ahead of launches once a slot frees up', () => {
-    const running = ['t1', 't2', 't3']
-    const slots = new WorkerSlots(() => running, () => 3)
+    const running = [{ ticketId: 't1' }, { ticketId: 't2' }, { ticketId: 't3' }]
+    const slots = new WorkerSlots(() => running, () => 3, () => 2)
     expect(() => slots.reserve('t4', 'launch')).toThrow(Later)
     expect(() => slots.reserve('t4', 'wake')).toThrow(Later)
     slots.reserve('t5', 'person')
@@ -880,6 +880,17 @@ describe('the Executor\'s parts', () => {
     expect(() => slots.reserve('t7', 'launch')).toThrow(Later)
     slots.reserve('t6', 'person')
     expect(slots.used()).toBe(4)
+  })
+  it('keeps one project within its worker limit while other projects can still launch', () => {
+    const running = [{ ticketId: 't1', project: 'app' }, { ticketId: 't2', project: 'app' }]
+    const slots = new WorkerSlots(() => running, () => 8, () => 2)
+    expect(() => slots.reserve('t3', 'launch', 'app')).toThrow('No worker slot is free for this project')
+    slots.reserve('t4', 'launch', 'lib')
+    expect(slots.used()).toBe(3)
+    slots.free('t4')
+    expect(() => slots.reserve('t5', 'launch')).not.toThrow()
+    running.splice(0, 1)
+    expect(() => slots.reserve('t6', 'launch', 'app')).not.toThrow()
   })
   it('words an assignment, and the limits an inferred mandate sets, from the ticket alone', () => {
     const settings = SettingsSchema.parse({ policy: { rules: [{ id: 'copy', name: 'Copy fixes', enabled: true,

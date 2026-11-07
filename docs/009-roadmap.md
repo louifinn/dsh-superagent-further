@@ -130,7 +130,7 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
 - [ ] P2 Execution path: an executor runs as a Lead subagent under `executor.orchestration = 'lead'`, reports settle through
   the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the setting, the
   activation request and tracking, the Lead-hosted launch path, disposal on stop and shutdown, Lead-steered input
-  delivery across a restart, and the merged-PR end; the host-level fake-subagent test, the recovery-adoption test and the
+  delivery across a restart, the merged-PR end, and the project-aware `WorkerSlots` (per-project `projectWorkers` beside the global `maxWorkers`); the host-level fake-subagent test and the recovery-adoption test, and the
   project-aware scheduler remain — concurrency is still the single global `WorkerSlots`.)
 - [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead, notices and replies route through
   it, the panel shows the Lead row and the settings, docs 001/003/004/006/007 are updated, and the default flips.

@@ -185,8 +185,9 @@ the child Session of `lead-project-check`, opened PR #10, and the Ticket ended `
 operator merged it and the worker's final report reached the Lead. Inputs and status requests reach a
 Lead-hosted child through its Lead (`LeadActivations.steer`/`send`), since a subagent-owned Session
 refuses a root prompt, and a report that names an already-merged PR now ends the Ticket merged at
-once. Still to build: the host-level fake-subagent test, the recovery-adoption test, and the
-project-aware scheduler (concurrency is still the single global `WorkerSlots`). The live run used a
+once. Concurrency is now project-aware: `WorkerSlots` enforces `executor.projectWorkers` (default 2) per
+project beside the global `maxWorkers`. Still to build: the host-level fake-subagent test and the
+recovery-adoption test. The live run used a
 GitHub Source Ticket because no ticket-creation route exists yet; creating one is P3.
 
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of

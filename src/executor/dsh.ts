@@ -183,30 +183,46 @@ export class WorkerSlots {
   /** Tickets currently holding a startup slot, mapped to whether the start is a launch, a wake, or a wake for a person's message. */
   private readonly starting = new Map<string, 'launch' | 'wake' | 'person'>()
   /**
-   * @param running - Returns the ticket IDs whose worker holds a slot (see `DshExecutor.running`).
+   * @param running - Returns the tickets whose worker holds a slot (see `DshExecutor.running`) with their project, if any.
    * @param max - Returns the configured maximum number of concurrent worker slots.
+   * @param projectMax - Returns how many executors one project may run at once.
    */
-  constructor(private readonly running: () => string[], private readonly max: () => number) {}
+  constructor(private readonly running: () => { ticketId: string; project?: string }[],
+    private readonly max: () => number, private readonly projectMax: () => number) {}
   /** Number of slots currently in use across running workers and starting reservations. */
-  used(): number { return new Set([...this.running(), ...this.starting.keys()]).size }
+  used(): number { return new Set([...this.running().map(item => item.ticketId), ...this.starting.keys()]).size }
   /** How many launches may run concurrently: the slots not held by a running worker or a wake reservation. */
   launches(): number {
     const wakes = [...this.starting].flatMap(([ticketId, by]) => by !== 'launch' ? [ticketId] : [])
-    return this.max() - new Set([...this.running(), ...wakes]).size
+    return this.max() - new Set([...this.running().map(item => item.ticketId), ...wakes]).size
   }
+  /** How many slots one project uses, across running workers and starting reservations. */
+  private projectUsed(project: string): number {
+    const ids = new Set(this.running().flatMap(item => item.project === project ? [item.ticketId] : []))
+    for (const [ticketId, by] of this.starting) if (by !== 'person' && this.projectOf(ticketId) === project) ids.add(ticketId)
+    return ids.size
+  }
+  /** The project a starting reservation was made for; reservations record it when taken. */
+  private readonly reserved = new Map<string, string | undefined>()
+  private projectOf(ticketId: string): string | undefined { return this.reserved.get(ticketId) }
   /**
    * Reserves a startup slot for `ticketId`; idempotent if `ticketId` already holds a starting slot.
-   * A wake for a person's message (`by === 'person'`) may use one extra slot beyond `max()`.
+   * A wake for a person's message (`by === 'person'`) may use one extra slot beyond the limits, so a person's follow-up
+   * never waits behind new launches or a busy project.
    * Call `free(ticketId)` once the worker turn is running or the launch/wake attempt ends.
-   * @throws Later when no slot is free.
+   * @throws Later when no slot is free, globally or in the ticket's project.
    */
-  reserve(ticketId: string, by: 'launch' | 'wake' | 'person'): void {
+  reserve(ticketId: string, by: 'launch' | 'wake' | 'person', project?: string): void {
     if (this.starting.has(ticketId)) return
     if (this.used() >= this.max() + (by === 'person' ? 1 : 0)) throw new Later('No worker slot is free')
+    if (project !== undefined && by !== 'person' && this.projectUsed(project) >= this.projectMax()) {
+      throw new Later('No worker slot is free for this project')
+    }
     this.starting.set(ticketId, by)
+    this.reserved.set(ticketId, project)
   }
   /** Releases `ticketId`'s starting slot once its worker session is running or the launch/wake attempt has ended. */
-  free(ticketId: string): void { this.starting.delete(ticketId) }
+  free(ticketId: string): void { this.starting.delete(ticketId); this.reserved.delete(ticketId) }
 }
 
 /**
@@ -239,8 +255,11 @@ export class DshExecutor implements Executor {
   private readonly leads: LeadActivations
   /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
-    this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
-      () => host.store.settings().executor.maxWorkers)
+    this.slots = new WorkerSlots(
+      () => host.store.tickets.open().filter(ticket => this.running(ticket))
+        .map(ticket => ({ ticketId: ticket.id, ...ticket.project === undefined ? {} : { project: ticket.project } })),
+      () => host.store.settings().executor.maxWorkers,
+      () => host.store.settings().executor.projectWorkers)
     // A Cordis service is read through get: a plain property access throws unless the plugin injects it.
     this.leads = new LeadActivations(() => host.context.get('subagents') as SubagentService | undefined)
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
@@ -309,7 +328,7 @@ export class DshExecutor implements Executor {
     const ticket = this.host.store.tickets.get(ticketId)
     const assignment = ticket && latestAssignment(ticket)
     if (!ticket || !liveTicket(ticket) || assignment?.id !== assignmentId || assignment.state !== 'pending') return
-    this.slots.reserve(ticketId, 'launch')
+    this.slots.reserve(ticketId, 'launch', ticket.project)
     try { await this.launch(ticket, assignment); this.transient.delete(`launch:${assignmentId}`) }
     catch (error) {
       // Shutdown or pause re-queues the launch for resume, and transient network/provider errors retry with backoff.
@@ -343,7 +362,7 @@ export class DshExecutor implements Executor {
         if (!woken && !this.running(ticket)) {
           // A person's message wakes its worker ahead of new launches, in the slot kept for it.
           const person = ticket.undelivered.some(id => fromPerson(ticket.inputs.find(item => item.id === id)))
-          this.slots.reserve(ticketId, person ? 'person' : 'wake')
+          this.slots.reserve(ticketId, person ? 'person' : 'wake', ticket.project)
           woken = true
         }
         const input = ticket.inputs.find(item => item.id === inputId)
@@ -634,11 +653,16 @@ export class DshExecutor implements Executor {
       if (this.host.paused()) { this.after(SLOT_WAIT_MS, go); return }
       const sessionId = workerSessionId(ticketId)
       const waking = !this.running(ticket)
-      try { if (waking) this.slots.reserve(ticketId, 'wake') } catch (failure) {
+      try { if (waking) this.slots.reserve(ticketId, 'wake', ticket.project) } catch (failure) {
         if (!(failure instanceof Later)) throw failure
         this.after(SLOT_WAIT_MS, go); return
       }
-      const sent = this.host.sessions.prompt(sessionId, `retry:${assignmentId}:${tries}`, text, 'queue')
+      // A Lead-hosted child refuses a root prompt, so a transient retry wakes it from its Lead instead.
+      const leadProject = this.leadProject(ticket)
+      const sent = leadProject
+        ? this.host.sessions.ensureLead(leadProject.id, leadProject.workspace, `Lead · ${leadProject.name}`)
+          .then(lead => this.leads.send(lead, sessionId, text, this.host.lifetime))
+        : this.host.sessions.prompt(sessionId, `retry:${assignmentId}:${tries}`, text, 'queue')
       void this.background(sent.finally(() => { if (waking) this.slots.free(ticketId); this.resuming.delete(assignmentId) })
         .catch(failure => { this.failed(ticketId, String(failure)) }))
     }
