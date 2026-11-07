@@ -14,11 +14,12 @@ import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
-import type { Sessions } from '../app/sessions.ts'
+import { WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
+import { executorActivation, LeadActivations, type SubagentService } from './lead-dispatch.ts'
 
 const now = (): string => new Date().toISOString()
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
@@ -71,7 +72,7 @@ export interface ExecutorHost {
   readonly machine: Pick<Machine, 'stateDir'>
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
-  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  readonly sessions: Pick<Sessions, 'ensure' | 'ensureLead' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
   closing(): boolean
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
@@ -234,10 +235,13 @@ export class DshExecutor implements Executor {
   private readonly personal = new Map<string, string>()
   /** The timers of workers that go on after a passing failure, which dispose clears. */
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
+  /** Executor activations of Lead-hosted workers (xecutor.orchestration = 'lead'), by child Session id. */
+  private readonly leads: LeadActivations
   /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
       () => host.store.settings().executor.maxWorkers)
+    this.leads = new LeadActivations(() => (host.context as unknown as { subagents?: SubagentService }).subagents)
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
       retry: [5000, 300_000] })
@@ -403,6 +407,9 @@ export class DshExecutor implements Executor {
   }
   /** Stop what a ticket's worker runs in the background (see `stopBackground`). */
   private stopWork(ticketId: string, reason: string, keepInbox = false): void {
+    // A Lead-hosted executor is stopped by disposing its activation, which ends the child and its descendants.
+    const activation = this.leads.take(workerSessionId(ticketId))
+    if (activation) this.track(ticketId, activation.dispose().catch(() => {}))
     this.track(ticketId, stopBackground(this.host.context, workerSessionId(ticketId), reason, keepInbox))
   }
   /** A stop of a ticket's background work, which a launch or a delivery of the ticket waits for while it runs. */
@@ -425,6 +432,7 @@ export class DshExecutor implements Executor {
     const agents = this.host.store.tickets.list().map(ticket => this.host.context.agents.get(workerSessionId(ticket.id) as SessionId))
       .filter((agent): agent is Agent => agent !== undefined)
     const stop = async () => {
+      await this.leads.disposeAll()
       await Promise.allSettled(agents.map(agent => stopBackground(this.host.context, agent.id, 'dsh-superagent stopped', true)))
       for (const { collect } of this.left.values()) collect.abort()
       const running = agents.filter(agent => agent.status !== 'idle')
@@ -471,14 +479,18 @@ export class DshExecutor implements Executor {
     }
     if (!current()) return
     const sessionId = workerSessionId(ticket.id)
-    const agent = await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
+    const settings = this.host.store.settings()
+    const project = ticket.project === undefined ? undefined : projectOf(settings.executor.projects, ticket.project)
+    // A Lead-hosted executor starts as a subagent of its project's Lead Session; everything else uses a root worker Session.
+    const leadMode = settings.executor.orchestration === 'lead' && project !== undefined
+    const agent = leadMode ? undefined : await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
     if (!current()) return
     // The background work of the Assignment this one replaces stops first, so its end does not clear this one's message.
     await this.stopped(ticket.id)
     if (!current()) return
     // A message put back for this Assignment may still wait in the Session, kept by a restart's cancel or persisted across a
     // crash, where this launch's message would take it into a step beside the copy delivered next: that copy is the only one.
-    for (const id of this.host.store.tickets.get(ticket.id)?.undelivered ?? []) agent.inbox.remove(this.host.sessions.promptedId(id))
+    if (agent) for (const id of this.host.store.tickets.get(ticket.id)?.undelivered ?? []) agent.inbox.remove(this.host.sessions.promptedId(id))
     // The first message holds the assignment and the source Trigger; a later Assignment's says only what is new, unless the
     // Session lost the first, such as when someone deleted it.
     const first = `assignment:${ticket.id}`
@@ -496,6 +508,17 @@ export class DshExecutor implements Executor {
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried })
     const requestId = later ? `assignment:${ticket.id}:${assignment.id}` : first
+    if (leadMode && project) {
+      const lead = await this.host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+      if (!current()) return
+      // The activation carries the same first message a root worker Session would receive, under the reserved worker id, so
+      // the rest of the Executor (prompt, tools, panel links) finds the child by the same id.
+      const activation = await this.leads.start(executorActivation({ childId: sessionId, title: ticket.title, cwd: workspace,
+        text, lead, signal: this.host.lifetime, preset: WORKER_PRESET }))
+      if (!current()) { void activation.dispose().catch(() => {}); return }
+      this.host.engine.assignmentStarted(ticket.id, assignment.id)
+      return
+    }
     await this.host.sessions.prompt(sessionId, requestId, text, 'queue',
       () => { if (!current()) throw new Error('Launch authorization changed before worker delivery') },
       () => { this.host.engine.assignmentStarted(ticket.id, assignment.id) })

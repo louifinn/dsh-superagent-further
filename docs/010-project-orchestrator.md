@@ -170,7 +170,8 @@ Status (2026-11-08): built — schema 13 with the `lead_message` table and `Lead
 project-aware interfaces. The manual round-trip on the real host follows once P2 exercises a Lead.
 
 **P2 — Execution path.** `DshExecutor` can start a worker as a Lead subagent when
-`executor.orchestration = 'lead'`: `startActivation` with the reserved id, `delivery: 'parent'`,
+`executor.orchestration = 'lead'` (landed: the setting, `executorActivation`/`LeadActivations` in
+`src/executor/lead-dispatch.ts`, the launch branch and disposal on stop and shutdown): `startActivation` with the reserved id, `delivery: 'parent'`,
 worker decoration, report settlement, interrupt/stop, and adoption after restart. Per-project and
 global concurrency move from the single `WorkerSlots` to a project-aware scheduler.
 Acceptance: a host-level test drives one project through acceptance → dispatch → consumer report →

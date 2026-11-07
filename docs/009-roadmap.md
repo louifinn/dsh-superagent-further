@@ -128,7 +128,9 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
   Lead branch (ensure, decoration, disposal, reserved ids), recovery scaffolding, and project-aware interfaces — no
   entry-point change. (Built: preset, prompt, records, schema 13 and the Session branch; the live round-trip follows P2.)
 - [ ] P2 Execution path: an executor runs as a Lead subagent under `executor.orchestration = 'lead'`, reports settle through
-  the Lead, interrupt and stop work, adoption after a restart, per-project concurrency.
+  the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the setting, the
+  activation request and tracking, the Lead-hosted launch path, and disposal on stop and shutdown; the host-level test,
+  restart adoption and per-project concurrency remain.)
 - [ ] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead, notices and replies route through
   it, the panel shows the Lead row and the settings, docs 001/003/004/006/007 are updated, and the default flips.
 - [ ] P4 Cleanup: remove the root-worker path, simplify Sessions/DshExecutor/panel links, and decide the deferred
