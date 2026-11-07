@@ -102,8 +102,6 @@ export const ExecutorConfigSchema = z.object({
   blockedCommands: z.array(CommandNameSchema).default([]),
   /// Local workspaces and remote repositories; a Ticket belongs to one project and is checked out inside it.
   projects: ProjectsSchema.default([]),
-  /// How a Ticket's executor runs: as its own root Session, or as a subagent of the project's Lead Session.
-  orchestration: z.enum(['root', 'lead']).default('root'),
   /// How long a finished Ticket's worktree and branch stay for inspection; 0 keeps them.
   worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
 }).strict()

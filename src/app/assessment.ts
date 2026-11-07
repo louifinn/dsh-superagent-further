@@ -8,7 +8,7 @@ import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
-import { projectOf } from '../projects.ts'
+import { projectByRepository, projectOf } from '../projects.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
@@ -274,7 +274,7 @@ export class MasterAssessor implements Assessor {
   }
   /** Converts the assessment into an outcome under current settings and passes it to `Engine.decide` for policy verification. */
   async decide(triggerId: string, result: z.infer<typeof AssessmentSchema>, signal?: AbortSignal): Promise<{ state: string; ticket_id?: string; reason: string }> {
-    const { candidate } = this.evalFor(triggerId)
+    const { candidate, trigger } = this.evalFor(triggerId)
     signal?.throwIfAborted()
     // A Feishu message names no repository, so the assessment may pick the project; the Executor checks that choice against a GitHub Trigger's repository.
     if (result.decision === 'accept' && result.project && !projectOf(this.host.settings().executor.projects, result.project)) {
@@ -282,6 +282,17 @@ export class MasterAssessor implements Assessor {
     }
     let outcome: AssessmentOutcome = assessmentOutcome(result, this.host.settings(), candidate.strength)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
+    if (outcome.kind === 'accept') {
+      // A request belongs to a registered project; an installation with no project yet keeps the bootstrap root path.
+      const projects = this.host.settings().executor.projects
+      const named = typeof trigger.meta.repository === 'string' ? trigger.meta.repository : ''
+      const project = outcome.project ? projectOf(projects, outcome.project) : projectByRepository(projects, named)
+      if (projects.length > 0 && !project) {
+        outcome = { kind: 'ignore', audit: outcome.audit, reason: named
+          ? `No registered project owns repository ${named}; register it in Execution → Projects, and choose it in the assessment`
+          : 'This request names no project; register the project in Execution → Projects, and choose it in the assessment' }
+      }
+    }
     const decision = this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId })
     return { state: decision.kind, ...(decision.ticketId ? { ticket_id: decision.ticketId } : {}), reason: reasonText(decision.reason) }
   }

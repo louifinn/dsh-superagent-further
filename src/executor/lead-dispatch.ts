@@ -1,5 +1,5 @@
 /**
- * Starting an executor as a subagent of a project's Lead Session (`executor.orchestration = 'lead'`), and keeping the
+ * Starting an executor as a subagent of a project's Lead Session, and keeping the
  * activations so a stop or a shutdown can dispose them.
  *
  * A Lead's worker keeps the reserved Session id `worker-<ticketId>`, so the rest of the Executor (its prompt, its tools, the
@@ -77,7 +77,7 @@ export class LeadActivations {
   /** Starts one activation and keeps it until it settles or is disposed. */
   async start(spec: ActivationSpec): Promise<Activation> {
     const service = this.service()
-    if (!service) throw new Error('This host has no subagent service, so a Lead cannot start an executor; use executor.orchestration root')
+    if (!service) throw new Error('This host has no subagent service, so a project Ticket cannot start its executor here')
     let activation: Activation
     try {
       activation = await service.startActivation(spec)
@@ -118,7 +118,7 @@ export class LeadActivations {
   /** Sends one message from a Lead to its child, for a delivery after a restart lost the activation map. */
   async send(lead: Agent, childId: string, text: string, signal: AbortSignal): Promise<void> {
     const service = this.service()
-    if (!service) throw new Error('This host has no subagent service, so a Lead cannot reach its executor; use executor.orchestration root')
+    if (!service) throw new Error('This host has no subagent service, so a Lead cannot reach its executor here')
     await service.sendMessage(lead, childId, [{ type: 'text', text }], { signal })
   }
 

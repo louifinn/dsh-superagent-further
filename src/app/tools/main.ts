@@ -7,6 +7,7 @@ import { UserError, followupOwners, key, reasonText, type Decision, type Decisio
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
 import { ticketCard } from '../cards.ts'
+import { projectByRepository, projectOf } from '../../projects.ts'
 import { PromptConfigSchema, savePrompts, type Prompts } from '../prompts.ts'
 import { readResource, type MainResourceHost, type ResourceHost } from '../resources.ts'
 import type { Sessions } from '../sessions.ts'
@@ -88,6 +89,23 @@ type Routed = { decision?: DecisionKind; reason: string; ticketId?: string | und
  * call's earlier items decided, with their batches.
  */
 function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string, string>): Routed | { refused: string } {
+  /**
+   * A request must belong to a registered project: that project's checkout holds its worktree and names its repository. A
+   * deployment with no project yet keeps the bootstrap root path, so it can run a first request before any project exists.
+   */
+  function projectProblem(): string | undefined {
+    const projects = host.store.settings().executor.projects
+    if (projects.length === 0) return undefined
+    if (item.project && !projectOf(projects, item.project)) {
+      return `Unknown project ${item.project}; register it in Execution → Projects, or omit project to use the Trigger's repository`
+    }
+    if (item.project) return undefined
+    const repository = host.store.triggers.get(item.trigger_id)?.meta.repository
+    const named = typeof repository === 'string' ? repository : ''
+    if (named && projectByRepository(projects, named)) return undefined
+    return named ? `No registered project owns repository ${named}; register it in Execution → Projects`
+      : 'This request names no project; register the project in Execution → Projects and accept it again with project'
+  }
   const note = item.note ? { note: item.note } : {}
   // A Trigger an earlier item decided went with that item's Decision, also as a member of its batch.
   // A stop of it for another ticket is the Engine's to judge.
@@ -95,6 +113,8 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
   if (earlier && item.kind === 'ignore') return { refused: `Decided in this call with ${earlier}, whose Decision took its batch` }
   switch (item.kind) {
     case 'accept': {
+      const problem = projectProblem()
+      if (problem) return { refused: problem }
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId
       const decision = host.engine.decide(item.trigger_id, { kind: 'accept', title: item.title!, scope: item.title!, reason: { code: 'explicitRouted' },
         acknowledgement: item.acknowledgement!, name: item.worktree_name!, ...(item.project ? { project: item.project } : {}), ...note })

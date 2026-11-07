@@ -1773,9 +1773,32 @@ it('refuses an accepted project the settings do not register', async () => {
   expect(runtime.store.tickets.open()).toEqual([])
 })
 
-it('starts a Ticket executor as a child of its project Lead when Orchestration is lead', async () => {
+it('refuses an acceptance no registered project can own once projects exist, and says where to register one', async () => {
   const settings = runtime.store.settings()
-  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, orchestration: 'lead',
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor,
+    projects: [{ id: 'other', name: 'Other', workspace: join(directory, 'other'), repository: 'acme/other', branch: '' }] } })
+  // A Feishu request names no repository, so its acceptance has to choose a registered project.
+  const feishuTrigger = feishu('71', '@bot 修一下回归')
+  await receive(feishuTrigger)
+  const feishuRoute = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [{ kind: 'accept',
+    trigger_id: feishuTrigger.id, title: '修复回归', worktree_name: 'fix-regression', acknowledgement: '收到。' }] }) as
+    { results: { refused?: string }[] }
+  expect(feishuRoute.results[0]!.refused).toMatch(/names no project/)
+  // A GitHub request names its repository; one no project owns is refused the same way.
+  const githubTrigger = commentTrigger({ id: 71, body: '@agent-bot please fix', user: { login: 'alice' },
+    html_url: 'https://github.com/acme/widgets/pull/71#issuecomment-71', created_at: '2026-09-09T00:03:00Z' },
+  { number: 71, isPr: true }, 'conversation', 'agent-bot', 'acme/widgets')
+  await receive(githubTrigger)
+  const githubRoute = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [{ kind: 'accept',
+    trigger_id: githubTrigger.id, title: '修复 71', worktree_name: 'fix-71', acknowledgement: '收到。' }] }) as
+    { results: { refused?: string }[] }
+  expect(githubRoute.results[0]!.refused).toMatch(/No registered project owns repository acme\/widgets/)
+  expect(runtime.store.tickets.open()).toEqual([])
+})
+
+it('starts a Ticket executor as a child of its project Lead', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, 
     projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
   const trigger = feishu('62', '@bot 修 lead', { root_id: undefined })
   await receive(trigger)
@@ -1810,7 +1833,7 @@ it('starts a Ticket executor as a child of its project Lead when Orchestration i
 
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
   const settings = runtime.store.settings()
-  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, orchestration: 'lead',
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, 
     projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
   const trigger = feishu('63', '@bot 修 adopt', { root_id: undefined })
   await receive(trigger)

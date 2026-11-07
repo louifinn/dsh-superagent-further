@@ -66,6 +66,8 @@ own architecture set the facts:
 | Restart | The Lead Session is recovered; in-flight executor subagents are adopted when their Sessions still exist, otherwise the Ticket is interrupted and redispatched |
 | Concurrency | 2 executor subagents per Lead by default, 8 globally, both configurable |
 | First slice | Pure foundation layer first: presets, Session governance, message records and project-aware interfaces, with no entry-point change |
+| Unresolvable project | Refuse the acceptance and point at **Execution → Projects**; one path, no implicit fallback |
+| One Ticket, several executors | Keep one worker per Ticket now; the future design direction is recorded in "Future: one Ticket, several executors" so the implementation does not drift |
 
 ## Target model
 
@@ -137,9 +139,10 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
   fan-out for a single Ticket is **not** in the first slice: the current domain binds one Assignment
   to one Executor instance, so splitting one Ticket across executors needs a domain change and is
   deferred (see Phases, P4).
-- Settings: `executor.orchestration: 'session' | 'lead'` (default `session` until P3 flips it),
-  `executor.projectWorkers` (default 2) and `executor.maxWorkers` as the global cap (default 8 while
-  the Lead path is on). Both are panel-only, like the rest of the environment fields.
+- Settings: `executor.projectWorkers` (default 2) and `executor.maxWorkers` as the global cap (default
+  8). Both are panel-only, like the rest of the environment fields. There is no orchestration switch:
+  a Project Ticket always runs under its Lead, and only an installation with no project registered yet
+  keeps the bootstrap root path.
 
 ## Presets and tools
 
@@ -169,8 +172,8 @@ Status (2026-11-08): built — schema 13 with the `lead_message` table and `Lead
 `dsh-superagent-lead` preset and its prompt section, `ensureLead`/`adoptLead` with reserved ids, and the
 project-aware interfaces. The manual round-trip on the real host follows once P2 exercises a Lead.
 
-**P2 — Execution path.** `DshExecutor` can start a worker as a Lead subagent when
-`executor.orchestration = 'lead'` (landed: the setting, `executorActivation`/`LeadActivations` in
+**P2 — Execution path.** `DshExecutor` starts a Ticket's worker as a Lead subagent whenever the
+Ticket has a registered project (landed: `executorActivation`/`LeadActivations` in
 `src/executor/lead-dispatch.ts`, the launch branch and disposal on stop and shutdown): `startActivation` with the reserved id, `delivery: 'parent'`,
 worker decoration, report settlement, interrupt/stop, and adoption after restart. Per-project and
 global concurrency move from the single `WorkerSlots` to a project-aware scheduler.
@@ -191,22 +194,48 @@ project beside the global `maxWorkers`. The host-level test drives the same path
 test interrupts a host mid-assignment and adopts the surviving child from its Lead ("adopts a
 Lead-hosted child after a restart instead of starting a new Session"). P2 is complete; the real-host runs used Source Tickets, and a route that creates a Ticket from the panel is not part of P2 or P3.
 
-Status (2026-11-08, P3 done): both entry points are proven through a Lead on the real host — Issue #9 in `louifinn/project-check` became Ticket `aaf66561…` (executor as the child of `lead-project-check`, PR #10, ended `merged`), and an operator Feishu message became Ticket `bb956598…` in the same project (child Session of the Lead, PR #11, ended `merged`; the acknowledgement, PR reply and merged notice were sent to the thread). The Overview carries one `LeadRow` per registered project and opens the Lead Session from it, a Lead carries the read-only `lead_status` tool, a lead-mode launch records its dispatch as a delivered `assignment` message, and input and status requests reach a Lead-hosted child through its Lead (`LeadActivations.steer`/`send`). A Feishu Ticket's environment now names its project's repository (`2b2f4db`). Docs 001/003/004/006/007 and the test tables describe the Lead; the default flip is paired with the P4 removal below.
+Status (2026-11-08, P3 done): both entry points are proven through a Lead on the real host — Issue #9 in `louifinn/project-check` became Ticket `aaf66561…` (executor as the child of `lead-project-check`, PR #10, ended `merged`), and an operator Feishu message became Ticket `bb956598…` in the same project (child Session of the Lead, PR #11, ended `merged`; the acknowledgement, PR reply and merged notice were sent to the thread). The Overview carries one `LeadRow` per registered project and opens the Lead Session from it, a Lead carries the read-only `lead_status` tool, a lead-mode launch records its dispatch as a delivered `assignment` message, and input and status requests reach a Lead-hosted child through its Lead (`LeadActivations.steer`/`send`). A Feishu Ticket's environment now names its project's repository (`2b2f4db`). Docs 001/003/004/006/007 and the test tables describe the Lead; P4 below removes the switch so every Project Ticket runs this way.
 
 **P3 — Entry points and panel.** The Orchestrator dispatches accepted Tickets to the Lead instead of
 creating a root worker Session; notices/replies route through the Lead; the panel shows a project row
 (Lead Session, running executors, waiting messages) on the Overview and lets a person open the Lead;
-Execution settings gain the orchestration toggle and concurrency fields; docs 001/003/004/006/007 and
-the panel test table are updated.
+Execution settings gain the concurrency fields; docs 001/003/004/006/007 and the panel test table are
+updated.
 Acceptance: a real GitHub request and a real Feishu request each become a Ticket executed by a worker
 subagent, merged, with the Lead visible and the executor hidden; `pnpm check` and CI green.
-The default flip moves with P4, which removes the root-worker path in the same change: flipping it while
-both paths exist would leave the root path as dead-but-tested code behind a setting nobody sets.
 
-**P4 — Clean up and widen.** Remove the root-worker path and its feature flag, simplify
-`Sessions`/`DshExecutor`/panel links, and consider the deferred items: splitting one Ticket across
-several executors (requires a domain change to Assignments), a per-project model/prompt override, and
-a project page rather than a row.
+**P4 — Clean up and widen.** Remove the feature flag and simplify `Sessions`/`DshExecutor`/panel links,
+then the deferred width items: onboarding that requires a project (so the bootstrap root path can go),
+a per-project model/prompt override, a project page rather than a row, and the one-Ticket-to-many-
+executors design below.
+
+Status (2026-11-08): the `executor.orchestration` switch is removed — a Project Ticket always runs under
+its Lead, and an acceptance no registered project can own is refused with a pointer to **Execution →
+Projects** (the operator's decision: one path, no implicit fallback). The only remaining root path is
+the bootstrap exception for an installation with no project registered yet; P4b removes it by requiring
+a project during onboarding. The multi-executor design is recorded (not implemented) in the next
+section.
+
+## Future: one Ticket, several executors
+
+Direction decided on 2026-11-08 (implementation deferred): keep one worker per Ticket now, but grow
+along these lines so execution does not drift.
+
+- **Domain.** An `Assignment` stays one worker; a Ticket may carry several `Assignment`s in one
+  *stage*, each over a *segment* (a named, non-overlapping part of the work) with its own worktree and
+  branch `agent/<worktree-name>/<segment>`, all cut from the project's clone.
+- **Dispatch.** Only the Orchestrator creates a Ticket and hands it to the Lead as one assignment
+  message. The Lead splits it into segments with `lead_assign` (a Lead application tool, P4b) when the
+  request names independent parts; each segment starts a hidden child through the subagent service, and
+  every child's report settles back as a `report` message to the Lead.
+- **Aggregation.** The Lead decides when the stage is complete: it either picks one segment branch as
+  the Ticket's, or starts one integration child that merges the others in ticket order, resolves
+  conflicts, and opens the single PR. The Ticket still binds one PR and ends `merged`; a failed segment
+  is retried or dropped by the Lead with a reason recorded in the ticket.
+- **Bounds and visibility.** All children count against `projectWorkers` and `maxWorkers`; the Lead row
+  shows running executors and waiting messages; the Trigger/Ticket keys and the Mandate stay one per
+  Ticket, so policy, audit and duplicate prevention are unchanged.
+- **Not in scope now.** Per-segment PRs, partial merges into `main`, and cross-project single Tickets.
 
 ## Risks and mitigations
 
@@ -228,11 +257,11 @@ a project page rather than a row.
 - **Concurrency fairness.** A per-project cap prevents one project from eating the global slots; the
   scheduler rejects work when the global cap is full and the Lead waits, as a worker does today.
 
-## Open questions for review (defaults proposed)
+## Review questions, resolved
 
-1. Create a Lead for every registered project at startup, or only on the project's first accepted
-   Ticket? (Proposed: every registered project, so the sidebar and panel are predictable.)
-2. Put the Lead row on the Overview, or add a Projects page? (Proposed: a row on Overview first.)
-3. Does a Lead get the default model, or its own model setting? (Proposed: default model first.)
-4. Fan out one Ticket across several executors in P4, or keep one Ticket → one worker? (Proposed:
-   keep one for now; splitting needs a domain change and a separate design note.)
+The operator answered these on 2026-11-08, taking the proposed defaults:
+
+1. A Lead for every registered project at startup, so the sidebar and panel are predictable.
+2. The Lead row lives on the Overview; a Projects page can follow if the row grows.
+3. A Lead uses the default model; a per-project model override is a P4 widening item.
+4. Fan out one Ticket across several executors later, along the direction recorded above.

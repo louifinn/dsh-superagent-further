@@ -78,7 +78,7 @@ A reference list of the terms this and the later documents use, with their Chine
 | --- | --- | --- |
 | Agent | 智能体 | The automated team member dsh-superagent runs, acting on Sources through identities such as a GitHub account and a Feishu bot |
 | Main Session | 主 Session | The DSH Session that evaluates Triggers, accepts and dispatches Tickets, and replies; `orchestrator` in code and prompts |
-| Lead Session | 项目 Lead | The DSH Session that runs one project's Tickets for the Main Session; `lead` in code and prompts, `lead-<project id>` in session storage. It exists only while the deployment runs executors as its subagents (`executor.orchestration` is `lead`) |
+| Lead Session | 项目 Lead | The DSH Session that runs one project's Tickets for the Main Session; `lead` in code and prompts, `lead-<project id>` in session storage. It exists while the deployment runs a project's executors as its subagents |
 | Executor Session | 执行器 Session | The DSH Session an Executor runs for one Ticket; `worker` in code and prompts. Under a Lead it is a subagent of that Lead Session and stays out of the Session list |
 | Source | 来源 | A stream of events: a kind that a plugin provides, plus one instance configuration |
 | Trigger | 触发 | One immutable event from a Source |

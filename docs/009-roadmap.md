@@ -127,13 +127,16 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
 - [x] P1 Foundation: Lead agent preset and prompt section, `LeadMessages` records with idempotent delivery, the `Sessions`
   Lead branch (ensure, decoration, disposal, reserved ids), recovery scaffolding, and project-aware interfaces — no
   entry-point change. (Built: preset, prompt, records, schema 13, the Session branch, and the live Lead round-trip in P2.)
-- [x] P2 Execution path: an executor runs as a Lead subagent under `executor.orchestration = 'lead'`, reports settle through
-  the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the setting, the
+- [x] P2 Execution path: an executor runs as a Lead subagent for a Project Ticket, reports settle through
+  the Lead, interrupt and stop work, adoption after a restart, per-project concurrency. (Landed: the
   activation request and tracking, the Lead-hosted launch path, disposal on stop and shutdown, Lead-steered input
   delivery across a restart, the merged-PR end, and the project-aware `WorkerSlots` (per-project `projectWorkers` beside the global `maxWorkers`); the host-level fake-subagent test and the recovery-adoption test pass.)
-- [x] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), input and status requests reach a Lead-hosted child through its Lead, and both real entry points are proven end to end through a Lead (GitHub Issue #9 → PR #10 merged, Feishu message → PR #11 merged, each with the Lead visible and the executor a hidden child); docs 001/003/004/006/007 are updated. The default flip stays paired with the P4 removal per `docs/010-project-orchestrator.md`.
-- [ ] P4 Cleanup: remove the root-worker path, simplify Sessions/DshExecutor/panel links, and decide the deferred
-  one-Ticket-to-many-executors question.
+- [x] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), input and status requests reach a Lead-hosted child through its Lead, and both real entry points are proven end to end through a Lead (GitHub Issue #9 → PR #10 merged, Feishu message → PR #11 merged, each with the Lead visible and the executor a hidden child); docs 001/003/004/006/007 are updated.
+- [~] P4 Cleanup: the `executor.orchestration` switch is removed; a Project Ticket always runs under its
+  Lead, an acceptance no registered project can own is refused with a pointer to **Execution → Projects**
+  (the operator's decision: one path, no implicit fallback). Left in P4b: make onboarding require a
+  project so the bootstrap root path can be removed too, and implement the deferred
+  one-Ticket-to-many-executors design recorded in `docs/010-project-orchestrator.md`.
 
 ## Sprint 1 checklist
 

@@ -251,7 +251,7 @@ export class DshExecutor implements Executor {
   private readonly personal = new Map<string, string>()
   /** The timers of workers that go on after a passing failure, which dispose clears. */
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
-  /** Executor activations of Lead-hosted workers (xecutor.orchestration = 'lead'), by child Session id. */
+  /** Executor activations of Lead-hosted workers, by child Session id. */
   private readonly leads: LeadActivations
   /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
@@ -405,10 +405,10 @@ export class DshExecutor implements Executor {
       await this.leads.send(lead, workerSessionId(ticket.id), text, this.host.lifetime)
     } else await this.host.sessions.prompt(workerSessionId(ticket.id), input.id, text, 'steer', live)
   }
-  /** The project whose Lead hosts this Ticket's executor, when Orchestration is `lead`. */
+  /** The project whose Lead hosts this Ticket's executor; a Ticket without a project runs as a root Session. */
   private leadProject(ticket: Ticket): Project | undefined {
     const settings = this.host.store.settings()
-    if (settings.executor.orchestration !== 'lead' || ticket.project === undefined) return undefined
+    if (ticket.project === undefined) return undefined
     return projectOf(settings.executor.projects, ticket.project)
   }
   /** Formats a trigger on `ticket` for the worker, including a preview of the replied-to message when the worker has not yet seen it. */
@@ -514,8 +514,8 @@ export class DshExecutor implements Executor {
     const sessionId = workerSessionId(ticket.id)
     const settings = this.host.store.settings()
     const project = ticket.project === undefined ? undefined : projectOf(settings.executor.projects, ticket.project)
-    // A Lead-hosted executor starts as a subagent of its project's Lead Session; everything else uses a root worker Session.
-    const leadMode = settings.executor.orchestration === 'lead' && project !== undefined
+    // A Lead-hosted executor starts as a subagent of its project's Lead Session; a Ticket without a project uses a root worker Session.
+    const leadMode = project !== undefined
     const agent = leadMode ? undefined : await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
     if (!current()) return
     // The background work of the Assignment this one replaces stops first, so its end does not clear this one's message.

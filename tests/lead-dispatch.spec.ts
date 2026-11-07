@@ -107,10 +107,8 @@ describe('the activations a host keeps', () => {
   })
 })
 
-describe('the orchestration setting', () => {
-  it('runs root Sessions by default and accepts a Lead', () => {
-    expect(ExecutorConfigSchema.parse({}).orchestration).toBe('root')
-    expect(ExecutorConfigSchema.parse({ orchestration: 'lead' }).orchestration).toBe('lead')
-    expect(() => ExecutorConfigSchema.parse({ orchestration: 'worker' })).toThrow()
+describe('the executor settings', () => {
+  it('no longer carries an orchestration switch: a project Ticket always runs under its Lead', () => {
+    expect('orchestration' in ExecutorConfigSchema.parse({})).toBe(false)
   })
 })
