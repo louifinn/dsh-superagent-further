@@ -66,6 +66,8 @@ export function executorActivation(input: { childId: string; title: string; cwd:
 /** The activations a host started, by child Session id, so a stop and a shutdown dispose exactly those. */
 export class LeadActivations {
   private readonly running = new Map<string, Activation>()
+  /** The request each activation was started with, so a later delivery can steer the same child from its Lead. */
+  private readonly started = new Map<string, ActivationSpec>()
 
   constructor(private readonly service: () => SubagentService | undefined) {}
 
@@ -89,9 +91,28 @@ export class LeadActivations {
       } }
     }
     this.running.set(activation.childId, activation)
+    this.started.set(activation.childId, spec)
     // A settled activation needs no disposal; a failed one is disposed the same way, and its failure is the Lead's to see.
-    void activation.result.catch(() => {}).then(() => { if (this.running.get(activation.childId) === activation) this.running.delete(activation.childId) })
+    void activation.result.catch(() => {}).then(() => {
+      if (this.running.get(activation.childId) === activation) { this.running.delete(activation.childId); this.started.delete(activation.childId) }
+    })
     return activation
+  }
+
+  /** Whether this host started (and still holds) the child with this id. */
+  holds(childId: string): boolean { return this.started.has(childId) }
+
+  /**
+   * Steers one message into a child this host started. A subagent-owned Session refuses a root `prompt`, so input deliveries
+   * go through the Lead that owns the child.
+   * @returns whether the child was one this host started and the message was accepted.
+   */
+  async steer(childId: string, text: string, signal: AbortSignal): Promise<boolean> {
+    const spec = this.started.get(childId)
+    const service = this.service()
+    if (!spec || !service) return false
+    await service.sendMessage(spec.request.parent, childId, [{ type: 'text', text }], { signal })
+    return true
   }
 
   /** Removes an activation from the map and returns it, for its owner to dispose. */

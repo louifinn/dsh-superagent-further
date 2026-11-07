@@ -348,8 +348,9 @@ export class DshExecutor implements Executor {
         }
         const input = ticket.inputs.find(item => item.id === inputId)
         try {
-          // Recreate the worker session if it was externally deleted.
-          if (!this.host.context.agents.get(sessionId as SessionId)) {
+          // Recreate the worker session if it was externally deleted. A Lead-hosted child is owned by its Lead, not by this
+          // host as a root Session, so it is never recreated here.
+          if (!this.leads.holds(sessionId) && !this.host.context.agents.get(sessionId as SessionId)) {
             await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker')
           }
           if (input) await this.deliverInput(ticket, assignment, input)
@@ -377,6 +378,8 @@ export class DshExecutor implements Executor {
     const message = inputMessage(input, trigger)
     if (message === undefined) return
     const text = message.length > ASSIGNMENT_CHARS ? JSON.stringify(capped(message, ASSIGNMENT_CHARS, inputResource(ticket.id, input.id))) : message
+    // A Lead-hosted child's Session is subagent-owned and refuses a root prompt, so the Lead steers the message instead.
+    if (await this.leads.steer(workerSessionId(ticket.id), text, this.host.lifetime)) return
     await this.host.sessions.prompt(workerSessionId(ticket.id), input.id, text, 'steer', live)
   }
   /** Formats a trigger on `ticket` for the worker, including a preview of the replied-to message when the worker has not yet seen it. */

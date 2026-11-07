@@ -65,6 +65,16 @@ describe('the activations a host keeps', () => {
     expect(interrupt).toHaveBeenCalledWith('worker-a', { kind: 'ancestor', agent: lead })
   })
 
+  it('steers a later delivery into the child it started, from that child Lead', async () => {
+    const sendMessage = vi.fn(async () => 'message-1')
+    const leads = new LeadActivations(() => ({ startActivation: async spec => activation((spec as { childId: string }).childId), sendMessage }))
+    await leads.start(executorActivation({ childId: 'worker-a', title: 'a', cwd: '/w', text: 'first', lead, signal, preset: 'p' }))
+    expect(leads.holds('worker-a')).toBe(true)
+    expect(await leads.steer('worker-a', 'more work', signal)).toBe(true)
+    expect(sendMessage).toHaveBeenCalledWith(lead, 'worker-a', [{ type: 'text', text: 'more work' }], { signal })
+    expect(await leads.steer('worker-unknown', 'x', signal)).toBe(false)
+  })
+
   it('forgets an activation that settled on its own, without disposing it', async () => {
     const dispose = vi.fn(async () => {})
     const settled = Promise.resolve('done')
