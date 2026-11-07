@@ -98,6 +98,8 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
+   The Source can also post a **daily digest** to one chat: set **Daily digest chat** and **Digest hour (local)** in its settings below. Once a day, at that local hour, it posts a new message to the chat — not a Thread reply, and with no history to read — listing the Tickets that wait for a person, what each needs, how long it has waited, and how many are working. A quiet day still gets one line saying nothing waits. The digest reports its own `digest` health entry, so a failed send shows in the panel, and it tries again on its next minute check inside that hour.
+
 ### Where the secrets live, and how to rotate them
 
 Nothing in this guide writes a secret into the repository. A copy of the values for convenience belongs in the workspace `.env`, which is ignored by git (`git check-ignore .env` prints it); check before committing that no `.env` file is staged.
@@ -275,7 +277,7 @@ Health entries are grouped by responsibility:
 | `evals` | Unavailable Evals from the last hour with no later judgement or dismissal |
 | `assessment`, `launch`, `delivery`, `relay`, `notice`, `reply` | Stored work described in [003 Execution](003-execution.md); delivery counts waiting work, while reply covers Channel messages |
 | `worker` | Executor Session event handling; appears after its first failure |
-| `github`, `feishu`, `history` | Source polling, events and history recovery |
+| `github`, `feishu`, `history`, `digest` | Source polling, events, history recovery and the daily digest |
 | `sync:<source id>` | Allowed-list synchronization |
 
 A refusal has a status and `error`, its English text:
@@ -287,7 +289,7 @@ A refusal has a status and `error`, its English text:
 
 The blocks:
 
-- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
+- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, `otherChats` as `"none"` or `"mentions"`, and `digestChat` (empty for no digest) with `digestHour` (local hour, default 9).
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
 - `executor`: `model`, `maxWorkers`, `directory`, `prepare` and `blockedCommands`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.

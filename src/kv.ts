@@ -54,5 +54,7 @@ export const KV = {
    */
   feishu: { chats: record<Record<string, boolean>>('feishu-chats'), history: family<string, [chat: string]>('feishu-history:'),
     topics: family<Record<string, string>, [chat: string]>('feishu-history-threads:'),
-    seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:') },
+    seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:'),
+    /** The local day of the last daily digest and when it went out, so a restart does not send it twice. */
+    digest: record<{ day: string; at?: string }>('feishu-digest') },
 }

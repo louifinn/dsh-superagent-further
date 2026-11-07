@@ -63,8 +63,10 @@ The P1 scope.
 - [x] Ticket loop ergonomics, except the daily digest: a waiting Ticket says which action it needs, and after a day it
   carries a warning with the number of days it has waited (for a Ticket awaiting review that is how long its pull request
   has waited); a failed or blocked worker is retried from the same row without a new trigger.
-- [ ] Daily digest: a summary of waiting Tickets and failures once a day. Needs a delivery target the operator picks
-  (a Feishu chat, a GitHub Issue, or the panel only).
+- [x] Daily digest: the Feishu Source posts one chat-level summary a day (digestChat, at digestHour local) of the
+  Tickets that wait for a person, what each needs, how long it has waited, and how many are working; a quiet day still
+  says nothing waits, a failed send shows on the Source's digest health entry and retries within the hour, and a
+  restart does not send it twice. Live run on 2026-11-07 posted the digest to the "Agents" group as the bot DSH.
 
 ## Sprint 1 checklist
 

@@ -103,11 +103,11 @@ it('states each Source by the first state that holds', () => {
   const states = (setup: Parameters<typeof sourcesStatus>[2], health: Parameters<typeof sourcesStatus>[1] = {}) =>
     Object.fromEntries(sourcesStatus(host, health, setup).map(source => [source.id, source.state]))
   expect(states({})).toEqual({ feishu: 'starting', github: 'starting' })
-  expect(states({}, { feishu: { state: 'ready', detail: '' }, history: { state: 'paused', detail: '' }, github: { state: 'error',
+  expect(states({}, { feishu: { state: 'ready', detail: '' }, history: { state: 'paused', detail: '' }, digest: { state: 'ready', detail: '' }, github: { state: 'error',
     detail: 'x' } }))
     .toEqual({ feishu: 'paused', github: 'error' })
   const problem = { place: 'deployment', code: 'stateDirUnset', values: {}, detail: '' } as never
-  expect(states({ problem }, { feishu: { state: 'ready', detail: '' }, history: { state: 'ready', detail: '' }, github: { state: 'ready',
+  expect(states({ problem }, { feishu: { state: 'ready', detail: '' }, history: { state: 'ready', detail: '' }, digest: { state: 'ready', detail: '' }, github: { state: 'ready',
     detail: '' } }))
     .toEqual({ feishu: 'setup', github: 'setup' })
 })

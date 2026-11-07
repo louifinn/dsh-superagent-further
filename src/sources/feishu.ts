@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'
 import { feishuLink, sendFeishu } from './feishu-channel.ts'
 import { feishuThreadContext } from './feishu-read.ts'
+import { runFeishuDigest } from './feishu-digest.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
 import { SOURCE, feishuTriggerId } from './feishu-trigger.ts'
 import { sourceContext } from './host.ts'
@@ -26,6 +27,8 @@ const FeishuConfigSchema = FeishuBotSchema.extend({
     .default([]),
   directMessages: z.boolean().default(true),
   otherChats: z.enum(['none', 'mentions']).default('none'),
+  digestChat: z.string().trim().max(60).regex(/^(oc_[a-zA-Z0-9]+)?$/).default(''),
+  digestHour: z.number().int().min(0).max(23).default(9),
 }).strict()
 export type FeishuConfig = z.infer<typeof FeishuConfigSchema>
 export const feishuKind: SourceKind<FeishuConfig> = {
@@ -46,11 +49,15 @@ export const feishuKind: SourceKind<FeishuConfig> = {
     { key: 'otherChats', type: 'select', label: { zh: '其他群', en: 'Other chats' }, options: [{ value: 'none', label: { zh: '不接收', en: 'Not received' } }, { value: 'mentions', label: { zh: '仅 @', en: '@ only' } }],
       hint: { zh: '机器人已加入、但没列在上面的群。“仅 @”接收那里 @ 机器人的消息；谁的消息能发起工作看策略里的准入。', en: 'Chats the bot has joined that are not listed above. "@ only" receives messages there that mention the bot; whose messages may originate work is the Policy\'s admission.' } },
     { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
+    { key: 'digestChat', type: 'text', pattern: '(oc_[a-zA-Z0-9]+)?', label: { zh: '每日摘要发到', en: 'Daily digest chat' }, choose: { zh: '不发摘要', en: 'No digest' },
+      hint: { zh: '每天在下面那个本地小时，向这个群发一条摘要：待你处理的工单、各自要什么、等了多久，还有几单在进行。留空就不发。摘要是群里的新消息，不是线程回复，也不需要补收历史。', en: 'Once a day at the local hour below, posts one summary to this chat: the Tickets that wait for you, what each needs, how long it has waited, and how many are working. Empty sends none. It is a new chat message, not a Thread reply, and needs no history.' } },
+    { key: 'digestHour', type: 'number', min: 0, max: 23, label: { zh: '摘要时间（本地小时）', en: 'Digest hour (local)' },
+      hint: { zh: '按这台机器的本地时间，在几点发摘要。智能体在这一小时里第一次检查时发送，已经发过就等第二天。', en: 'The local hour on this machine at which to send the digest. The agent sends on its first check inside that hour, and waits for the next day once it has sent.' } },
     { key: 'readPageSize', type: 'number', advanced: true, min: 1, max: 50, label: { zh: '每页消息数', en: 'Messages per page' }, hint: { zh: '智能体读取线程和群历史时，每页的消息数。', en: 'Messages per page when agents read Threads and chat history.' } },
     { key: 'linkTimeoutMs', type: 'number', advanced: true, min: 1, max: 90000, label: { zh: '原消息链接的查询时限 / 毫秒', en: 'Original message link time limit / ms' },
       hint: { zh: '查询原消息链接最多等待的时间；超时后智能体改为直接读取原消息。', en: 'How long to wait for an original message\'s link; after that, agents read the message itself.' } },
   ],
-  health: ['feishu', 'history'],
+  health: ['feishu', 'history', 'digest'],
   scope({ meta }, config) {
     if (meta.direct === true) return config.directMessages ? { listened: true, observed: false, row: 'direct' } : { listened: false, reason: 'direct_messages_not_allowed' }
     const chat = config.chats.find(item => item.chatId === meta.chatId)
@@ -134,6 +141,11 @@ export function apply(ctx: Context): void {
   ctx.effect(() => {
     const controller = new AbortController()
     const running = runFeishu(sourceContext(ctx.orchestrator, feishuKind), controller.signal)
+    return async () => { controller.abort(); await running }
+  })
+  ctx.effect(() => {
+    const controller = new AbortController()
+    const running = runFeishuDigest(sourceContext(ctx.orchestrator, feishuKind), controller.signal)
     return async () => { controller.abort(); await running }
   })
 }
