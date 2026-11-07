@@ -139,6 +139,15 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
   remove the bootstrap root path; the deferred one-Ticket-to-many-executors design is recorded in
   `docs/010-project-orchestrator.md`.
 
+## Sprint 6 checklist
+
+The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approved 2026-11-08). Each item ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine. It runs after P4b.
+
+- [ ] Request records: schema 14 adds a Request (the accepted human ask) with its Mandate, Decision, Channels and Tickets; a Ticket gains `requestId` and `after` edges; the migration backfills one Request per existing Ticket so history keeps its identity.
+- [ ] Automatic split at acceptance: one accept creates one Request and 1..N ordinary Tickets, one per delivery unit, chosen by the main Session from the request text and the registered projects; a Feishu acceptance may name several projects; each Ticket still has one project, checkout, Lead and pull request.
+- [ ] Dependency dispatch: the Orchestrator dispatches a Ticket to its project's Lead only once the Tickets it waits on have ended; serial and parallel both fall out of `after`; a failed prerequisite stops the Tickets behind it and asks one question.
+- [ ] One acknowledgement, one result, one done: the acknowledgement is sent once at acceptance; the Request ends when all its Tickets end (done, or partial with one question naming what landed and what failed); the result lists the pull requests; the panel and the digest show one row per Request and expand to its Tickets.
+- [ ] Live proof: a real GitHub request that spans `louifinn/project-check` and `louifinn/Napkid-Derivate` produces two Tickets, two pull requests, and one Request result; a Feishu request naming one project still works unchanged.
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

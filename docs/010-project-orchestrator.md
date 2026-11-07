@@ -67,7 +67,12 @@ own architecture set the facts:
 | Concurrency | 2 executor subagents per Lead by default, 8 globally, both configurable |
 | First slice | Pure foundation layer first: presets, Session governance, message records and project-aware interfaces, with no entry-point change |
 | Unresolvable project | Refuse the acceptance and point at **Execution → Projects**; one path, no implicit fallback |
-| One Ticket, several executors | Keep one worker per Ticket now; the future design direction is recorded in "Future: one Ticket, several executors" so the implementation does not drift |
+| One Ticket, several executors | Deferred inside a Ticket. The operator approved the Request bundle for cross-project work: one acceptance creates one Request plus one Ticket per delivery unit, so parallelism between projects never needs several executors on one Ticket. The analysis for a later segmented fan-out stays in "Splitting work across executors" so the implementation does not drift |
+| Cross-project requests | A **Request** groups per-delivery Tickets (approved 2026-11-08): one acceptance makes one Request and 1..N ordinary Tickets, each with one project, checkout, Lead and pull request; the Orchestrator creates and coordinates them, a project Lead only executes its own |
+| Dependencies between Tickets | Simple `after` edges: the Orchestrator dispatches a Ticket to its project Lead only once its prerequisites have ended; serial and parallel both fall out of the edges |
+| Delivery and aggregation | One pull request per Ticket (a cross-project request necessarily has several); the Request produces the single acknowledgement, the single final result listing the pull requests, and the single "done" state |
+| Ticket creation | Only the Orchestrator creates Tickets. A Lead that needs another project asks or hands back; it never adds a Ticket |
+| Naming of the aggregate | **Request** — the accepted human ask, grouped above per-delivery Tickets |
 
 ## Target model
 
@@ -216,29 +221,208 @@ the bootstrap exception for an installation with no project registered yet; P4b 
 a project during onboarding. That step and the bootstrap removal go together: the current host test
 harness accepts Tickets without projects and asserts a root worker Session, so P4b starts by moving the
 harness (and the specifications that assert root deliveries) onto Lead-hosted executors, then makes the
-setup require a project. The multi-executor design is recorded (not implemented) in the next section.
+setup require a project. **P5 — Request bundle.** One acceptance becomes one Request plus 1..N Tickets, one per delivery unit
+(the Orchestrator splits, using the registered projects and, for a Feishu message, the projects the
+assessment names). Each Ticket keeps today's authority and execution: one project, checkout, Lead, PR
+and end. `after` edges order the Tickets; the Orchestrator dispatches a Ticket to its project's Lead
+only when its prerequisites have ended. The Request produces one acknowledgement, one final result
+listing the pull requests (or the failed Ticket and what landed), and one done state; silence
+otherwise. Schema 14 adds the Request records and backfills one Request per existing Ticket. Panel and
+digest show one row per waiting Request and expand to its Tickets; Triggers, Threads and Subscriptions
+keep their keys, so idempotence and history are untouched. The Lead keeps its within-project freedom;
+it never creates Tickets.
+Acceptance: core engine tests prove one accept → one Request + N Tickets, dependency dispatch only
+after prerequisites end, and request-level end/partial-end with one result message; a host test proves
+one acknowledgement and one result through the fake Sources; a live GitHub request that spans
+`louifinn/project-check` and `louifinn/Napkid-Derivate` produces two Tickets (one per project), two
+pull requests, and one Request result after both merge; `pnpm check` and the six-combination CI stay
+green.
 
-## Future: one Ticket, several executors
+Status (2026-11-08): approved; not implemented. It runs after P4b, whose harness migration is a
+prerequisite for removing the bootstrap root path.
+## Splitting work across executors: alternatives and the recommendation
 
-Direction decided on 2026-11-08 (implementation deferred): keep one worker per Ticket now, but grow
-along these lines so execution does not drift.
+Status: **analysis, background**; the operator approved the Request bundle below for cross-project work, so ticket-level parallelism stays deferred until a measured latency need. The operator asked
+whether a Ticket should be split (into segments, or into several Tickets with a dependency graph),
+what a Ticket actually is, and which design is theoretically best under this project's philosophy.
 
-- **Domain.** An `Assignment` stays one worker; a Ticket may carry several `Assignment`s in one
-  *stage*, each over a *segment* (a named, non-overlapping part of the work) with its own worktree and
-  branch `agent/<worktree-name>/<segment>`, all cut from the project's clone.
-- **Dispatch.** Only the Orchestrator creates a Ticket and hands it to the Lead as one assignment
-  message. The Lead splits it into segments with `lead_assign` (a Lead application tool, P4b) when the
-  request names independent parts; each segment starts a hidden child through the subagent service, and
-  every child's report settles back as a `report` message to the Lead.
-- **Aggregation.** The Lead decides when the stage is complete: it either picks one segment branch as
-  the Ticket's, or starts one integration child that merges the others in ticket order, resolves
-  conflicts, and opens the single PR. The Ticket still binds one PR and ends `merged`; a failed segment
-  is retried or dropped by the Lead with a reason recorded in the ticket.
-- **Bounds and visibility.** All children count against `projectWorkers` and `maxWorkers`; the Lead row
-  shows running executors and waiting messages; the Trigger/Ticket keys and the Mandate stay one per
-  Ticket, so policy, audit and duplicate prevention are unchanged.
-- **Not in scope now.** Per-segment PRs, partial merges into `main`, and cross-project single Tickets.
+### What a Ticket is — and is not
 
+`docs/001-domain.md` defines a Ticket as *a unit of authorized work*: only an Eval creates one; it
+refers to its Mandate (what an accept grants), holds its Channels and Inputs, goes open → ended and
+back when a person resumes it, and owns its execution and reports. It is **not** a task list and
+**not** an agent run: an *Assignment* is the binding of a Ticket to one Executor instance, and a
+Ticket has several Assignments over time (retry, restart, hand-off). "A Ticket can be handed off,
+resumed, or run by several Executors, so it defines its own state" is an explicit non-goal reversal
+in `docs/001-domain.md`.
+
+So the Ticket's identity is authorization + delivery + audit. One accepted request is one Mandate,
+one human reviewable result (one pull request or the Source's equivalent), one place where the
+request ends. **Concurrency is an execution concern, not a Ticket concern** — the Executor is
+outside the domain, and the domain only records Assignments and their reports.
+
+### The alternatives
+
+| # | Design | Granularity unit | PR / review | Domain changes |
+| --- | --- | --- | --- | --- |
+| A | One Ticket, one worker (today) | executors per Ticket | one PR | none |
+| B | One Ticket, several **segment** Assignments started by its Lead | segment = a named part of one delivery | one PR, aggregated before review | Assignment/Execution carry a segment id; several concurrent assignments per Ticket; Lead needs assign/synthesise tools |
+| C | One request → several **Tickets** related serially/parallel | ticket = a parallel work unit | one PR per Ticket unless an aggregation layer is added | Ticket gains a parent/workstream and dependency edges; a Decision must create several Tickets (today one accept = one Ticket); acceptance, acknowledgement, stop, resume and "done" need request-level aggregation |
+| D | Hybrid: B for one delivery, C only for genuinely separate deliverables | delivery = ticket; parts of a delivery = segments | one PR per delivery | B, plus a way to accept several deliverables from one message |
+
+### Evaluation against the project's philosophy
+
+The philosophy (`docs/000-philosophy.md`) judges every design by human attention: **few concepts,
+few settings, one reviewable result per request, silence while working, one question when a person
+must decide, and every failure visible**. The other design rules are the Engine's single-writer
+rule and "only Eval creates a Ticket" (`docs/001-domain.md`, `docs/007-architecture.md`).
+
+- **Concepts.** A adds none. B adds one execution attribute (a segment id) and no domain aggregate.
+  C adds at least three domain concepts — a request/workstream, dependency edges, and aggregate
+  completion — plus a Decision fan-out. The philosophy rejects a concept per business need; C is the
+  most concept-heavy option. D adds B's attribute and defers C's cost to a real need.
+- **Attention.** A produces one review and one result message. B produces one review and one result
+  message; the segments are invisible. C produces N reviews, N result messages and N end notices
+  unless an aggregation layer (another concept) is built; the person must also reconstruct "is the
+  original request done?" from several Ticket states. For the *same* deliverable, C spends N times
+  the attention and adds no value — it is a work decomposition, not a delivery decomposition.
+- **Audit and idempotence.** A/B keep one Trigger → one accept → one Mandate → one Ticket, which is
+  what "accepting a Trigger twice creates one Ticket" relies on. C needs the same Trigger to authorise
+  several Tickets: either the same Mandate is shared by N Tickets (then a stop, a Policy change or a
+  resume must fan out correctly), or the Trigger is accepted N times, which contradicts the current
+  idempotence rule and would need its own concept.
+- **Failure and recovery.** A/B report per segment to the Lead and keep the Ticket's single end
+  decision (`ready`/`failed`/`blocked`); a lost child is redispatched and the surviving children are
+  adopted. C makes each Ticket end independently; a partial request has N end states, and a
+  dependency graph needs a scheduler and a new panel surface to show what waits on what.
+- **Concurrency.** B routes each child through the same `projectWorkers`/`maxWorkers` caps; the
+  Lead's own context is the only new load. C needs a scheduler for inter-Ticket dependencies in
+  addition to the existing per-project caps.
+- **Philosophy fit summary.** B is "few concepts, one result"; C is "a task graph", which this
+  project deliberately avoids — dependency waiting is modelled as a Source today
+  (`docs/001-domain.md` rejects Eval-scheduled waiting). Where a wire is genuinely needed between
+  independent deliverables, a person can ask for the second deliverable when the first lands, or the
+  Orchestrator can ask one question and accept the two deliverables as two ordinary Tickets from two
+  requests.
+
+### What the Lead's freedom means
+
+The Lead is a real Session with its own context, so the routing topology (one executor now, two in
+parallel, a next segment only after one reports, a re-plan after a failure) is a **prompt-level
+execution decision**, not a persisted graph. B represents exactly that: the domain records
+Assignments and reports; the Lead decides how many children to start and in which order, and
+synthesises their reports into the Ticket's single report. This preserves the user's intent — the
+Lead may choose finer granularity and organise topology per project — without turning the domain
+into a task scheduler.
+
+### Recommendation for approval
+
+1. **For one delivery, parallel work stays an execution concern later** (segments); its day is not now. Cross-project and multi-deliverable work is solved above the Ticket by the approved Request bundle, which gives each delivery its own Ticket — this is C's request-level shape, not a dependency graph inside one delivery. A segmented fan-out would only return when one delivery's latency justifies it: several segment Assignments
+   under one Ticket, one PR, one end. C stays unbuilt until a real case needs *independent
+   deliveries* that a person wants to review separately; if that need appears, its unit is a new
+   accepted request, not a sub-ticket of this one.
+2. **The Ticket keeps one Mandate and one delivery.** Segments inherit the Ticket's authority and
+   are hidden from the panel as separate Tickets.
+3. **The Lead owns the split and the topology**, with an `lead_assign` tool (P4b); the Orchestrator
+   never splits a Ticket.
+4. **The integration step is a hidden worker**, not the Lead: it merges segment branches on the
+   Ticket's base, runs the checks available in the project, and opens the single PR. A segment's
+   failure is retried by the Lead; repeated failure ends the Ticket `failed` with the segment
+   branches kept for inspection.
+5. **Each segment counts against `projectWorkers`**, so a fan-out cannot starve other projects.
+
+### Resolved decisions (operator, 2026-11-08)
+
+1. Approve B (segments under one Ticket + one aggregated PR) as the direction, or ask for C's
+   ticket graph instead?
+2. For one message that genuinely contains several independent deliverables (different repositories
+   or separate reviews): should the Orchestrator ask one question and accept them as several
+   ordinary Tickets, or should the project wait for a real multi-delivery request?
+3. Aggregate always into a single PR, or allow the Lead to deliver several PRs when the request
+   itself names several deliverables (that is C's delivery pattern, at the request level)?
+## Cross-project requests: the Request bundle
+
+Status: **accepted by the operator (2026-11-08)**: model F, fter edges, one pull request per Ticket with a Request-level result, Orchestrator-only Ticket creation, and the name **Request**. The operator raised the decisive question: who
+creates a Ticket, the global Orchestrator or a project Lead? Today the answer is the global side —
+only an Eval creates a Ticket (`docs/001-domain.md`), the Eval and Decision live in the global
+pipeline, and the Ticket merely carries a `project` field that selects its checkout and Lead. A
+project Lead cannot create a Ticket; it starts executors (`lead_assign` in P4b). That design cannot
+divide a request that spans projects: one Ticket has one project and one checkout, one Lead, one
+delivery.
+
+The operator also chose that a message containing several independent deliverables should be split
+**automatically**, and left the PR-aggregation rule open for discussion.
+
+### Alternatives for cross-project work
+
+| # | Design | One request across two projects becomes | New concepts |
+| --- | --- | --- | --- |
+| E | A Ticket has several projects: segments carry their own project, one Mandate, one end | one Ticket with two deliveries (two PRs) and no single project Lead | a per-segment project, multi-delivery ending, a coordinating Lead |
+| F | A **Request** groups N ordinary Tickets, each with one project and one delivery; the Orchestrator creates the Request and its Tickets, and each project's Lead executes its own | a Request with two Tickets (one per project), each a normal Lead-hosted delivery | a Request aggregate (parent of Tickets, dependency edges, request-level end) |
+
+E keeps one Mandate and one acknowledgement, but breaks the Ticket's tightest invariants: one project
+checkout, one delivery, one Lead. Whose Lead starts a child in the other project? Which project's
+`projectWorkers` slot does it take? Which PR ends the Ticket if the other is still open? It also
+makes `Ticket.project` ambiguous for the panel, the digest and the executor environment. F keeps
+every Ticket exactly as it is today — one project, one checkout, one Lead, one PR, one end — and adds
+one aggregate above it that captures what a person actually asked for and what coordinates the
+deliveries.
+
+### Proposed model (F)
+
+- **Request** — the accepted human ask: the Decision, the Trigger batch it came from, the common
+  authorization (its Mandate), a title, an optional deadline for a person, and the list of Tickets it
+  produced. Only an Eval creates one; accepting the same Trigger twice still yields one Request.
+- **Tickets** — unchanged in authority and execution: one per *delivery unit* (a project/repository,
+  or a part a person should review separately). Each carries its project, its checkout, its Lead, its
+  PR and its own end. A Ticket's Mandate is the Request's Mandate narrowed to that Ticket's scope
+  ("wider scope means a new Ticket" already says this).
+- **Splitting** — the Orchestrator decides at acceptance, from the request text and the registered
+  projects, how many Tickets the Request needs and in what order; this is the "automatic split" the
+  operator approved. The Orchestrator creates them with the Request in one Engine transaction, so one
+  accept = one Request + 1..N Tickets.
+- **Dependencies** — each Ticket may name the Tickets it waits on (serial and parallel both fall out:
+  no edges = parallel, edges = ordered). The Orchestrator dispatches a Ticket to its project's Lead
+  only when its prerequisites have ended, so waiting stays an orchestration rule rather than a new
+  scheduler inside the Executor.
+- **Within a Ticket** — the Lead keeps the freedom discussed above: one executor, or several segment
+  assignments under the same Ticket, with the single-PR aggregation when approved.
+- **Completion and attention** — the Request is the unit a person sees: one acknowledgement, one
+  final result (a list of merged PRs, or the failed Ticket and what landed), one end. Ticket ends
+  still drive the Request: all Tickets merged/closed → Request done; one failed after the others
+  merged → Request ends partial and asks one question, "retry this Ticket or accept what landed?".
+  Silence otherwise, per the philosophy.
+- **Who may add a Ticket later** — the Orchestrator only, through a person's message or a Lead's
+  proposal. A Lead stays an executor of its own project: if it finds the request needs another
+  project, it hands the finding back (a question or a handback), the Orchestrator decides, and a new
+  Ticket joins the Request under the same Mandate if the Policy still holds it.
+
+### What this implies for the current code
+
+- `src/core/model.ts`: new `Request` type; `Ticket.requestId`; keep `Ticket.project` as the single
+  project; `Mandate` moves to (or is referenced by) the Request and Ticket creation narrows it.
+- `src/app/migration.ts`: schema 14 adds `request` records and backfills one Request per existing
+  Ticket, so history keeps its identity.
+- `src/core/engine.ts`: accept creates Request + Tickets atomically; a new people/Orchestrator command
+  to accept further Tickets into an open Request; Request end derived from its Tickets; a
+  `request.ended` event for the single result message.
+- `src/executor/dsh.ts`: unchanged per Ticket; the Orchestrator's dispatch waits on prerequisites.
+- Panel and digest: one Request row per waiting ask, expanding to its Tickets; "waiting on a person"
+  stays the attention rule. Triggers/Tickets keep their keys, so Threads, Subscriptions and
+  idempotence are not touched.
+- Tests: core engine tests for Request creation, splitting and dependency dispatch; host tests for the
+  single acknowledgement/result; panel tests for the grouped rows.
+
+### Resolved decisions (operator, 2026-11-08)
+
+1. **Model F** — a Request groups per-delivery Tickets; the Orchestrator creates and coordinates;
+   each project's Lead executes its own. Model E (one multi-project Ticket) is rejected.
+2. **`after` edges** between Tickets; the Orchestrator dispatches a Ticket only when its prerequisites
+   have ended. No phase list, no persisted scheduler beyond the edges.
+3. **One pull request per Ticket**, so a cross-project Request necessarily has several; the Request
+   produces one acknowledgement, one final result listing them, and one done state.
+4. **Only the Orchestrator creates Tickets.** A Lead asks or hands back; it never adds a Ticket.
+5. **Name: Request.**
 ## Risks and mitigations
 
 - **DSH experimental API drift.** `startActivation` exists in the running 0.2.2-rc.1 build but not in
@@ -267,3 +451,11 @@ The operator answered these on 2026-11-08, taking the proposed defaults:
 2. The Lead row lives on the Overview; a Projects page can follow if the row grows.
 3. A Lead uses the default model; a per-project model override is a P4 widening item.
 4. Fan out one Ticket across several executors later, along the direction recorded above.
+5. Cross-project and multi-deliverable requests use the **Request** bundle (model F), approved on
+   2026-11-08: one acceptance creates one Request plus one ordinary Ticket per delivery unit.
+6. Dependencies between Tickets are `after` edges; the Orchestrator dispatches a Ticket to its
+   project's Lead only when its prerequisites have ended.
+7. Delivery is one pull request per Ticket; the Request produces the single acknowledgement, the
+   single final result that lists them, and the single done state.
+8. Only the Orchestrator creates Tickets; a Lead asks or hands back and never adds one. The
+   within-project segment fan-out stays deferred until a measured latency need.
