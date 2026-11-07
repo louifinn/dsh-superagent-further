@@ -142,3 +142,22 @@ it('shows a link\'s target far back with every Trigger after it', async () => {
   expect(document.querySelector('.dt-highlight .dt-event-text')?.textContent).toBe('message m10')
   expect(all('button').some(button => button.textContent === zh.loadEarlier)).toBe(false)
 })
+
+it('filters the Thread list by the project each Thread belongs to', async () => {
+  server.settings = { ...server.settings, executor: { ...server.settings.executor,
+    projects: [{ id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' }] } }
+  server.threads = [threadSummary({ key: 'github:acme/app#1', project: 'app', title: 'App issue' }),
+    threadSummary({ key: 'github:1', title: 'Unplaced issue' })]
+  await mount()
+  await click(zh['tab.trigger'])
+  expect(text()).toContain('App issue')
+  expect(text()).toContain('Unplaced issue')
+  await click('App')
+  expect(text()).toContain('App issue')
+  expect(text()).not.toContain('Unplaced issue')
+  await click(zh.projectFilterNone)
+  expect(text()).toContain('Unplaced issue')
+  expect(text()).not.toContain('App issue')
+  await click(zh.projectFilterAll)
+  expect(text()).toContain('App issue')
+})

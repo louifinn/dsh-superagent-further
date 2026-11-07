@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { canRetry, followupOwners, latestReport, liveTicket, settled, threadKey, ticketStage, type ActorRef, type ChannelRef, type Decision,
   type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
 import { allowedSender, listedBot } from '../../policy.ts'
+import { projectByRepository } from '../../projects.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { workerSessionId } from '../../executor/dsh.ts'
@@ -42,6 +43,10 @@ export interface Snapshot extends ViewHost {
   actor(actor: ActorRef, human?: boolean): ActorView
   /** The owners of follow-ups (see `ownersOf`). */
   owners: Owners
+  /** The registered project a GitHub Thread's repository names, for the Triggers list. */
+  project(repository: string | undefined): { id: string; name: string } | undefined
+  /** The deployment's own repository, which an unqualified GitHub Thread id (such as `github:12`) belongs to. */
+  primaryRepository: string | undefined
 }
 export function snapshot(host: ViewHost): Snapshot {
   const { store, sources } = host
@@ -56,6 +61,13 @@ export function snapshot(host: ViewHost): Snapshot {
   }
   const settings = store.settings()
   const rules = new Map(settings.policy.rules.map(rule => [rule.id, rule.name]))
+  const configured = settings.sources.github?.config.repository
+  const primaryRepository = typeof configured === 'string' ? configured : undefined
+  const projects = settings.executor.projects
+  const project = (repository: string | undefined) => {
+    const found = repository ? projectByRepository(projects, repository) : undefined
+    return found ? { id: found.id, name: found.name } : undefined
+  }
   const named = (name: string) => ({ zh: name, en: name })
   const actor = ({ source, id }: ActorRef, human?: boolean): ActorView => {
     if (!id) return { source, id }
@@ -64,7 +76,7 @@ export function snapshot(host: ViewHost): Snapshot {
     const unnamed = sources.kind(source)?.policy?.unnamed
     return { source, id, name: unnamed ? human === false ? unnamed.bot : unnamed.person : named(id) }
   }
-  return { ...host, threadsOf, rule: id => ({ id, name: rules.get(id) ?? id }), actor, owners: ownersOf(store) }
+  return { ...host, threadsOf, rule: id => ({ id, name: rules.get(id) ?? id }), actor, owners: ownersOf(store), project, primaryRepository }
 }
 
 /**
@@ -168,8 +180,12 @@ export function threadSummary(view: Snapshot, thread: Thread) {
     return { id, title: ticket?.title ?? id, state: !ticket ? 'unknown' : liveTicket(ticket) ? 'open' : 'ended' }
   })
   const pending = awaitingEval(view, thread).length
+  // A qualified id (`owner/name#12`) names the repository; the plain one is the deployment's own.
+  const hash = thread.ref.id.indexOf('#')
+  const repository = thread.ref.source === 'github' ? hash >= 0 ? thread.ref.id.slice(0, hash) : view.primaryRepository : undefined
   return { key: thread.key, source: thread.ref.source, title: threadTitle(store, thread), stage: threadStage(thread, pending, tickets),
     latest: latestOnThread(view, thread), lastAt: thread.lastAt ?? thread.createdAt, createdAt: thread.createdAt,
+    project: view.project(repository)?.id ?? '',
     subscriptions: thread.subscriptions.length, tickets,
     evaluating: thread.evaluating ? { id: thread.evaluating.id, strength: thread.evaluating.strength, triggers: thread.evaluating.triggerIds.length, startedAt: thread.evaluating.startedAt, deadline: thread.evaluating.deadline } : undefined,
     pending, pollError: attribute(thread.meta.pollError), url: threadUrl(store, thread),

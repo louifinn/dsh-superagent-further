@@ -73,6 +73,7 @@ export function ThreadLine({ thread, ticketId, context }: { thread: ThreadRow; t
       </div>
       <div className="dt-row-meta dt-line">
         <ThreadChip thread={thread} />
+        {thread.project && <LabelValue label={t('ticketProject')} value={thread.project} />}
         {context && <ContextTag />}
         {thread.pollError ? <span className="dt-line-text dt-error-text">{thread.pollError}</span> : reaches && <LabelValue
           label={t('fanoutTo')} value={reaches} />}

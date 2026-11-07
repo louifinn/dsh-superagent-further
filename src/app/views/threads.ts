@@ -19,7 +19,8 @@ export function threadList(host: ViewHost, filter: ThreadFilter, offset: number,
     : filter === 'evaluating' ? store.threads.active() : store.threads.list()
   const threads = candidates.filter(kept).sort((a, b) => lastAt(b).localeCompare(lastAt(a)))
   const result = page(threads, offset, limit)
-  return { ...result, items: result.items.map(thread => threadSummary(view, thread)) }
+  return { ...result, projects: store.settings().executor.projects.map(({ id, name }) => ({ id, name })),
+    items: result.items.map(thread => threadSummary(view, thread)) }
 }
 export type ThreadListView = ReturnType<typeof threadList>
 /**

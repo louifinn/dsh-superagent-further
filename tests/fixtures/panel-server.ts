@@ -46,7 +46,7 @@ export const ticketSummary = (fields: Partial<TicketFields> = {}, stage: TicketS
   ({ ...TICKET, ...fields, ...stage })
 export const threadSummary = (fields: Partial<ThreadRow> = {}): ThreadRow => ({
   key: 'feishu:oc_1:om_root', source: 'feishu', title: '这个文案好奇怪', stage: 'subscribed', latest: undefined, lastAt: '2026-09-23T00:00:00Z',
-  createdAt: '2026-09-22T00:00:00Z', subscriptions: 1, tickets: [{ id: 't1', title: '修复回归', state: 'open' }], evaluating: undefined,
+  createdAt: '2026-09-22T00:00:00Z', subscriptions: 1, tickets: [{ id: 't1', title: '修复回归', state: 'open' }], evaluating: undefined, project: '',
   pending: 0, pollError: undefined, url: undefined, facts: { chat: { value: '团队群' } }, ...fields,
 })
 type TriggerFields = Partial<Omit<TriggerRow, 'disposition' | 'actions'>> & { disposition?: Partial<TriggerRow['disposition']> }
@@ -310,7 +310,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     const added = Object.values(server.joining ?? {}); server.joined = { ...server.joined, ...server.joining }; server.joining = undefined
     return { added }
   } },
-  'GET threads': { query: ['filter', 'offset', 'limit'], answer: () => page(server.threads) },
+  'GET threads': { query: ['filter', 'offset', 'limit'], answer: () => ({ ...page(server.threads), projects: server.settings.executor.projects.map(({ id, name }) => ({ id, name })) }) },
   'GET threads/:key': { query: ['limit', 'before', 'around'], answer: ({ params, query }) => {
     const found = server.threadPages(params.key, query)
     if (!found) return refuse(404, 'Thread not found')
