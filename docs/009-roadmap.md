@@ -68,6 +68,21 @@ The P1 scope.
   says nothing waits, a failed send shows on the Source's digest health entry and retries within the hour, and a
   restart does not send it twice. Live run on 2026-11-07 posted the digest to the "Agents" group as the bot DSH.
 
+## Sprint 3 checklist
+
+The P2 scope, in the order this session takes it.
+
+- [x] Trigger trust and prompt injection: 007 documents which Trigger fields are trusted and which are not, the
+  untime/admission, untime/work and skill/github parts state the untrusted-data rule, and 	ests/trust.spec.ts
+  pins the gates down: a body that claims to be an explicit request, a human, or an administrator changes no decision,
+  and no prompt in either role contains it verbatim.
+- [ ] Several repositories or projects.
+- [ ] Release engineering: semver, a CHANGELOG, a packed tarball installed with dsh plugin add <file>, and the
+  install steps in 006 using it.
+- [ ] Feishu breadth: direct messages, unlisted chats, attachments and several chats, each with a test and documented
+  behaviour, plus history backfill paging and rate limits.
+- [ ] Platform and experience: a macOS checklist, panel screenshots in the release check, and a pass for untranslated
+  strings.
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

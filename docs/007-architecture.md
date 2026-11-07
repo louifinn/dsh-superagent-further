@@ -424,6 +424,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/sources.spec.ts` | The Feishu and GitHub Sources on a `SourceContext`: translation, polls and read positions, the pull request rules, health |
 | `tests/commands.spec.ts` | CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls |
 | `tests/feishu-digest.spec.ts` | The Feishu daily digest's text and its once-a-day send, through a fake Source context |
+| `tests/trust.spec.ts` | The trust boundary: a message body changes no gate decision, and the prompts keep saying bodies are data |
 | `tests/feishu-read.spec.ts`, `tests/github-read.spec.ts` | Feishu and GitHub reads |
 | `tests/admission-context.spec.ts`, `tests/feishu-image.spec.ts` | The Thread window of assessments, and Feishu image reads |
 | `tests/assessment.spec.ts` | What the MasterAssessor keeps per Eval, and when it lets go |
@@ -628,8 +629,16 @@ A settings save that changes a Source field setup reads, such as an account's CL
 
 Point `DSH_HOME` at a temporary directory and create a new profile there. Copy the database from a backup, disable every Source, pause processing and remove the main Session id. Give the GitHub and Feishu CLIs read-only stand-ins.
 
+## Trust boundaries
+
+Every Trigger carries two kinds of fields, and the gates read only the first.
+
+- **Trusted**, because the Source derives them from its own records rather than from what a person wrote: `source`, `threads`, `actor.id`, `human` (whether a person rather than a bot, CI or this agent wrote it), `addressed` (`mention` or `direct`), `channel` (the address a reply goes to), `at`, `url`, the Source's receiving scope and the routing `meta` fields it declares (such as Feishu `chatId`/`direct`/`mentioned` or GitHub `number`/`isPr`). Admission, Policy sync, the follow-up rules, role selection and the Executor's tool list read these.
+- **Untrusted**, and only data for a model or a person to read: `text`, Thread titles and message bodies, Issue and pull-request bodies, comments, file contents, images, names, and any link or number quoted inside them. `src/app/links.ts` may turn a quoted link into extra context, but that context grants nothing.
+- No untrusted field can change a role, a tool list, a Policy, an allowed list, or the strength of a request. `prompts/admission.md`, `prompts/work.md` and `prompts/cli.md` say so to the models; `orchestrator_eval` returns bodies as `{id, from, at, text}` data while the instructions stay in the `runtime/admission` prompt part; and every gate takes its decision from the trusted fields alone. `tests/trust.spec.ts` pins both halves down: the prompt statements stay, and a body that claims to be an explicit request, a human, or an administrator changes no decision.
+- A Source may turn a quoted link or a follow-up into context, but not into authority: a bot's message can at most become an inferred candidate whatever its text says, and a direct message from someone a Source's part does not list is refused before any text is read.
+
 ## Open questions
 
-- Trust: which Trigger fields are trusted, such as the Source's actor and Thread membership, and which are not, such as the body and quotes.
 - Deployment isolation: the agent's profile on its own pinned DeepSeek Harness installation, so upgrading DeepSeek Harness elsewhere does not break it.
 
