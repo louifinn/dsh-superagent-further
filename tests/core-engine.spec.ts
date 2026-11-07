@@ -1619,3 +1619,16 @@ describe('ignores from the card', () => {
     expect(() => h.engine.decide('5', { kind: 'accept', title: 'Fix', scope: 'small', reason: 'chat' })).toThrow(new UserError('notExplicit'))
   })
 })
+describe('requests', () => {
+  it('records one Request for an accept, carrying the Mandate and pointing at its Ticket', () => {
+    const h = harness()
+    const decision = accepted(h)
+    const ticket = h.repo.tickets.get(decision.ticketId!)!
+    const requests = h.repo.requests.list()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ title: 'Fix', decisionId: decision.id, ticketIds: [ticket.id] })
+    expect(requests[0]!.mandate).toEqual(ticket.mandate)
+    expect(ticket.requestId).toBe(requests[0]!.id)
+    expect(h.repo.requests.get(requests[0]!.id)).toEqual(requests[0])
+  })
+})

@@ -238,7 +238,7 @@ one acknowledgement and one result through the fake Sources; a live GitHub reque
 pull requests, and one Request result after both merge; `pnpm check` and the six-combination CI stay
 green.
 
-Status (2026-11-08): the record layer is built — the `Request` model, the `request` table and accessor, schema 14 and a migration that gives each existing Ticket a Request of its own. The Engine that creates a Request with its Tickets, the `after` dispatch, the request-level result and the panel rows follow. P4b harness migration stays a prerequisite for removing the bootstrap root path.
+Status (2026-11-08): the record layer is built — the `Request` model, the `request` table and accessor, schema 14, a migration that gives each existing Ticket a Request, and an accept that creates a Request together with its Ticket. The multi-ticket split, the `after` dispatch, the request-level result and the panel rows follow. P4b harness migration stays a prerequisite for removing the bootstrap root path.
 ## Splitting work across executors: alternatives and the recommendation
 
 Status: **analysis, background**; the operator approved the Request bundle below for cross-project work, so ticket-level parallelism stays deferred until a measured latency need. The operator asked

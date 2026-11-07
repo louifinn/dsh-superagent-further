@@ -1,5 +1,5 @@
 /** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
-import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
+import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
   from './model.ts'
 import type { Reason } from './reasons.ts'
 
@@ -125,6 +125,11 @@ export interface Repositories {
     open(): Ticket[]
     /** Tickets with undelivered Inputs or a pending or running Assignment, which is always the latest. */
     active(): Ticket[]
+  }
+  requests: {
+    get(id: string): Request | undefined
+    save(request: Request): void
+    list(): Request[]
   }
   decisions: {
     get(id: string): Decision | undefined
