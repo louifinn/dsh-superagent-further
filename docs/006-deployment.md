@@ -208,6 +208,30 @@ Each profile stores logs and control files under `.artifacts/`:
 
 Open the URL printed in the log, then choose **Superagent** in the sidebar.
 
+### One project per profile
+
+One profile serves one project: one state directory, one set of Sources and one panel port. Running two projects from one profile is not supported, because Sources, Tickets, the allowed lists and the state database are per host.
+
+Give each project its own profile, named after the project:
+
+```sh
+dsh plugin --profile project-a add "link:$PWD"
+```
+
+Then set a `webserver` port and a `stateDir` in `~/.dsh/profiles/project-a/cordis.patch.yml` (the same entries the [Install](https://github.com/louifinn/dsh-superagent-further/blob/main/docs/006-deployment.md#install) section shows), and start it with `scripts/dsh-superagent start --profile project-a --url http://127.0.0.1:3083`.
+
+Only one of those projects runs as the service at a time. `node scripts/switch-project <profile>` stops the service-hosted projects that are running, starts the one you name, and prints its panel URL with the token. On Windows use `node scripts\switch-project <profile>`. It reads each profile's panel port from the `webserver` entry of its `cordis.patch.yml`, and refuses with an explanation instead of stopping something whose port it cannot know:
+
+```sh
+node scripts/switch-project project-a
+# Stopped project-b.
+# Started project-a at http://127.0.0.1:3083 (waiting for setup).
+# Panel: http://127.0.0.1:3083/?token=…
+```
+
+The application host is one profile too, so switching between service-hosted projects does not touch a project the application hosts; quit the application (or unload the plugin) before starting that project's service, as [Install into an existing profile](#install-into-an-existing-profile) describes.
+
+
 ### Hourly check
 
 Create the hourly check in the DeepSeek Harness profile you normally use, not in `superagent`. It must keep running when the agent service is down. Ask an agent in that profile to create an hourly schedule using this prompt, with the checkout path filled in:

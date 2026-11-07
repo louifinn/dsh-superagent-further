@@ -1,0 +1,199 @@
+#!/usr/bin/env node
+/**
+ * Switch a machine between projects that each keep their own DSH profile.
+ *
+ * One profile serves one project: its own state directory, its own Sources and
+ * its own panel port. Only one of those projects can be hosted at a time,
+ * because two hosts polling the same Sources would answer each other's Tickets.
+ * This script stops the service-hosted projects that are running, starts the
+ * one it is asked for, and prints the panel URL from the newest log.
+ *
+ * It talks to scripts/dsh-superagent for start and stop, so the two scripts
+ * agree on the control directory, the log files and the exit codes. It reads a
+ * profile's panel port from the `webserver` entry of its cordis.patch.yml; a
+ * project profile that does not set one cannot be switched to or from, because
+ * the service script would have no URL to ask for a graceful stop.
+ *
+ * Usage: node scripts/switch-project <profile> [--url <url>] [--json] [--help]
+ *
+ * Environment: DSH_HOME (where the profiles live), DSH_SWITCH_SERVICE (the
+ * service script to call; the tests point it at a fake), DSH_SUPERAGENT_STATE
+ * is not used here. Exit codes: 0 switched, the host may be waiting for setup;
+ * 1 nothing switched or a refusal.
+ */
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+/** The checkout this script lives in. */
+export const CHECKOUT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/** Whether a PID is alive; a permission error still means it exists. */
+export function alive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try { process.kill(pid, 0); return true } catch (error) { return error?.code === 'EPERM' }
+}
+
+/** Reads the panel port a profile's patch sets for the webserver entry. */
+export function portOf(patch) {
+  const block = /-\s*id:\s*webserver\b[\s\S]*?(?=\n\s*-\s*id:|\n?$)/.exec(patch)
+  const port = block ? /\bport:\s*(\d+)/.exec(block[0]) : null
+  return port ? Number(port[1]) : undefined
+}
+
+/** Lists the profiles in a DSH home that install the superagent bundle. */
+export function projects(dshHome) {
+  const directory = join(dshHome, 'profiles')
+  if (!existsSync(directory)) return []
+  const found = []
+  for (const name of readdirSync(directory).sort()) {
+    const profile = join(directory, name)
+    const manifest = join(profile, 'package.json')
+    if (!existsSync(manifest)) continue
+    let parsed
+    try { parsed = JSON.parse(readFileSync(manifest, 'utf8')) } catch { continue }
+    const installed = parsed.dependencies?.['dsh-superagent'] !== undefined
+    const bundled = Array.isArray(parsed.dsh?.profile?.bundles) && parsed.dsh.profile.bundles.includes('dsh-superagent')
+    if (!installed && !bundled) continue
+    const patchFile = join(profile, 'cordis.patch.yml')
+    const patch = existsSync(patchFile) ? readFileSync(patchFile, 'utf8') : ''
+    found.push({ name, directory: profile, port: portOf(patch), patchesSuperagent: /-\s*id:\s*dsh-superagent\b/.test(patch) })
+  }
+  return found
+}
+
+/** Lists the projects the service script currently hosts. */
+export function hosted(artifacts, dshHome) {
+  const control = join(artifacts, 'control', 'profiles')
+  if (!existsSync(control)) return []
+  const ports = new Map(projects(dshHome).map(project => [project.name, project.port]))
+  const running = []
+  for (const name of readdirSync(control).sort()) {
+    const pidFile = join(control, name, 'service.pid')
+    if (!existsSync(pidFile)) continue
+    const pid = Number(readFileSync(pidFile, 'utf8').trim())
+    if (alive(pid)) running.push({ project: name, pid, port: ports.get(name) })
+  }
+  return running
+}
+
+/** The newest log file of a project, or undefined when it has none. */
+export function newestLog(artifacts, project) {
+  if (!existsSync(artifacts)) return undefined
+  const prefix = `dsh-superagent-${project}-`
+  const logs = readdirSync(artifacts)
+    .filter(name => name.startsWith(prefix) && name.endsWith('.log'))
+    .map(name => ({ name, time: statSync(join(artifacts, name)).mtimeMs }))
+    .sort((a, b) => b.time - a.time)
+  return logs[0] ? join(artifacts, logs[0].name) : undefined
+}
+
+/** The panel URL a host printed into its log, token included. */
+export function panelOf(artifacts, project) {
+  const log = newestLog(artifacts, project)
+  if (!log) return undefined
+  return /https?:\/\/[^\s]+[?&]token=[^\s]+/.exec(readFileSync(log, 'utf8'))?.[0]
+}
+
+/** The default runner: the same Node that runs this script runs the service script. */
+export function scriptRunner(artifacts) {
+  const script = process.env.DSH_SWITCH_SERVICE ?? join(dirname(artifacts), 'scripts', 'dsh-superagent')
+  return args => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', windowsHide: true })
+}
+
+/**
+ * Stops the other hosted projects and starts this one.
+ *
+ * Throws before changing anything when the project is unknown, when it is not a
+ * superagent profile, or when its panel URL cannot be determined.
+ */
+export function switchProject(options, run, artifacts = options.artifacts ?? process.env.DSH_SWITCH_ARTIFACTS ?? join(CHECKOUT, '.artifacts')) {
+  const dshHome = options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const known = projects(dshHome)
+  const target = known.find(project => project.name === options.project)
+  if (!target) {
+    const names = known.map(project => project.name).join(', ') || 'none'
+    throw new Error(`No project profile "${options.project}" installs dsh-superagent. Known projects: ${names}. ` +
+      `Create one with: dsh plugin --profile ${options.project} add "link:<checkout>", then set a webserver port and a state directory in ${join(dshHome, 'profiles', options.project, 'cordis.patch.yml')}.`)
+  }
+  if (!target.patchesSuperagent) throw new Error(`The profile "${target.name}" installs dsh-superagent but its cordis.patch.yml does not name it. Add "- id: dsh-superagent" with a stateDir.`)
+  const url = options.url ?? (target.port ? `http://127.0.0.1:${target.port}` : undefined)
+  if (!url) throw new Error(`The profile "${target.name}" sets no webserver port in its cordis.patch.yml, so its panel URL is unknown. Add "port: <n>" under "- id: webserver", or pass --url.`)
+
+  const runner = run ?? scriptRunner(artifacts)
+  const stopped = []
+  for (const other of hosted(artifacts, dshHome)) {
+    if (other.project === target.name) continue
+    if (other.port === undefined) {
+      throw new Error(`${other.project} is hosted (PID ${other.pid}) but its panel port is unknown, so it cannot be stopped gracefully. ` +
+        `Run: node scripts/dsh-superagent stop --profile ${other.project} --url <url>`)
+    }
+    const result = runner(['stop', '--profile', other.project, '--url', `http://127.0.0.1:${other.port}`])
+    if (result.status !== 0) {
+      throw new Error(`Stopping ${other.project} failed (exit ${result.status ?? 'unknown'}): ${(result.stderr || result.stdout || '').trim() || String(result.error ?? '')}`)
+    }
+    stopped.push(other.project)
+  }
+
+  const started = runner(['start', '--profile', target.name, '--url', url])
+  const output = `${started.stdout ?? ''}${started.stderr ?? ''}`.trim()
+  if (started.status !== 0 && started.status !== 3) {
+    throw new Error(`Starting ${target.name} failed (exit ${started.status ?? 'unknown'}): ${output || String(started.error ?? '')}`)
+  }
+  return { project: target.name, url, stopped, panel: panelOf(artifacts, target.name), status: started.status ?? 0, output }
+}
+
+/** Parses the command line; exported so the tests can pin the messages. */
+export function parseArguments(argv) {
+  let project
+  let url
+  let json = false
+  let help = false
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]
+    if (argument === '--json') json = true
+    else if (argument === '--help' || argument === '-h') help = true
+    else if (argument === '--url') url = argv[++index]
+    else if (argument.startsWith('--url=')) url = argument.slice('--url='.length)
+    else if (argument.startsWith('-')) return { project, url, json, help, unknown: argument }
+    else if (project === undefined) project = argument
+    else return { project, url, json, help, unknown: argument }
+  }
+  return { project, url, json, help }
+}
+
+function usage() {
+  return `Usage: node scripts/switch-project <profile> [--url <url>] [--json]
+
+One DSH profile serves one project. This stops the service-hosted projects that
+are running and starts <profile>, then prints its panel URL.
+
+Exit codes: 0 switched (the host may be waiting for setup), 1 nothing changed.`
+}
+
+async function main(argv) {
+  const option = parseArguments(argv)
+  if (option.help) { console.log(usage()); return 0 }
+  if (option.unknown) { console.error(`Unknown argument: ${option.unknown}\n\n${usage()}`); return 1 }
+  if (!option.project) { console.error(usage()); return 1 }
+  try {
+    const result = switchProject({ project: option.project, url: option.url })
+    if (option.json) console.log(JSON.stringify(result, null, 2))
+    else {
+      console.log(result.stopped.length > 0 ? `Stopped ${result.stopped.join(', ')}.` : 'No other project was running.')
+      console.log(`Started ${result.project} at ${result.url}${result.status === 3 ? ' (waiting for setup)' : ''}.`)
+      if (result.panel) console.log(`Panel: ${result.panel}`)
+      console.log('One project runs at a time; switch again to run another.')
+    }
+    return 0
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    return 1
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await main(process.argv.slice(2))
+}

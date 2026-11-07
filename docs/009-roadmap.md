@@ -76,7 +76,10 @@ The P2 scope, in the order this session takes it.
   untime/admission, untime/work and skill/github parts state the untrusted-data rule, and 	ests/trust.spec.ts
   pins the gates down: a body that claims to be an explicit request, a human, or an administrator changes no decision,
   and no prompt in either role contains it verbatim.
-- [ ] Several repositories or projects.
+- [x] Several repositories or projects: one profile per project (its own state directory, Sources and panel port),
+  documented in 006, with `scripts/switch-project` stopping the service-hosted other projects before it starts the named
+  one and a test (`tests/switch-project.spec.ts`) covering the switch, the refusals and the port it cannot know; verified
+  live with two profiles on this machine.
 - [ ] Release engineering: semver, a CHANGELOG, a packed tarball installed with dsh plugin add <file>, and the
   install steps in 006 using it.
 - [ ] Feishu breadth: direct messages, unlisted chats, attachments and several chats, each with a test and documented

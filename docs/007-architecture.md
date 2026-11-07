@@ -425,6 +425,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/commands.spec.ts` | CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls |
 | `tests/feishu-digest.spec.ts` | The Feishu daily digest's text and its once-a-day send, through a fake Source context |
 | `tests/trust.spec.ts` | The trust boundary: a message body changes no gate decision, and the prompts keep saying bodies are data |
+| `tests/switch-project.spec.ts` | Switching projects: only the named profile starts, the others stop, and a port it cannot know is refused before anything stops |
 | `tests/feishu-read.spec.ts`, `tests/github-read.spec.ts` | Feishu and GitHub reads |
 | `tests/admission-context.spec.ts`, `tests/feishu-image.spec.ts` | The Thread window of assessments, and Feishu image reads |
 | `tests/assessment.spec.ts` | What the MasterAssessor keeps per Eval, and when it lets go |
