@@ -100,6 +100,8 @@ export const ExecutorConfigSchema = z.object({
   blockedCommands: z.array(CommandNameSchema).default([]),
   /// Local workspaces and remote repositories; a Ticket belongs to one project and is checked out inside it.
   projects: ProjectsSchema.default([]),
+  /// How long a finished Ticket's worktree and branch stay for inspection; 0 keeps them.
+  worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({

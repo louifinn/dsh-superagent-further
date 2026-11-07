@@ -13,4 +13,5 @@ export const LIMITS = {
   projectPath: 500,
   projectRepository: 200,
   projectBranch: 200,
+  worktreeKeepDays: { min: 0, max: 365 },
 } as const

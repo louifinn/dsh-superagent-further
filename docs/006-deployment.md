@@ -294,6 +294,24 @@ node scripts/switch-project project-a
 The application host is one profile too, so switching between service-hosted projects does not touch a project the application hosts; quit the application (or unload the plugin) before starting that project's service, as [Install into an existing profile](#install-into-an-existing-profile) describes.
 
 
+### Finished worktrees and disk hygiene
+
+Every Ticket gets its own checkout, so a long-lived deployment grows unless old ones go away. The **Execution** settings page has **Keep finished Tickets' worktrees** (`worktreeKeepDays`, default 7): a worktree and its `agent/` branch are removed once the Ticket has been ended at least that many days. Set `0` to keep them.
+
+The host reclaims them itself: once at start, after each Ticket ends, and every six hours while it runs. It never touches a directory outside `<stateDir>/work`, and never one still used by an open Ticket. The removal is logged as `removed the worktree of Ticket … at …`. The database keeps the Ticket, so the panel still shows what the work did; only the checkout and the local branch go.
+
+To see what a stopped host would remove, or to clean a machine by hand, use the script (it checks the database to skip open Tickets, and only previews until `--apply`):
+
+```sh
+node scripts/clean-worktrees --profile superagent --older-than 7
+# would remove C:\Users\…\.dsh\state\superagent\work\add-login-abc123 (agent/add-login-abc123)
+node scripts/clean-worktrees --profile superagent --older-than 7 --apply
+```
+
+The `--state-dir` option names the directory directly, `--json` prints a machine-readable summary, and on Windows use `node scripts\clean-worktrees.cmd …` or `node scripts\clean-worktrees …`.
+
+The checkout keeps no runtime data: the state directory, the database, the worker environment and the worktrees live under `stateDir`, and the analysis of a real run (logs, reports) belongs in `.artifacts/`, which is ignored. The service keeps the newest twenty `.artifacts/dsh-superagent-<profile>-*.log` files when it starts; other files there are yours to keep or delete, so `.artifacts/tmp/` is a scratch area, not a backup.
+
 ### Hourly check
 
 Create the hourly check in the DeepSeek Harness profile you normally use, not in `superagent`. It must keep running when the agent service is down. Ask an agent in that profile to create an hourly schedule using this prompt, with the checkout path filled in:

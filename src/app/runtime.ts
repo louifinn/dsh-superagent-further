@@ -47,6 +47,8 @@ import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
+import { reclaimWorktrees } from './worktrees.ts'
+import { setTimeout as delay } from 'node:timers/promises'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
@@ -169,6 +171,8 @@ export class Runtime extends Service implements SourceHost {
           if (ended && setup.configured()) {
             const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
             for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
+            // A worktree past its retention no longer needs to exist; a fresh one is kept so a person can inspect it.
+            void runtime.reclaimFinishedWorktrees()
           }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
@@ -240,6 +244,20 @@ export class Runtime extends Service implements SourceHost {
     this.passes.start()
     this.effects.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
+    void this.cleanupLoop()
+  }
+  /** Removes the worktrees and `agent/` branches of Tickets that ended past the retention; failures are logged, never fatal. */
+  private async reclaimFinishedWorktrees(): Promise<void> {
+    try {
+      const done = await reclaimWorktrees({ store: this.store, settings: this.store.settings(), stateDir: this.machine.stateDir })
+      for (const item of done) if (item.removed) this.ctx.logger.info('dsh-superagent: removed the worktree of Ticket %s at %s', item.ticketId, item.directory)
+    } catch (error) { this.ctx.logger.warn('dsh-superagent: worktree cleanup failed: %s', String(error)) }
+  }
+  private async cleanupLoop(): Promise<void> {
+    while (!this.stopped.signal.aborted) {
+      await this.reclaimFinishedWorktrees()
+      try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
+    }
   }
   private httpHost(): HttpHost {
     const runtime = this

@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+/**
+ * Lists or removes the worktrees and `agent/` branches of finished Tickets under a profile's state directory.
+ * The application reclaims them itself after the configured retention; this script is for an operator who wants
+ * to inspect first, or to clean a machine whose host is stopped. It never touches a directory outside
+ * `<stateDir>/work`.
+ *
+ * Usage: scripts/clean-worktrees [--profile <name>] [--state-dir <path>] [--older-than <days>] [--apply] [--json]
+ * Defaults: profile `superagent` (or $DSH_SUPERAGENT_PROFILE), stateDir from the profile patch, 7 days, preview only.
+ */
+import { execFileSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
+
+const DAY = 24 * 60 * 60_000
+
+function help() {
+  return [
+    'Usage: scripts/clean-worktrees [options]',
+    '',
+    '  --profile <name>     DSH profile to read the state directory from (default: superagent)',
+    '  --state-dir <path>   state directory to clean (default: from the profile patch)',
+    '  --older-than <days>  remove worktrees of Tickets that ended this many days ago (default: 7)',
+    '  --apply              actually remove them; without it the script only prints what it would do',
+    '  --json               print a JSON summary',
+    '  --help               print this help',
+  ].join('\n')
+}
+
+function option(name, fallback) {
+  const index = process.argv.indexOf(name)
+  return index === -1 ? fallback : process.argv[index + 1]
+}
+
+function stateDirectory(profile) {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+  const patch = join(home, 'profiles', profile, 'cordis.patch.yml')
+  if (existsSync(patch)) {
+    const lines = readFileSync(patch, 'utf8').split(/\r?\n/)
+    const start = lines.findIndex(line => line.trim() === '- id: dsh-superagent')
+    if (start !== -1) {
+      for (const line of lines.slice(start + 1)) {
+        if (/^\s*- id:/.test(line)) break
+        const found = line.match(/^\s*stateDir:\s*(.+)$/)
+        if (found) return resolve(found[1].trim().replace(/^['"]|['"]$/g, ''))
+      }
+    }
+  }
+  return join(home, 'state', profile)
+}
+
+/** Worktrees are `<work>/<name>` or `<work>/<project>/<name>`, so one level below the work root is enough. */
+function candidates(root) {
+  const found = []
+  const visit = (directory, depth) => {
+    if (depth > 2 || !existsSync(directory)) return
+    if (depth > 0 && existsSync(join(directory, '.git'))) { found.push(directory); return }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) visit(join(directory, entry.name), depth + 1)
+    }
+  }
+  visit(root, 0)
+  return found
+}
+
+function git(directory, ...args) {
+  return execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+/** Directories that an open Ticket still uses; those are never removed, however old the checkout is. */
+async function openDirectories(stateDir) {
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(stateDir, 'orchestrator.sqlite'), { readOnly: true })
+    const open = new Set()
+    for (const row of db.prepare('SELECT value FROM ticket').all()) {
+      const ticket = JSON.parse(row.value)
+      if (!ticket.ended && ticket.execution?.directory) open.add(resolve(ticket.execution.directory))
+    }
+    db.close()
+    return open
+  } catch {
+    return new Set()
+  }
+}
+
+async function main() {
+  if (process.argv.includes('--help')) { console.log(help()); return 0 }
+  const profile = option('--profile', process.env.DSH_SUPERAGENT_PROFILE || 'superagent')
+  const stateDir = resolve(option('--state-dir', stateDirectory(profile)))
+  const days = Number(option('--older-than', '7'))
+  const apply = process.argv.includes('--apply')
+  const json = process.argv.includes('--json')
+  if (!Number.isFinite(days) || days < 0) { console.error(`--older-than needs a number of days, got ${option('--older-than')}`); return 2 }
+  const root = join(stateDir, 'work')
+  if (!existsSync(root)) { console.error(`no worktrees: ${root} does not exist`); return 1 }
+  const open = await openDirectories(stateDir)
+  const now = Date.now()
+  const done = []
+  for (const directory of candidates(root)) {
+    if (!resolve(directory).startsWith(resolve(root) + sep)) continue
+    if (open.has(resolve(directory))) continue
+    const result = { directory, branch: '', ageDays: 0, removed: false, error: '' }
+    try {
+      result.branch = git(directory, 'rev-parse', '--abbrev-ref', 'HEAD')
+      result.ageDays = Math.floor((now - statSync(directory).mtimeMs) / DAY)
+      if (result.ageDays < days) continue
+      const clone = resolve(directory, git(directory, 'rev-parse', '--git-common-dir'))
+      if (apply) {
+        git(clone, 'worktree', 'remove', '--force', directory)
+        if (result.branch.startsWith('agent/')) {
+          try { git(clone, 'branch', '-D', result.branch) } catch { /* the branch may already be gone */ }
+        }
+        result.removed = true
+      }
+    } catch (error) {
+      result.error = String(error.stderr ?? error.message).trim().split('\n')[0]
+    }
+    done.push(result)
+  }
+  if (json) console.log(JSON.stringify({ stateDir, olderThanDays: days, applied: apply, worktrees: done }, null, 2))
+  else {
+    for (const item of done) {
+      const verb = apply ? (item.removed ? 'removed' : 'failed ') : 'would remove'
+      console.log(`${verb} ${item.directory}${item.branch ? ` (${item.branch})` : ''}${item.error ? ` — ${item.error}` : ''}`)
+    }
+    console.log(done.length === 0 ? `nothing under ${root} is ${days} days old` : `${done.length} worktree(s) under ${root}`)
+    if (done.length > 0 && !apply) console.log('Run again with --apply to remove them.')
+  }
+  return done.some(item => item.error) ? 1 : 0
+}
+
+process.exitCode = 0
+main().then(code => { process.exitCode = code }, error => { console.error(error); process.exitCode = 1 })

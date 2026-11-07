@@ -343,6 +343,8 @@ const TEXT = {
   directionEvidence: ['方向证据：{evidence}', 'Evidence: {evidence}'],
   maxWorkers: ['并行工单数', 'Concurrent Tickets'],
   maxWorkersHint: ['超过并发上限的工单排队等待。', 'Tickets beyond the limit wait in a queue.'],
+  worktreeKeepDays: ['保留已结束工单的工作树', 'Keep finished Tickets’ worktrees'],
+  worktreeKeepDaysHint: ['工单结束这么多天后，自动删除它的 worktree 和 agent/ 分支，以便有人查看结果又不让磁盘无限增长；0 表示一直保留。', 'After this many days past a Ticket’s end, remove its worktree and agent/ branch, so a person can still inspect the result without growing the disk forever; 0 keeps them.'],
   'basis.sender': ['发起人', 'Sender'],
   'basis.addressed': ['点名方式', 'Addressed by'],
   'addressed.mention': ['@ 智能体', 'Mention'],
