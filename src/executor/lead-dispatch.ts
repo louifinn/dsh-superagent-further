@@ -11,6 +11,10 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 /** DSH's subagent service, the part a Lead uses to start an executor. */
 export interface SubagentService {
   startActivation(spec: ActivationSpec): Promise<Activation>
+  /** Wakes a durable direct child (or cold-resumes it) instead of starting a second one with the same id. */
+  sendMessage(sender: Agent, targetId: string, content: [{ readonly type: 'text'; readonly text: string }],
+    options: { readonly signal: AbortSignal }): Promise<unknown>
+  interrupt?(targetId: string, authority: { readonly kind: 'ancestor'; readonly agent: Agent }): void
 }
 
 /** One managed activation, DSH's `SubagentActivation` as the Executor sees it. */
@@ -72,7 +76,18 @@ export class LeadActivations {
   async start(spec: ActivationSpec): Promise<Activation> {
     const service = this.service()
     if (!service) throw new Error('This host has no subagent service, so a Lead cannot start an executor; use executor.orchestration root')
-    const activation = await service.startActivation(spec)
+    let activation: Activation
+    try {
+      activation = await service.startActivation(spec)
+    } catch (error) {
+      // A Ticket that runs again (a retry, or a launch after a restart) keeps its durable child Session; its id is the
+      // reserved worker id, so starting a second child with it is refused. Wake the existing child with this message instead.
+      if (!/already exists/.test(String(error))) throw error
+      await service.sendMessage(spec.request.parent, spec.childId, spec.request.prompt, { signal: spec.signal })
+      activation = { childId: spec.childId, result: Promise.resolve(), dispose: async () => {
+        service.interrupt?.(spec.childId, { kind: 'ancestor', agent: spec.request.parent })
+      } }
+    }
     this.running.set(activation.childId, activation)
     // A settled activation needs no disposal; a failed one is disposed the same way, and its failure is the Lead's to see.
     void activation.result.catch(() => {}).then(() => { if (this.running.get(activation.childId) === activation) this.running.delete(activation.childId) })
