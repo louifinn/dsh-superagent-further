@@ -92,6 +92,7 @@ export class Tickets extends EnginePart {
       : outcomes.every(item => item === 'merged' || item === 'closed' || item === 'completed') ? 'done' : 'partial'
     const by = tickets.some(ticket => ticket.ended!.by === 'human') ? 'human' : 'executor'
     this.repo.requests.save({ ...request, ended: { at: this.now(), by, outcome } })
+    this.emit('request.ended', { requestId, by, outcome })
   }
   /**
    * Subscribes an open ticket to `thread` and records it in `ticket.follows` (`own` when opened by the ticket).

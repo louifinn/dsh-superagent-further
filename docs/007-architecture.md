@@ -336,6 +336,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
 | `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, and 13 to 14 groups each existing Ticket under a Request of its own |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
+| `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
 | `src/app/effects.ts` | Effects |

@@ -35,6 +35,7 @@ import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
+import { requestResultNotices } from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -166,11 +167,22 @@ export class Runtime extends Service implements SourceHost {
           const followed = !this.quiet && (event.type === 'trigger.received' || event.type === 'ticket.resumed' || event.type === 'trigger.followup')
           const followup = followed ? followupNotice(store, sources, event.data.triggerId) : undefined
           if (followup) sessions.relay(followup.id, followup.text)
+          // Report a Request whose Tickets all ended once, instead of once per Ticket.
+          if (event.type === 'request.ended') {
+            const request = store.requests.get(event.data.requestId)
+            const first = request ? store.tickets.get(request.ticketIds[0] ?? '') : undefined
+            const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
+            if (request) for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+          }
           // Notify the ticket's conversations whenever it ends via a pull request.
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
           if (ended && setup.configured()) {
             const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
-            for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
+            const requestRecord = ended.requestId ? store.requests.get(ended.requestId) : undefined
+            // A Request delivered by several Tickets reports once, when the Request ends (see the request.ended branch below).
+            if (!requestRecord || requestRecord.ticketIds.length === 1) {
+              for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
+            }
             // A worktree past its retention no longer needs to exist; a fresh one is kept so a person can inspect it.
             void runtime.reclaimFinishedWorktrees()
           }

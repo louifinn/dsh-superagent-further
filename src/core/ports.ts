@@ -99,6 +99,8 @@ export interface DomainEvents {
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
   'ticket.resumed': { ticketId: string; triggerId: string }
   'ticket.ended': { ticketId: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
+  /** A Request all of whose Tickets ended; the one place its result is reported. */
+  'request.ended': { requestId: string; by: 'human' | 'executor'; outcome: 'done' | 'partial' | 'stopped' }
   'assignment.started': { ticketId: string; assignmentId: string }
   'assignment.ended': { ticketId: string; assignmentId: string; reason: string }
   'thread.subscribed': { threadKey: string; ticketId: string }

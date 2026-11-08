@@ -32,7 +32,7 @@ export const AssessmentSchema = z.object({
     project: z.string().trim().min(1).max(40).optional(),
     title: z.string().trim().min(1).max(160).optional(),
     after: z.array(z.number().int().min(0)).max(8).optional(),
-  })).max(8).optional().describe('One entry per delivery unit when the request splits across projects, with the project that owns each checkout; `after` names earlier indexes.'),
+  })).max(8).optional().describe('One entry per delivery unit when the request splits across projects; a unit may belong to any registered project, even one other than the Trigger repository; `after` names earlier indexes.'),
   scope: z.string().max(1500),
   intent_evidence: z.string().trim().min(1).max(700).nullish().describe('For acceptance: the quotes that establish the three facts.'),
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),

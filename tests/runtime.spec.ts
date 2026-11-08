@@ -1859,10 +1859,18 @@ it('splits an accept into one Ticket per project, and starts the second once the
   await runtime.idle()
   expect(runtime.store.tickets.get(second!.id)!.assignments).toHaveLength(1)
   expect(agents.has(secondChild)).toBe(true)
+  const sent: { id: string; kind: string; text: string }[] = []
+  const outbox = vi.spyOn(runtime.outbox, 'send').mockImplementation((message) => { sent.push(message) })
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(secondChild) } as never)
   await runTool(secondChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
   await runtime.idle()
   expect(runtime.store.requests.get(request.id)!.ended).toMatchObject({ outcome: 'done' })
+  // A Request delivered by several Tickets reports once, when the Request ends, instead of once per Ticket.
+  const results = sent.filter(message => message.kind === 'notice')
+  expect(results).toHaveLength(1)
+  expect(results[0]!.text).toContain('App part')
+  expect(results[0]!.text).toContain('Lib part')
+  outbox.mockRestore()
 })
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
   const settings = runtime.store.settings()
