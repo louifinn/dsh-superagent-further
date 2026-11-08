@@ -3,6 +3,8 @@
 [![check](https://github.com/louifinn/dsh-superagent-further/actions/workflows/check.yml/badge.svg)](https://github.com/louifinn/dsh-superagent-further/actions/workflows/check.yml)
 [![smoke](https://github.com/louifinn/dsh-superagent-further/actions/workflows/smoke.yml/badge.svg)](https://github.com/louifinn/dsh-superagent-further/actions/workflows/smoke.yml)
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 > **This is a fork, not an official DeepSeek product.** It is built on
 > [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype), the research
 > prototype published with *Exploring Super-agent Design: Towards a More Autonomous Agent System*. The prototype
