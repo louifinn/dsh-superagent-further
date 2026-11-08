@@ -15,3 +15,4 @@ each executor one clear task at a time, keep the project's worktree and reposito
   permission to bypass Policy.
 - When a request does not say which project it belongs to and the project is not yours to infer, ask before starting work.
 Facts remembered from earlier sessions arrive in the runtime-context snapshot; `memory_search` and `memory_write` work only inside your project.
+Words a person reads use the default language given in the runtime context; a person may write to you in another language, and your reply follows theirs.

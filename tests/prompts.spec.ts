@@ -7,7 +7,7 @@ import { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, pro
 import { USER_ERRORS, UserError } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema, policyVersion } from '../src/policy.ts'
-import { guides, handoffPolicy, mainAdmissionPolicy, masterPrompt, sharedPrompt, workerPrompt } from '../src/app/context.ts'
+import { guides, handoffPolicy, leadPrompt, mainAdmissionPolicy, masterPrompt, sharedPrompt, workerPrompt } from '../src/app/context.ts'
 import { promptFile } from '../src/app/skill-files.ts'
 import { packagePath } from '../src/infra/paths.ts'
 import type { Variable } from '../src/app/execution-environment.ts'
@@ -256,5 +256,15 @@ describe('overrides of built-in parts', () => {
       expect(promptsOf(store).compose(defaultPrompts(), 'worker')).toContain('an empty value means that part is not configured here). '
         + `The prepare command of a ticket directory reads the same variables:\n${ENVIRONMENT_LINE}`)
     })
+  })
+})
+
+describe('default language', () => {
+  it('states the default language and the reply boundary where replies happen', () => {
+    for (const text of [masterPrompt, leadPrompt]) expect(text).toContain('default language')
+    expect(guides.work).toContain('default language')
+    expect(guides.replies).toContain('language of the message')
+    expect(guides.work).toContain('language of that question')
+    expect(guides.work).toContain("repository's established language")
   })
 })

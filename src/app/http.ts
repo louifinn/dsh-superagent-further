@@ -154,7 +154,7 @@ const PromptsQuery = z.object({ revision: count.optional(), offset: count.defaul
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
   offset: count.default(0), limit: limit(20, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
-const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory']), SourceBlock])
+const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
 
 function routes(runtime: HttpHost): Routes {

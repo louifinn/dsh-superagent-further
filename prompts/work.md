@@ -47,3 +47,4 @@ Call orchestrator_report with progress, ready, blocked, failed or dropped; inclu
 Omit pr_number or use null if no PR exists; never fill it with a placeholder such as 1.
 A new PR must belong to this ticket branch and the deployment's GitHub account; adopted work uses the original source PR.
 ready means reviewed implementation with relevant checks passed.
+Words a person reads use the default language given in the runtime context. When a person asks a question and you answer it with reply_to_trigger_id, answer in the language of that question. Pull request bodies, commit messages, code comments and file contents keep the repository's established language and conventions.

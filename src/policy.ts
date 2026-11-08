@@ -124,6 +124,10 @@ export const MemoryConfigSchema = z.object({
   /// Automatic memories drop after this many days; memories can also carry their own expiry.
   retentionDays: z.number().int().min(LIMITS.memoryKeepDays.min).max(LIMITS.memoryKeepDays.max).default(30),
 }).strict()
+/** The default language for words a person reads (docs/006 "Language"); free text so any language name works. */
+export const LanguageConfigSchema = z.object({
+  default: z.string().trim().min(1).max(LIMITS.languageName).default('简体中文'),
+}).strict()
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
   sources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).default({}),
@@ -131,10 +135,12 @@ export const SettingsSchema = z.object({
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
   memory: MemoryConfigSchema.default(() => MemoryConfigSchema.parse({})),
+  language: LanguageConfigSchema.default(() => LanguageConfigSchema.parse({})),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
 export type MemoryConfig = Settings['memory']
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | `source:${string}`
+export type LanguageConfig = Settings['language']
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 

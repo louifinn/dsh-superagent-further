@@ -17,6 +17,7 @@ import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { leadTools } from './tools/lead.ts'
+import { languageContext } from './language.ts'
 import { memoryTools } from './tools/memory.ts'
 import type { Store } from './store.ts'
 import type { Project } from '../projects.ts'
@@ -54,6 +55,10 @@ export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-super
 export const MEMORY_CONTEXT = 'dsh-superagent-memory'
 /** After the harness's own runtime contexts, whose orders reach 210 (dsh-system-prompt `CONTEXT_ORDERS`). */
 export const MEMORY_CONTEXT_ORDER = 300
+/** The runtime-context contribution that carries the operator's default language: volatile, so it must not live in the system prompt. */
+export const LANGUAGE_CONTEXT = 'dsh-superagent-language'
+/** After the memory snapshot, whose order is 300. */
+export const LANGUAGE_CONTEXT_ORDER = 310
 /** The Session id of a project's Lead: one persistent Session per registered project (docs/010-project-orchestrator.md). */
 export const leadSessionId = (projectId: string): string => `lead-${projectId}`
 /** The project a Session id names as its Lead, if it is a Lead Session's id. */
@@ -308,6 +313,13 @@ export class Sessions {
         text: () => master ? host.store.memories.promptText() : project ? host.store.memories.promptText(project.id) : '',
       }))
     }
+    // The default language is operator configuration that can change at any time; like memory it travels in the runtime-context
+    // snapshot, so a change appends a small user message instead of rewriting the system prompt.
+    binding.disposers.push(agent.ctx.systemPrompt.context({
+      name: LANGUAGE_CONTEXT,
+      order: LANGUAGE_CONTEXT_ORDER,
+      text: () => languageContext(host.store.settings()),
+    }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
       binding.scope = scope

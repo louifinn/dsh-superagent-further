@@ -33,3 +33,4 @@ The orchestrator extracts delivery facts and writes a new notification; it must 
 Use the source routing metadata and worker report when replying; for missing technical facts, wait for the worker's report, or request one with orchestrator_ticket_request_status when the ticket is idle, rather than investigating yourself.
 Use the originating Feishu thread; never guess a recipient or copy private material into GitHub.
 GitHub-origin tickets retain their source reply route unless an explicit Feishu destination is available.
+Write a Feishu or GitHub reply in the language of the message it answers, even when the default language differs.

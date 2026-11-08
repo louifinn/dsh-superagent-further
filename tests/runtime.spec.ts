@@ -45,7 +45,7 @@ let tools: Map<string, Map<string, RegisteredTool>>
 type Section = { name: string; text: (context: { signal?: AbortSignal }) => string; interpolate?: boolean }
 let sections: Map<string, Section>
 /** The runtime-context contributions (memory) each Session registered, keyed by session id. */
-let contexts: Map<string, { name: string; order: number; text: string | ((context: unknown) => string) }>
+let contexts: Map<string, { name: string; order: number; text: string | ((context: unknown) => string) }[]>
 type Guard = (execution?: { name: string; arguments: unknown }) => string | undefined
 let guards: Map<string, Guard>
 let restricts: Map<string, unknown[]>
@@ -210,8 +210,8 @@ beforeEach(async () => {
         section: (spec: Section) => { sections.set(sessionId, spec); return () => {} },
         // Memory registers as a runtime context, which DSH renders into a small appended snapshot instead of the prompt.
         context: (spec: { name: string; order: number; text: string | ((context: unknown) => string) }) => {
-          contexts.set(sessionId, spec)
-          return () => { contexts.delete(sessionId) }
+          contexts.set(sessionId, [...contexts.get(sessionId) ?? [], spec])
+          return () => { contexts.set(sessionId, (contexts.get(sessionId) ?? []).filter(entry => entry !== spec)) }
         },
       })
       const inbox = { nextTurn: [] as UserMessage[], nextStep: [] as UserMessage[],
@@ -407,9 +407,19 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(runtime.store.memories.promptText()).toContain(ticket.title)
   // Memory travels in the runtime-context snapshot, not the system prompt: a change appends a small snapshot instead of
   // rewriting (and re-caching) the whole prompt.
-  const memoryContext = contexts.get(runtime.masterId)
-  expect(memoryContext?.name).toBe('dsh-superagent-memory')
-  expect(typeof memoryContext?.text === 'function' ? memoryContext.text({}) : memoryContext?.text).toContain(ticket.title)
+  const masterContexts = contexts.get(runtime.masterId) ?? []
+  const memoryContext = masterContexts.find(entry => entry.name === 'dsh-superagent-memory')
+  expect(memoryContext).toBeDefined()
+  expect(typeof memoryContext!.text === 'function' ? memoryContext!.text({}) : memoryContext!.text).toContain(ticket.title)
+  // The operator's default language is operator configuration; like memory it is a runtime context, and a change on the
+  // panel applies to the next model request without a restart or a plugin reload.
+  const languageEntry = masterContexts.find(entry => entry.name === 'dsh-superagent-language')
+  expect(languageEntry).toBeDefined()
+  const languageText = () => typeof languageEntry!.text === 'function' ? languageEntry!.text({}) : languageEntry!.text
+  expect(languageText()).toContain('简体中文')
+  const beforeLanguage = runtime.store.settings()
+  runtime.store.saveSettings({ ...beforeLanguage, language: { default: 'English (US)' } })
+  expect(languageText()).toContain('English (US)')
   expect(sections.get(runtime.masterId)?.text({})).not.toContain('## Memory')
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])

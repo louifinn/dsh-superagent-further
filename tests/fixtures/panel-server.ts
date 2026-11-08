@@ -13,7 +13,7 @@ import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, Source
   TicketRow, TicketStage,
   TriggerRow } from '../../src/client/api.ts'
 import { SETUP_FIELDS } from '../../src/deployment.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema } from '../../src/policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema } from '../../src/policy.ts'
 import { SetupError, type SetupCode } from '../../src/setup.ts'
 import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
 import { githubChannel } from '../../src/sources/github-trigger.ts'
@@ -176,7 +176,8 @@ const settingsView = (): ApiResponse<'GET settings'> => ({
   blocks: { policy: { value: server.settings.policy, revision: server.revisions.policy ?? 0 },
     eval: { value: server.settings.eval, revision: server.revisions.eval ?? 0 },
     executor: { value: server.settings.executor, revision: server.revisions.executor ?? 0 },
-    memory: { value: server.settings.memory, revision: server.revisions.memory ?? 0 } },
+    memory: { value: server.settings.memory, revision: server.revisions.memory ?? 0 },
+    language: { value: server.settings.language, revision: server.revisions.language ?? 0 } },
   sources: sourceSettings(),
   environment: { root: '/srv/dsh-superagent/work', variables: [
     { owner: 'executor', enabled: true, variables: [{ key: 'DSH_SUPERAGENT_DIR', description: { zh: '工单的执行目录',
@@ -265,7 +266,7 @@ function initial(): PanelServer {
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
-    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0 },
+    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 },
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },
       defaults: defaultPrompts(), parts: Object.entries(builtInParts()).map(([key, part]) => ({ key, ...part, base: builtInBase(part.text) })),
@@ -388,11 +389,12 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'PUT settings/:block': { body: true, answer: ({ params: { block }, body }) => {
     const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
-    if (!['policy', 'eval', 'executor', 'memory'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     if (body.revision !== (server.revisions[block] ?? 0)) return refuse(409, 'Settings changed. Reload before saving.')
     let restarting = false
     if (block === 'memory') server.settings = { ...server.settings, memory: MemoryConfigSchema.parse(body.value) }
+    else if (block === 'language') server.settings = { ...server.settings, language: LanguageConfigSchema.parse(body.value) }
     else if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(body.value) }
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(body.value) }
     else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(body.value) }

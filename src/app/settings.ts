@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -30,7 +30,7 @@ interface Block {
   merge(settings: SettingsValue, value: unknown, id: string): SettingsValue
   guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin): void
 }
-const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'source', Block> = {
+const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'source', Block> = {
   policy: {
     parse: (value, sources) => {
       const policy = PolicyConfigSchema.parse(value)
@@ -51,6 +51,14 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'source', Block
     // Memory behavior is operator configuration; a tool Session must not switch remembering or injection off.
     guard: (current, candidate, origin) => {
       if (origin !== 'panel' && JSON.stringify(current.memory) !== JSON.stringify(candidate.memory)) throw new UserError('panelOnlyMemory')
+    },
+  },
+  language: {
+    parse: value => LanguageConfigSchema.parse(value),
+    merge: (settings, value) => ({ ...settings, language: value as SettingsValue['language'] }),
+    // The default language is operator configuration; a tool Session must not change what people read.
+    guard: (current, candidate, origin) => {
+      if (origin !== 'panel' && JSON.stringify(current.language) !== JSON.stringify(candidate.language)) throw new UserError('panelOnlyLanguage')
     },
   },
   source: {
@@ -127,6 +135,7 @@ export class Settings {
       eval: { revision: revision('eval'), value: settings.eval },
       executor: { revision: revision('executor'), value: settings.executor },
       memory: { revision: revision('memory'), value: settings.memory },
+      language: { revision: revision('language'), value: settings.language },
       policy: { revision: revision('policy'), rules: rules.map(rule => ({ id: rule.id, name: rule.name, enabled: rule.enabled })),
         allowed: Object.fromEntries(Object.entries(parts).map(([id, part]) => [id, part.allowed.length])), read: 'settings/policy' },
       sources: sources.instances(settings).map(({ id, kind, enabled, installed }) =>
@@ -142,7 +151,7 @@ export class Settings {
     const settings = store.settings(), id = block.startsWith('source:') ? block.slice('source:'.length) : undefined
     const instance = id === undefined ? undefined : sources.instances(settings).find(item => item.id === id)
     const value = block === 'pause' ? { paused: settings.paused } : block === 'policy' || block === 'eval' || block === 'executor'
-      || block === 'memory' ? settings[block]
+      || block === 'memory' || block === 'language' ? settings[block]
       : instance ? { enabled: instance.enabled, config: instance.config } : undefined
     if (value === undefined) throw new UserError('unknownBlock', { block })
     return { block, revision: store.blockRevision(block as SettingsSave), value }

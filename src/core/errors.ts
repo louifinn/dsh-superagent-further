@@ -37,6 +37,7 @@ export const USER_ERRORS = {
   panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands) can only be changed in the management panel'],
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
   panelOnlyMemory: ['refused', 'Memory behavior can only be changed in the management panel'],
+  panelOnlyLanguage: ['refused', 'The default language can only be changed in the management panel'],
   setupComplete: ['refused', 'Setup is complete'],
   modelUnavailable: ['refused', 'The {block} model is not available: {error}'],
   promptTooLong: ['refused', 'Prompt configuration exceeds {limit} characters'],

@@ -125,6 +125,18 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   expect(store.settings().executor.projects).toEqual(projects)
 })
 
+it('saves the default language from the panel only, and the block reads it back', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const revision = store.blockRevision('language')
+  await expect(settings.save('language', { default: 'English (US)' }, revision, 'tool')).rejects.toThrow(/management panel/)
+  expect(store.settings().language).toEqual({ default: '简体中文' })
+  const saved = await settings.save('language', { default: 'English (US)' }, revision, 'panel')
+  expect(saved.saved).toBe(true)
+  expect(store.settings().language).toEqual({ default: 'English (US)' })
+  expect(settings.block('language').value).toEqual({ default: 'English (US)' })
+})
+
 it('saves Memory behavior from the panel only, and the change applies without a restart', async () => {
   h = await startRuntime()
   const { settings, store } = h.runtime

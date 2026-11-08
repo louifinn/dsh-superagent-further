@@ -360,6 +360,12 @@ Setup must succeed before polling or work starts. Overview lists missing require
    List personal CLIs, such as one signed in to your own account, as blocked commands.
 4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
 
+### Language
+
+Settings → Language holds one free-text value, the default language for words a person reads (the `language` settings block; panel-only, revisioned, and listed in that tab's history). Any language name works — for example `简体中文`, `繁體中文`, `English` or `日本語`. Every decorated Session carries it in the runtime-context snapshot (`dsh-superagent-language`), so saving a new language applies to the next model request without a restart or a plugin reload.
+
+The prompts add the boundaries around that default: the Orchestrator, a Lead and a Worker write what a person reads in this language; a Feishu or GitHub reply follows the language of the message it answers; pull request bodies, commit messages, code comments and file contents keep the repository's established language and conventions; structured fields do not change. This is a context constraint only — there is no language detection, no template layer and no post-generation check.
+
 ### Management API
 
 The panel uses a local HTTP API that agents can also call. `SETUP.md` uses it to save settings, and the service script reads `GET state`.

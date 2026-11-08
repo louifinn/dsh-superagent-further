@@ -10,7 +10,7 @@ type SourceSettings = SettingsVersion['settings']['sources'][string]
 export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'projectWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
-  | 'blockedCommands' | 'projects' | 'memoryEnabled' | 'memoryInjection' | 'memoryAutoWrite' | 'memoryLimits'
+  | 'blockedCommands' | 'projects' | 'memoryEnabled' | 'memoryInjection' | 'memoryAutoWrite' | 'memoryLimits' | 'language'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
   code: SettingsChangeCode; items?: string[]; from?: string | number | boolean; to?: string | number | boolean; name?: string; source?: string
@@ -88,6 +88,7 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   const changedLimits = (['pinnedLimit', 'recentLimit', 'promptChars', 'retentionDays'] as const)
     .filter(key => before.memory[key] !== after.memory[key])
   if (changedLimits.length) changes.push({ code: 'memoryLimits', items: changedLimits })
+  if (before.language.default !== after.language.default) changes.push({ code: 'language', from: before.language.default, to: after.language.default })
   for (const id of new Set([...Object.keys(before.sources), ...Object.keys(after.sources)])) changes.push(...sourceChanges(id, before.sources[id], after.sources[id], sources))
   return changes
 }

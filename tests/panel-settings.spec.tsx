@@ -143,7 +143,7 @@ it('lists the settings groups stages first, opens each stage\'s group from its s
   async () => {
   await mount()
   await click(tab(zh['tab.settings']))
-  expect(all('.dt-settings-link').map(link => link.textContent)).toEqual(['来源', '评估', '执行', '提示词', '部署'])
+  expect(all('.dt-settings-link').map(link => link.textContent)).toEqual(['来源', '评估', '执行', '语言', '提示词', '部署'])
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['term.source'])
   for (const [tab, group] of [['来源', '来源'], ['评估', '评估'], ['执行', '执行']] as const) {
     await click(find(tab, '[role="tab"]'))
@@ -174,4 +174,14 @@ it('registers a project with its local workspace and remote repository in the Ex
   await type(field<HTMLInputElement>(zh.projectRepository), 'owner/app')
   await click(zh.save)
   expect(server.settings.executor.projects).toEqual([{ id: 'app', name: 'App', workspace, repository: 'owner/app', branch: '' }])
+})
+
+it('saves the default language from its own Settings group', async () => {
+  await mount()
+  await click(zh['tab.settings'])
+  await click(find(zh['settingsGroup.language'], '.dt-settings-link'))
+  await type(field<HTMLInputElement>(zh.languageDefaultLabel), 'English (US)')
+  await click(zh.save)
+  expect(server.settings.language).toEqual({ default: 'English (US)' })
+  expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toContain('settings/language')
 })
