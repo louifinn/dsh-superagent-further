@@ -61,9 +61,9 @@ export function snapshot(host: ViewHost): Snapshot {
   }
   const settings = store.settings()
   const rules = new Map(settings.policy.rules.map(rule => [rule.id, rule.name]))
-  const configured = settings.sources.github?.config.repository
-  const primaryRepository = typeof configured === 'string' ? configured : undefined
   const projects = settings.executor.projects
+  // The GitHub Source has no repository setting: the first project is the deployment's primary repository.
+  const primaryRepository = projects[0]?.repository
   const project = (repository: string | undefined) => {
     const found = repository ? projectByRepository(projects, repository) : undefined
     return found ? { id: found.id, name: found.name } : undefined
