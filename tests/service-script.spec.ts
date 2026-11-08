@@ -33,7 +33,7 @@ setInterval(() => {}, 1000)
 `
 
 interface ProcessEntry { pid: number; name?: string; args?: string[] }
-interface Result { code: number; stdout: string; stderr: string }
+interface Result { code: number; stdout: string; stderr: string; killed: boolean }
 interface Mock {
   url: string
   requests: string[]
@@ -115,9 +115,14 @@ function runEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 function runWith(overrides: Record<string, string>, ...args: string[]): Promise<Result> {
+  // A cold Windows runner can spend over twenty seconds in the real CIM scan this suite asks for, so the helper waits
+  // longer than the per-test deadline; a run it had to kill must never look like a command that exited 0.
   return new Promise(resolve => execFile(process.execPath, [join(root, 'scripts', 'dsh-superagent'), ...args],
-    { env: runEnv(overrides), timeout: 20_000 },
-    (error, stdout, stderr) => resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr })))
+    { env: runEnv(overrides), timeout: 60_000 },
+    (error, stdout, stderr) => resolve({
+      code: typeof error?.code === 'number' ? error.code : error?.killed === true ? -1 : 0,
+      killed: error?.killed === true,
+      stdout, stderr })))
 }
 
 const run = (...args: string[]): Promise<Result> => runWith({}, ...args)
@@ -372,6 +377,7 @@ it('falls back to a forceful stop when the shutdown route is absent or the servi
 it('discovers the real process table without crashing when no fake table is injected', async () => {
   const result = await runWith({ DSH_SUPERAGENT_PROCESS_TABLE: '', DSH_SUPERAGENT_LAUNCH: '' },
     'status', '--profile', 'nosuchprofile12345', '--url', 'http://127.0.0.1:9')
+  expect(result.killed).toBe(false)
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
 }, 60_000)
@@ -406,8 +412,11 @@ it('prints usage for --help and exits 2 for invalid arguments', async () => {
 }, 20_000)
 it.runIf(process.platform === 'win32')('runs the Windows .cmd wrapper with the same exit codes as node', async () => {
   const result = await new Promise<Result>(resolve => execFile(process.env.ComSpec ?? 'cmd.exe',
-    ['/d', '/s', '/c', 'dsh-superagent.cmd status'], { cwd: join(root, 'scripts'), env: runEnv(), timeout: 20_000 },
-    (error, stdout, stderr) => resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr })))
+    ['/d', '/s', '/c', 'dsh-superagent.cmd status'], { cwd: join(root, 'scripts'), env: runEnv(), timeout: 60_000 },
+    (error, stdout, stderr) => resolve({
+      code: typeof error?.code === 'number' ? error.code : error?.killed === true ? -1 : 0,
+      killed: error?.killed === true,
+      stdout, stderr })))
   expect(result.code).toBe(1)
   expect(JSON.parse(result.stdout) as { pids: number[]; cwd: string }).toMatchObject({ pids: [], cwd: realpathSync(root) })
 }, 60_000)
