@@ -288,7 +288,8 @@ export class DshExecutor implements Executor {
       throw new Error(`The chosen project ${named.id} is not the project of the Trigger's repository ${repository}`)
     }
     const project = named ?? fromRepository
-    const placed: Ticket = project ? { ...ticket, project: project.id } : ticket
+    if (!project) throw new Error('This Ticket names no registered project; a request must be accepted with a project (Execution → Projects)')
+    const placed: Ticket = { ...ticket, project: project.id }
     return { ...placed, execution: ticketExecution(placed, outcome, settings, this.host.machine.stateDir) }
   }
   /**
@@ -368,7 +369,6 @@ export class DshExecutor implements Executor {
         const inputId = ticket?.undelivered[0]
         if (!ticket || !assignment || inputId === undefined) return
         // Waking an idle worker reserves a slot (including the extra slot reserved for human follow-ups).
-        const sessionId = workerSessionId(ticketId)
         if (!woken && !this.running(ticket)) {
           // A person's message wakes its worker ahead of new launches, in the slot kept for it.
           const person = ticket.undelivered.some(id => fromPerson(ticket.inputs.find(item => item.id === id)))
@@ -377,11 +377,6 @@ export class DshExecutor implements Executor {
         }
         const input = ticket.inputs.find(item => item.id === inputId)
         try {
-          // Recreate the worker session if it was externally deleted. A Lead-hosted child is owned by its Lead, not by this
-          // host as a root Session, so it is never recreated here.
-          if (!this.leadProject(ticket) && !this.leads.holds(sessionId) && !this.host.context.agents.get(sessionId as SessionId)) {
-            await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker')
-          }
           if (input) await this.deliverInput(ticket, assignment, input)
         } catch (error) {
           if (this.host.closing() || error instanceof Later) throw error
@@ -410,10 +405,9 @@ export class DshExecutor implements Executor {
     // A Lead-hosted child's Session is subagent-owned and refuses a root prompt, so the Lead steers the message instead;
     // after a restart the activation map is empty, but the durable child still takes a message from its Lead.
     const leadProject = this.leadProject(ticket)
-    if (leadProject) {
-      const lead = await this.host.sessions.ensureLead(leadProject.id, leadProject.workspace, `Lead · ${leadProject.name}`)
-      await this.leads.send(lead, workerSessionId(ticket.id), text, this.host.lifetime)
-    } else await this.host.sessions.prompt(workerSessionId(ticket.id), input.id, text, 'steer', live)
+    if (!leadProject) throw new Error('This Ticket names no registered project; a request must be accepted with a project (Execution → Projects)')
+    const lead = await this.host.sessions.ensureLead(leadProject.id, leadProject.workspace, `Lead · ${leadProject.name}`)
+    await this.leads.send(lead, workerSessionId(ticket.id), text, this.host.lifetime)
   }
   /** The project whose Lead hosts this Ticket's executor; a Ticket without a project runs as a root Session. */
   private leadProject(ticket: Ticket): Project | undefined {
@@ -524,16 +518,12 @@ export class DshExecutor implements Executor {
     const sessionId = workerSessionId(ticket.id)
     const settings = this.host.store.settings()
     const project = ticket.project === undefined ? undefined : projectOf(settings.executor.projects, ticket.project)
-    // A Lead-hosted executor starts as a subagent of its project's Lead Session; a Ticket without a project uses a root worker Session.
-    const leadMode = project !== undefined
-    const agent = leadMode ? undefined : await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
+    // A Lead-hosted executor starts as a subagent of its project's Lead Session; there is no root worker path.
+    if (!project) throw new Error('This Ticket names no registered project; a request must be accepted with a project (Execution → Projects)')
     if (!current()) return
     // The background work of the Assignment this one replaces stops first, so its end does not clear this one's message.
     await this.stopped(ticket.id)
     if (!current()) return
-    // A message put back for this Assignment may still wait in the Session, kept by a restart's cancel or persisted across a
-    // crash, where this launch's message would take it into a step beside the copy delivered next: that copy is the only one.
-    if (agent) for (const id of this.host.store.tickets.get(ticket.id)?.undelivered ?? []) agent.inbox.remove(this.host.sessions.promptedId(id))
     // The first message holds the assignment and the source Trigger; a later Assignment's says only what is new, unless the
     // Session lost the first, such as when someone deleted it.
     const first = `assignment:${ticket.id}`
@@ -550,8 +540,7 @@ export class DshExecutor implements Executor {
       : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried })
-    const requestId = later ? `assignment:${ticket.id}:${assignment.id}` : first
-    if (leadMode && project) {
+    {
       const lead = await this.host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
       if (!current()) return
       // The activation carries the same first message a root worker Session would receive, under the reserved worker id, so
@@ -567,10 +556,6 @@ export class DshExecutor implements Executor {
       this.host.engine.assignmentStarted(ticket.id, assignment.id)
       return
     }
-    await this.host.sessions.prompt(sessionId, requestId, text, 'queue',
-      () => { if (!current()) throw new Error('Launch authorization changed before worker delivery') },
-      () => { this.host.engine.assignmentStarted(ticket.id, assignment.id) })
-    this.host.engine.assignmentStarted(ticket.id, assignment.id)
   }
   /** Returns the stored ticket for `agent` when it is a worker session, or undefined otherwise. */
   private ticketOf(agent: Agent): Ticket | undefined {
@@ -598,11 +583,17 @@ export class DshExecutor implements Executor {
     // history: a step that claimed it may be cancelled or fail before, which drops it.
     this.disposers.push(ctx.on('session/event', (session, event) => {
       const ticketId = ticketOfSession(session.id)
-      if (event.type !== 'user/message' || ticketId === undefined || event.data.source.kind !== 'dsh-superagent' || this.host.closing()) return
+      if (event.type !== 'user/message' || ticketId === undefined || this.host.closing()) return
       const message = event.data
       void this.background(Promise.resolve().then(() => {
+        const text = message.content.map(block => block.type === 'text' ? block.text : '').join('')
+        // A root worker receives the Input under its deterministic message id; a Lead-hosted child receives the Lead's message,
+        // whose id DSH chose, so the Input it carries is named in the delivered text.
+        const carried = (() => {
+          try { return (JSON.parse(text) as { trigger_id?: string }).trigger_id } catch { return undefined }
+        })()
         const read = this.host.store.tickets.get(ticketId)?.inputs.filter(input => input.kind === 'trigger' && !input.readAt
-          && this.host.sessions.promptedId(input.id) === message.id).map(input => input.id) ?? []
+          && (this.host.sessions.promptedId(input.id) === message.id || (carried !== undefined && input.triggerId === carried))).map(input => input.id) ?? []
         if (read.length) this.host.engine.inputsRead(ticketId, read)
       }))
     }))

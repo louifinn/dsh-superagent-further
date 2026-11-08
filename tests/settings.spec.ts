@@ -119,7 +119,7 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   const workspace = process.platform === 'win32' ? 'C:/src/app' : '/src/app'
   const projects = [{ id: 'app', name: 'App', workspace, repository: 'owner/app', branch: '' }]
   await expect(settings.save('executor', { ...executor, projects }, revision, 'tool')).rejects.toThrow(UserError)
-  expect(store.settings().executor.projects).toEqual([])
+  expect(store.settings().executor.projects).toEqual(executor.projects)
   const saved = await settings.save('executor', { ...executor, projects }, revision, 'panel')
   expect(saved.saved).toBe(true)
   expect(store.settings().executor.projects).toEqual(projects)

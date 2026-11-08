@@ -82,6 +82,8 @@ export class Setup {
     const { context, machine, lifetime } = this.host
     const probe = this.probe()
     const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
+    // Every Ticket runs as a subagent of its project's Lead, so the host needs at least one registered project before it serves work.
+    if (settings.executor.projects.length === 0) throw new SetupError('projectUnset')
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem

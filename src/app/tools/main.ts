@@ -98,12 +98,10 @@ type Routed = { decision?: DecisionKind; reason: string; ticketId?: string | und
  */
 function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string, string>): Routed | { refused: string } {
   /**
-   * A request must belong to a registered project: that project's checkout holds its worktree and names its repository. A
-   * deployment with no project yet keeps the bootstrap root path, so it can run a first request before any project exists.
+   * A request must belong to a registered project: that project's checkout holds its worktree and names its repository.
    */
   function projectProblem(): string | undefined {
     const projects = host.store.settings().executor.projects
-    if (projects.length === 0) return undefined
     if (item.deliverables?.length) {
       for (const unit of item.deliverables) {
         if (!unit.project) return 'Each deliverable names the registered project that owns it; register it in Execution → Projects'

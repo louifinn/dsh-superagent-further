@@ -93,7 +93,10 @@ export function jobRegistry(owner: (sessionId: string) => FakeAgent | undefined 
  * before a wait for the parent's children returns. Releasing or interrupting a child settles it; a drain of descendants
  * injects their ends. The catalog lists every child a Session had.
  */
-export function subagentRuntime(agents: Map<string, FakeAgent>) {
+export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
+  open?: (id: string, parent: string) => Promise<void>
+  deliver?: (id: string, content: unknown) => void
+} = {}) {
   const children = new Map<string, { parent: string; live: boolean; settled: PromiseWithResolvers<void> }>()
   const closed = new Set<string>()
   const settle = (id: string, wake = true) => {
@@ -126,14 +129,24 @@ export function subagentRuntime(agents: Map<string, FakeAgent>) {
     startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string } } }) => {
       const parent = spec.request.parent.id
       const id = spec.childId
-      if (agents.has(id)) throw new Error(`subagent "${id}" already exists`)
+      // A host with a real subagent service creates the child Session, decorates it and then delivers the activation prompt.
+      if (options.open) await options.open(id, parent)
+      if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
       children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-      agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
-      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { settle(id) } }
+      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+      options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
+      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child.
+      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { children.get(id)!.live = false } }
     }),
     // The Lead's message reaches the child, which this fake records as a follow-up step.
-    sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, _content: unknown[]) => {
-      agents.get(targetId)?.followup(notice(`message-${targetId}`, 'A message arrived'))
+    sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, content: unknown[]) => {
+      // The Lead's message reaches the child as a follow-up step, as DSH delivers it; a deleted child refuses it.
+      const child = agents.get(targetId)
+      if (!child) throw new Error(`Session ${targetId} not found`)
+      // A message for a running turn is taken by its next step; an idle worker is woken by a follow-up that starts one.
+      const message = { id: `message-${targetId}`, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } } as never
+      if (child.status === 'idle') child.followup(message)
+      else child.steer(message)
       return `message-${targetId}`
     }),
   }
@@ -253,17 +266,35 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async () => reader) }
   const webServer = { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }
   const jobs = jobRegistry(id => agents.get(id))
-  const subagents = subagentRuntime(agents)
+  const hostCtx: { ctx?: Context } = {}
+  const subagents = subagentRuntime(agents, {
+    open: async (id, parent) => {
+      await (controller.create as (options: { sessionId: string }) => Promise<void>)({ sessionId: id })
+      // DSH's spawn provider records the parent in the child's header before the Session is decorated.
+      const child = agents.get(id)! as unknown as { session: { header: Record<string, unknown> } }
+      child.session.header = { parentSession: parent, agentPreset: 'dsh-superagent-worker' }
+      await hostCtx.ctx!.parallel('agent/created', { agent: agents.get(id)! } as never)
+    },
+    deliver: (id, content) => (agents.get(id) as unknown as { followup(message: unknown): void } | undefined)
+      ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } }),
+  })
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
     sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,
     jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
+  hostCtx.ctx = ctx
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const seeded = new Store(join(directory, 'orchestrator.sqlite'))
   const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT } } }
   seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), sources }))
   seed?.(seeded)
+  // Every Ticket runs under a registered project's Lead, so a fixture starts with the deployment repository registered as one.
+  const settled = seeded.settings()
+  if (settled.executor.projects.length === 0) {
+    seeded.saveSettings({ ...settled, executor: { ...settled.executor,
+      projects: [{ id: 'default', name: 'Default', workspace: join(directory, 'default'), repository: 'acme/widgets', branch: '' }] } })
+  }
   seeded.close()
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())
   await runtime.ready
@@ -285,7 +316,9 @@ export async function startRuntime(seed?: (store: Store) => void) {
   }
   /** Route one decision with the main Session's orchestrator_route, answering its result; a refused one throws its reason. */
   async function route(item: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const { results } = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [item] }) as { results: Record<string, unknown>[] }
+    // The fixture registers one project; an accept that names none uses it, as a request routed by the model would.
+    const named = item.kind === 'accept' && !item.project && !item.deliverables ? { ...item, project: 'default' } : item
+    const { results } = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [named] }) as { results: Record<string, unknown>[] }
     if (results[0]!.refused) throw new Error(String(results[0]!.refused))
     return results[0]!
   }

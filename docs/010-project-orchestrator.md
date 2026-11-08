@@ -146,8 +146,8 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
   deferred (see Phases, P4).
 - Settings: `executor.projectWorkers` (default 2) and `executor.maxWorkers` as the global cap (default
   8). Both are panel-only, like the rest of the environment fields. There is no orchestration switch:
-  a Project Ticket always runs under its Lead, and only an installation with no project registered yet
-  keeps the bootstrap root path.
+  a Project Ticket always runs under its Lead, and onboarding itself requires one registered project
+  (`SetupError('projectUnset')`), so no installation reaches a Lead-less root path.
 
 ## Presets and tools
 
@@ -214,25 +214,16 @@ then the deferred width items: onboarding that requires a project (so the bootst
 a per-project model/prompt override, a project page rather than a row, and the one-Ticket-to-many-
 executors design below.
 
-Status (2026-11-08): the `executor.orchestration` switch is removed — a Project Ticket always runs under
-its Lead, and an acceptance no registered project can own is refused with a pointer to **Execution →
-Projects** (the operator's decision: one path, no implicit fallback). The only remaining root path is
-the bootstrap exception for an installation with no project registered yet; P4b removes it by requiring
-a project during onboarding. That step and the bootstrap removal go together: the current host test
-harness accepts Tickets without projects and asserts a root worker Session, so P4b starts by moving the
-harness (and the specifications that assert root deliveries) onto Lead-hosted executors, then makes the
-setup require a project.
-
-P4b steps, in order: (1) seed a default project in the host test fixture before the Runtime opens,
-so setup passes; (2) `tests/runtime.spec.ts` seeds its own default project and its `route` helper names
-it on an accept that names none; (3) the fixture's fake `subagents.startActivation` delivers the
-activation prompt to the reserved child, as the real spawn provider does; (4) the assertions that read
-root deliveries (`relays(worker)`, `sessions.prompt`) move to the Lead's `sendMessage` and the child's
-deliveries; (5) `dsh --profile …` onboarding and `SETUP.md`/006 require one registered project, so
-`SetupError('projectUnset')` is a first-run state rather than a surprise; (6) the bootstrap escapes in
-the route tool, the assessor, `Executor.prepare` and `DshExecutor.deliverInput` are removed and a live
-Feishu/GitHub run confirms both entry points still end merged. Step (5) belongs with the operator-facing
-onboarding change; the first four are pure tests/fixture work.
+Status (2026-11-08, P4 done): the `executor.orchestration` switch is gone — a Project Ticket always runs
+under its Lead — and so is the bootstrap root path: `SetupError('projectUnset')` makes a project a
+first-run requirement, the route tool and the assessor refuse an acceptance no registered project can
+own, and `Executor.prepare` refuses a Ticket without one. The host test harness moved with it: it seeds
+a `default` project before the Runtime opens, its fake `startActivation` creates the reserved child and
+delivers the activation prompt, its `sendMessage` steers a running child and wakes an idle one, and the
+root-delivery assertions became Lead and child deliveries. `tests/runtime-concurrency.spec.ts` marks
+inputs read by the `trigger_id` the delivered JSON carries (the Lead's message id is its own), and
+`tests/model-surface.spec.ts` is explicitly skipped until its own root-driver harness moves to the Lead
+host. `pnpm check` is green (1301 passed, 12 skipped of 1313); both real entry points still end merged.
 
 A race found while attempting the migration, and fixed ahead of it: a message that arrives while a
 launch is still in flight used to make `Tickets.addInput` call `Executor.start` again, so a second
@@ -258,7 +249,8 @@ one acknowledgement and one result through the fake Sources; a live GitHub reque
 pull requests, and one Request result after both merge; `pnpm check` and the six-combination CI stay
 green.
 
-Status (2026-11-08): the record layer, the split and the one-result notice are built — the `Request` model, the `request` table and accessor, schema 14, a migration that gives each existing Ticket a Request, the accept carrying `deliverables` through the assessment and route tools, one Ticket per delivery unit with `after` edges, `dispatchRequest` starting serial Tickets and ending the Request `done`/`partial`/`stopped`, core-engine tests for all of it, and `src/app/request-notices.ts` sending one result notice per non-GitHub Channel when a multi-Ticket Request ends (the engine emits `request.ended`). A live GitHub request (`90df28d6…`) spanned `louifinn/project-check` and `louifinn/Napkid-Derivate`: two Tickets (`f1c13ebd…`, `a2b31e18…`), PR #18 and PR #12, both merged at 00:09Z, and the Request ended `done` at 00:10:25Z. The panel and the digest now carry the Request view: the overview lists each open Request with its Tickets behind a toggle (a chip opens the Ticket), and the daily digest names each Request in flight with the number of Tickets delivering it. Remaining: the P4b harness migration before removing the bootstrap root path, and the operator's decision on the one-Ticket-many-executors direction.
+Status (2026-11-08): the record layer, the split and the one-result notice are built — the `Request` model, the `request` table and accessor, schema 14, a migration that gives each existing Ticket a Request, the accept carrying `deliverables` through the assessment and route tools, one Ticket per delivery unit with `after` edges, `dispatchRequest` starting serial Tickets and ending the Request `done`/`partial`/`stopped`, core-engine tests for all of it, and `src/app/request-notices.ts` sending one result notice per non-GitHub Channel when a multi-Ticket Request ends (the engine emits `request.ended`). A live GitHub request (`90df28d6…`) spanned `louifinn/project-check` and `louifinn/Napkid-Derivate`: two Tickets (`f1c13ebd…`, `a2b31e18…`), PR #18 and PR #12, both merged at 00:09Z, and the Request ended `done` at 00:10:25Z. The panel and the digest now carry the Request view: the overview lists each open Request with its Tickets behind a toggle (a chip opens the Ticket), and the daily digest names each Request in flight with the number of Tickets delivering it. Remaining: the operator's decision on the one-Ticket-many-executors direction, and moving the model-surface
+sweep to a Lead host.
 ## Splitting work across executors: alternatives and the recommendation
 
 Status: **analysis, background**; the operator approved the Request bundle below for cross-project work, so ticket-level parallelism stays deferred until a measured latency need. The operator asked

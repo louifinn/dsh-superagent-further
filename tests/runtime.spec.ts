@@ -114,7 +114,8 @@ function seed(store: Store, accounts: Accounts = {}): void {
   const settings = store.settings()
   const { feishu: _feishu, ...others } = settings.sources
   const feishu = accounts.feishu === null ? undefined : { ...settings.sources.feishu?.config, cli: BOT(), ...accounts.feishu }
-  store.saveSettings(SettingsSchema.parse({ ...settings, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
+  const projects = settings.executor.projects.some(project => project.id === 'default') ? settings.executor.projects : [{ id: 'default', name: 'Default', workspace: join(directory, 'default'), repository: 'acme/widgets', branch: '' }, ...settings.executor.projects]
+  store.saveSettings(SettingsSchema.parse({ ...settings, executor: { ...settings.executor, projects }, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
 }
 let restarts: ReturnType<typeof vi.fn<() => void>>
 async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}): Promise<Runtime> {
@@ -137,7 +138,8 @@ function feishu(id: string, text: string, overrides: Record<string, unknown> = {
 const worktreeName = 'fix-regression'
 /** Route one decision with the main Session's orchestrator_route, answering its result; a refused one throws its reason. */
 async function route(item: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { results } = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [item] }) as { results: Record<string, unknown>[] }
+  const named = item.kind === 'accept' && !item.project && !item.deliverables ? { ...item, project: 'default' } : item
+  const { results } = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [named] }) as { results: Record<string, unknown>[] }
   if (results[0]!.refused) throw new Error(String(results[0]!.refused))
   return results[0]!
 }
@@ -226,10 +228,24 @@ beforeEach(async () => {
     startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string }; agentPreset: string } }) => {
       if (agents.has(spec.childId)) throw new Error(`subagent "${spec.childId}" already exists`)
       await (controller.create as (spec: { sessionId: string; agentPreset: string }) => Promise<void>)({ sessionId: spec.childId, agentPreset: spec.request.agentPreset })
+      const prompt = (spec.request as unknown as { prompt: { type: string; text?: string }[] }).prompt
+      const promptText = prompt.map(block => block.text ?? '').join('')
+      // The activation carries the first Assignment message under the id a root worker delivery uses,
+      // so Sessions.holds finds it on a restart the same way it does for a root worker.
+      let activationId = 'activation-' + spec.childId
+      try {
+        const parsed = JSON.parse(promptText) as { ticket_id?: string; assignment?: unknown }
+        if (parsed.ticket_id && parsed.assignment === undefined) activationId = 'dsh-superagent:' + key('assignment:' + parsed.ticket_id)
+      } catch { /* the prompt is not always JSON (a wake message) */ }
+      ;(agents.get(spec.childId) as unknown as { followup(message: unknown): void }).followup({ id: activationId, role: 'user', content: prompt, source: { kind: 'dsh-superagent', form: 'relay' } })
+      await ctx.parallel('agent/created', { agent: agents.get(spec.childId) } as never)
       agents.get(spec.childId)!.status = 'running'
       return { childId: spec.childId, result: new Promise(() => {}), dispose: vi.fn(async () => {}) }
     }),
-    sendMessage: vi.fn(async () => 'message'),
+    sendMessage: vi.fn(async (_sender: unknown, targetId: string, content: { type: string; text: string }[]) => {
+      ;(agents.get(targetId) as unknown as { followup(message: unknown): void } | undefined)?.followup({ id: 'message-' + targetId, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } })
+      return 'message'
+    }),
     interrupt: vi.fn(),
     waitForChildren: vi.fn(async () => {}),
     listChildren: vi.fn(async () => []),
@@ -258,7 +274,7 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
     execution: expect.objectContaining({ name: expect.stringMatching(/^fix-regression-/) }), origin: expect.objectContaining({ triggerId: trigger.id }) })
   expect(ticket).not.toHaveProperty('ended')
   // The ticket's execution environment is fixed at accept time: its directory under the execution root, and the Sources' values from its Trigger.
-  expect(ticket.execution!.directory).toBe(join(directory, 'work', ticket.execution!.name))
+  expect(ticket.execution!.directory).toBe(join(directory, 'work', ticket.project ?? '', ticket.execution!.name))
   expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ DSH_SUPERAGENT_DIR: ticket.execution!.directory, DSH_SUPERAGENT_NAME: ticket.execution!.name, DSH_SUPERAGENT_TICKET: ticket.id, DSH_SUPERAGENT_FEISHU_CHAT: CHAT, DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', DSH_SUPERAGENT_GITHUB_ACCOUNT: 'agent-bot', DSH_SUPERAGENT_GITHUB_NUMBER: '' })
   expect(ticket.assignments).toEqual([expect.objectContaining({ state: 'running', startedAt: expect.any(String) })])
   expect(sessionId).toBe(`worker-${ticket.id}`)
@@ -308,7 +324,7 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   // The rules are in the main Session's Policy section; the context names the Policy version it was built from.
   expect(details).not.toHaveProperty('rules')
   expect(details).toMatchObject({ trigger_id: trigger.id, strength: 'inferred', policy_version: policyVersion(runtime.store.settings()), thread: expect.objectContaining({ complete: true, loaded_messages: 0 }) })
-  const decision = (id: string) => ({ trigger_id: id, decision: 'accept', title: '文案修订', worktree_name: 'copy-fix', scope: '改副标题', reason: 'explicit copy change', intent_evidence: 'quoted', acknowledgement: '收到，把副标题改成“浏览网页”。',
+  const decision = (id: string) => ({ trigger_id: id, decision: 'accept', project: 'default', title: '文案修订', worktree_name: 'copy-fix', scope: '改副标题', reason: 'explicit copy change', intent_evidence: 'quoted', acknowledgement: '收到，把副标题改成“浏览网页”。',
     rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy change' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
     direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'the message names the replacement' } })
   expect(await runTool(runtime.masterId, 'orchestrator_eval_decide', decision(trigger.id))).toMatchObject({ decision: 'ignore', reason: expect.stringContaining('Observe mode') })
@@ -334,7 +350,7 @@ it('accepts silently under a rule that says so, gives the worker the rule proced
   await receive(trigger)
   vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ items: [{ message_id: 'om_20', chat_id: CHAT }] })
   await runTool(runtime.masterId, 'orchestrator_eval', { trigger_id: trigger.id })
-  const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', { trigger_id: trigger.id, decision: 'accept', title: '主题图标颜色', worktree_name: 'theme-icon-color', scope: 'bug', reason: 'reported defect', intent_evidence: 'quoted',
+  const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', { trigger_id: trigger.id, decision: 'accept', project: 'default', title: '主题图标颜色', worktree_name: 'theme-icon-color', scope: 'bug', reason: 'reported defect', intent_evidence: 'quoted',
     rule_assessments: [{ rule_id: 'copy', matched: false, reason: 'no' }, { rule_id: 'visual', matched: false, reason: 'no' }, { rule_id: 'silent-bugfix', matched: true, reason: 'bug report' }],
     direction: { implementation_requested: true, target_basis: 'existing-standard', requires_design_decision: false, evidence: 'expected colour is the light palette' } })
   const ticket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
@@ -1164,7 +1180,7 @@ it('runs the prepare command once for a new ticket, under the execution root wit
   const command = 'git -C /srv/widgets worktree add "$DSH_SUPERAGENT_DIR" -b "agent/$DSH_SUPERAGENT_NAME"'
   prepare(command)
   const { ticket } = await acceptedTicket()
-  expect(runs()).toEqual([expect.objectContaining({ argv: prepareCommand(command), cwd: join(directory, 'work'),
+  expect(runs()).toEqual([expect.objectContaining({ argv: prepareCommand(command), cwd: join(directory, 'work', 'default'),
     env: expect.objectContaining({ DSH_SUPERAGENT_DIR: ticket.execution!.directory, DSH_SUPERAGENT_NAME: ticket.execution!.name, DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', DSH_SUPERAGENT_FEISHU_CHAT: CHAT }) })])
   // A retry reuses the prepared directory.
   await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'failed', summary: 'offline' })
@@ -1683,16 +1699,16 @@ it('gives an explicit ticket\'s worker a prompt without the limits of an inferre
 })
 
 it('runs a launch that fails for a passing reason again on the launch backoff three times, then fails its ticket; a failed prepare fails at once', async () => {
-  const original = controller.resolveAgent.getMockImplementation()! as (id: string) => Promise<unknown>
+  const original = subagents.startActivation.getMockImplementation()! as (spec: { childId: string }) => Promise<unknown>
   const later = async (now: number) => {
     vi.useFakeTimers({ toFake: ['Date'], now })
     try { await runtime.pump(); await runtime.idle() } finally { vi.useRealTimers() }
   }
   for (const [index, error] of [Object.assign(new Error('Service Unavailable'), { status: 503 }), Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })].entries()) {
     let tries = 0
-    controller.resolveAgent.mockImplementation(async (id: string) => {
-      if (String(id).startsWith('worker-')) { tries++; throw error }
-      return original(id)
+    subagents.startActivation.mockImplementation(async (spec: { childId: string }) => {
+      if (spec.childId.startsWith('worker-')) { tries++; throw error }
+      return original(spec)
     })
     const { ticket } = await acceptedTicket(feishu(String(30 + index), `@bot 修 ${index}`, { root_id: undefined }))
     await runtime.idle()
@@ -1704,7 +1720,7 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
     }
     expect(tries).toBe(4)
     expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed' })
-    controller.resolveAgent.mockImplementation(original)
+    subagents.startActivation.mockImplementation(original)
   }
   // A prepare command whose output names a passing failure is not run again on its own.
   const runs = () => subprocess.spawn.mock.calls.filter(([spec]) => (spec as { argv: string[] }).argv[0] === prepareCommand('')[0]).length

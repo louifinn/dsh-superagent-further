@@ -295,12 +295,12 @@ export class MasterAssessor implements Assessor {
     let outcome: AssessmentOutcome = assessmentOutcome(result, this.host.settings(), candidate.strength)
     if (outcome.kind === 'accept' && outcome.acknowledgement) outcome = { ...outcome, acknowledgement: checkedImText(outcome.acknowledgement) }
     if (outcome.kind === 'accept' && !outcome.deliverables?.length) {
-      // A request belongs to a registered project; an installation with no project yet keeps the bootstrap root path.
+      // A request belongs to a registered project; one no project owns is refused here so the panel can say where to register it.
       // A split accept already named the project of each delivery, so the Trigger's repository need not own one.
       const projects = this.host.settings().executor.projects
       const named = typeof trigger.meta.repository === 'string' ? trigger.meta.repository : ''
       const project = outcome.project ? projectOf(projects, outcome.project) : projectByRepository(projects, named)
-      if (projects.length > 0 && !project) {
+      if (!project) {
         outcome = { kind: 'ignore', audit: outcome.audit, reason: named
           ? `No registered project owns repository ${named}; register it in Execution → Projects, and choose it in the assessment`
           : 'This request names no project; register the project in Execution → Projects, and choose it in the assessment' }

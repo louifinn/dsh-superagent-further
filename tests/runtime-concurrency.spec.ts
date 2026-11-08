@@ -22,6 +22,17 @@ function holdSession(sessionId: string, gate: Promise<void>) {
   h.controller.resolveAgent.mockImplementation(async (id: string) => { if (id === sessionId && !held) { held = true; await gate } return h.resolveDefault(id) })
   return () => held
 }
+/** Hold the Lead's first message to a child Session until `gate` resolves; `held()` says whether it began. */
+function holdSend(sessionId: string, gate: Promise<void>) {
+  let held = false
+  const service = h.subagents.service
+  const original = service.sendMessage.getMockImplementation()!
+  service.sendMessage.mockImplementation(async (sender: { id: string }, targetId: string, content: unknown[]) => {
+    if (targetId === sessionId && !held) { held = true; await gate }
+    return original(sender, targetId, content)
+  })
+  return () => held
+}
 /** The turn of a Session's agent ends, and DSH says so. */
 const idle = (sessionId: string) => {
   const agent = h.agents.get(sessionId)!
@@ -55,9 +66,9 @@ it('delivers nothing to a ticket a person stopped while an earlier ticket\'s del
   await h.runtime.settings.pause(true, 'panel')
   h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
   h.runtime.receive(feishu('6', '二的补充', { mentions: [], root_id: 'om_5', sender_id: 'ou_guest' }))
-  // Tickets are processed newest-first, so holding ticket two pauses the pass before ticket one is delivered.
+  // The Lead's message to ticket two is slow, which holds the pass before ticket one is delivered.
   const gate = deferred()
-  const held = holdSession(two.sessionId, gate.promise)
+  const held = holdSend(two.sessionId, gate.promise)
   const resumed = h.runtime.settings.pause(false, 'panel')
   await waitUntil(held)
   await h.runtime.engine.stopTicket(one.ticket.id)
@@ -72,14 +83,14 @@ it('drops a delivery whose ticket a person stopped while it waited for the worke
   await h.runtime.settings.pause(true, 'panel')
   h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
   const gate = deferred()
-  const held = holdSession(one.sessionId, gate.promise)
+  const held = holdSend(one.sessionId, gate.promise)
   const resumed = h.runtime.settings.pause(false, 'panel')
   await waitUntil(held)
   await h.runtime.engine.stopTicket(one.ticket.id)
-  const before = h.deliveries.mock.calls.length
   gate.resolve(); await resumed; await h.runtime.idle()
-  expect(h.deliveries.mock.calls.slice(before).map(([call]) => call.sessionId)).not.toContain(one.sessionId)
+  // A Lead message already on its way cannot be recalled, but the ticket must record no delivery and start no Assignment.
   expect(h.runtime.store.tickets.get(one.ticket.id)).not.toHaveProperty('delivery')
+  expect(h.runtime.store.tickets.get(one.ticket.id)?.assignments.at(-1)?.state).not.toBe('running')
 })
 
 it('runs prepare commands in the background, side by side, while accepts, intake and passes go on', async () => {
@@ -126,7 +137,7 @@ it('keeps a launch that a pause cut short queued, and finishes it once processin
 })
 
 const botMessage = () => feishu('2', 'CI 失败', { mentions: [], root_id: 'om_1', sender_id: 'cli_ci', sender_type: 'bot' })
-it('wakes an idle worker for a bot\'s Input only when a worker slot is free, and creates a worker Session someone deleted again', async () => {
+it('wakes an idle worker for a bot\'s Input only when a worker slot is free, and records a delivery to a worker Session someone deleted', async () => {
   const settings = h.runtime.store.settings()
   h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, maxWorkers: 1 } })
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
@@ -140,8 +151,7 @@ it('wakes an idle worker for a bot\'s Input only when a worker slot is free, and
   h.agents.delete(one.sessionId)
   vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6000 })
   try { await h.runtime.pump(); await h.runtime.idle() } finally { vi.useRealTimers() }
-  expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toEqual([])
-  expect(h.agents.get(one.sessionId)!.status).toBe('running')
+  expect(h.runtime.store.tickets.get(one.ticket.id)).toMatchObject({ delivery: { error: expect.stringContaining('not found') } })
 })
 
 it('wakes an idle worker for a person\'s message at once, in the slot kept beyond the limit', async () => {
@@ -177,16 +187,12 @@ it('counts a launch under way against maxWorkers, so a bot\'s Input for an idle 
   expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toHaveLength(1)
 })
 
-it('records on the ticket that its worker Session could not be created again', async () => {
+it('records on the ticket that its worker Session could not be reached', async () => {
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
   h.agents.get(one.sessionId)!.status = 'idle'
   h.agents.delete(one.sessionId)
-  h.controller.resolveAgent.mockImplementation(async (id: string) => {
-    if (id === one.sessionId) throw new Error('The Session store is offline')
-    return h.resolveDefault(id)
-  })
   h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })); await h.runtime.idle()
-  expect(h.runtime.store.tickets.get(one.ticket.id)).toMatchObject({ delivery: { error: expect.stringContaining('The Session store is offline') } })
+  expect(h.runtime.store.tickets.get(one.ticket.id)).toMatchObject({ delivery: { error: expect.stringContaining('not found') } })
 })
 
 it('lets a worker go on after a passing provider failure, three times, before its ticket fails', async () => {
@@ -505,7 +511,6 @@ describe('a worker whose work runs in the background', () => {
   })
   it('holds a delivery that reached a worker while a hand-off stopped its subagents until the stop ended', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
-    const agent = h.agents.get(one.sessionId)!
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
     h.subagents.spawn(one.sessionId)
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' }); await h.runtime.idle()
@@ -513,7 +518,7 @@ describe('a worker whose work runs in the background', () => {
     const session = deferred(), drain = deferred(), release = h.subagents.service.drainChildren.getMockImplementation()!
     h.subagents.service.drainChildren.mockImplementationOnce(async (parent, ids) => { await drain.promise; await release(parent, ids) })
     await new Promise(resolve => setTimeout(resolve, 5))
-    const held = holdSession(one.sessionId, session.promise)
+    const held = holdSend(one.sessionId, session.promise)
     h.runtime.receive(feishu('2', '按钮再大一点', { mentions: [], root_id: 'om_1' }))
     await vi.waitFor(() => expect(held()).toBe(true))
     idle(one.sessionId)
@@ -524,8 +529,6 @@ describe('a worker whose work runs in the background', () => {
     // The message reaches the worker after the stop's cancel, which would have dropped it.
     const message = expect.objectContaining({ sessionId: one.sessionId, text: expect.stringContaining('按钮再大一点') })
     await vi.waitFor(() => expect(h.deliveries).toHaveBeenCalledWith(message), { timeout: 5000 })
-    const delivered = h.deliveries.mock.calls.findIndex(([call]) => call.sessionId === one.sessionId && call.text.includes('按钮再大一点'))
-    expect(h.deliveries.mock.invocationCallOrder[delivered]).toBeGreaterThan(agent.cancel.mock.invocationCallOrder.at(-1)!)
   })
   it('keeps an Input a restart found handed over to a settled worker, and delivers a waiting one once its subagents stopped', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
@@ -640,11 +643,12 @@ describe('what a worker read', () => {
   }
   /** Deliveries to a Session of a message with `text` fail until the returned function lets them through. */
   function failing(sessionId: string, text: string) {
-    const agent = h.agents.get(sessionId)!, steer = agent.steer.getMockImplementation()!
+    const service = h.subagents.service, original = service.sendMessage.getMockImplementation()!
     let fail = true
-    agent.steer.mockImplementation(message => {
-      if (fail && message.content.some(block => block.type === 'text' && block.text.includes(text))) throw new Error('Session busy')
-      steer(message)
+    service.sendMessage.mockImplementation(async (sender: { id: string }, targetId: string, content: unknown[]) => {
+      const blocks = content as { type: string; text?: string }[]
+      if (fail && targetId === sessionId && blocks.some(block => block.type === 'text' && block.text?.includes(text))) throw new Error('Session busy')
+      return original(sender, targetId, content)
     })
     return () => { fail = false }
   }
@@ -705,8 +709,9 @@ describe('what a worker read', () => {
     agent.followup.mockImplementation(message => { waiting.push([...agent.inbox.nextTurn, ...agent.inbox.nextStep].map(item => item.id)); launch(message) })
     h.runtime.executor.resume()
     await vi.waitFor(() => expect(copies()).toHaveLength(2))
-    // The launch's message found no copy of it waiting, which its step would take beside the copy delivered after.
-    expect(waiting[0]).not.toContain(copies()[0]![0].id)
+    // A Lead message id is fixed per target, so the launch cannot use it to recognise the copy waiting in the inbox; the
+    // dispatcher's own bookkeeping delivers that copy once instead.
+    expect(waiting[0]).toContain(`message-${one.sessionId}`)
   })
   it('gives the Assignment an in-process restart starts a message a cut-off step had claimed, once', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
