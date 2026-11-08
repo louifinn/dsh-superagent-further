@@ -401,3 +401,14 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-memory-select { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .dt-memory-select .dt-select { width: auto; max-width: 200px; }
 .dt-memory-pages { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* The first-run setup wizard: a wider dialog with a step list, its body, and an action bar at the bottom. */
+.dt-wizard { width: min(680px, calc(100vw - 32px)); }
+.dt-wizard-body { display: flex; flex-direction: column; gap: 12px; }
+.dt-wizard-heading { margin: 0; font-size: 14px; line-height: 22px; font-weight: 600; }
+.dt-wizard-steps { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.dt-wizard-step { display: flex; align-items: baseline; gap: 8px; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
+.dt-wizard-number { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--dsw-alias-bg-module-platform); font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.dt-wizard-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l3); }
+.dt-wizard-spacer { flex: 1 1 auto; }
+

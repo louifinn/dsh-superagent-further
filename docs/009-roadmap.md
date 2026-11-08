@@ -202,3 +202,12 @@ Localized proactive rules, so the operator, the admission decisions and the pane
 - Running the service as a Windows service or a system daemon.
 - A visual redesign of the panel.
 
+## Sprint 9 checklist
+
+The setup wizard is how a fresh install reaches its first Ticket without editing settings files. It ends with `pnpm check` green.
+
+- [x] First-run state: `GET state` carries `wizard` `{firstRun, skipped}`, where `firstRun` holds while no project is registered and no `setup-wizard` record exists, and `PUT wizard` stores `{at, skipped}` in the Store's key-value area; covered by `tests/http.spec.ts`.
+- [x] Wizard dialog: welcome, the first project with the Execution fields, the GitHub account check, the optional Feishu Source, the default language and a summary; every step can be skipped or revisited, each save writes its settings block with the current revision, and a restart says so; covered by `tests/panel-setup-wizard.spec.tsx`.
+- [x] Entry and memory: the wizard opens by itself on a first run once per browser session, the header **Setup wizard** reopens it afterwards, and the server's record — not the browser — decides across sessions; covered by `tests/panel-setup-wizard.spec.tsx`.
+- [x] Docs: [005 Panel](005-panel.md) describes the dialog, [006 Deployment](006-deployment.md) the first start, and [007 Architecture](007-architecture.md) lists both modules and the panel test.
+

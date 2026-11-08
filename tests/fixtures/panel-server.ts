@@ -99,6 +99,8 @@ export interface PanelServer {
   queued: Set<string>
   searching?: (query: string) => Promise<void>
   setup: SetupView
+  /** First-run state of the setup wizard; tests set `firstRun` to open it automatically. */
+  wizard: StateView['wizard']
   health: Record<string, Health>
   /** When true, all API requests return an empty 404 to simulate the host plugin being stopped. */
   down: boolean
@@ -167,6 +169,7 @@ function sourceStatuses(): SourceStatusRow[] {
 }
 const stateView = (): StateView => ({
   setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
+  wizard: server.wizard,
   masterId: 'master', paused: server.settings.paused,
   // The panel does not read health; the service script does.
   health: {},
@@ -266,6 +269,8 @@ function initial(): PanelServer {
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
+    // Existing panel tests start on a finished installation; wizard tests set `firstRun` themselves.
+    wizard: { firstRun: false, skipped: false },
     settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 },
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },
@@ -415,6 +420,10 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET policy/history': { answer: () => server.history },
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },
   'POST setup/check': { answer: () => ({ restarting: true }) },
+  'PUT wizard': { body: true, answer: ({ body }) => {
+    server.wizard = { firstRun: false, skipped: body.skipped }
+    return { ...server.wizard }
+  } },
   // The panel never stops the orchestrator; the route exists because the management API contract covers the service script.
   'POST shutdown': { answer: () => ({ stopping: true }) },
   'GET models': { answer: () => ({ default: { provider: 'host', model: 'default' }, routableProviders: [], failures: [],
