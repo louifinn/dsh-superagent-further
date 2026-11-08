@@ -7,6 +7,7 @@ import { SCHEMA_VERSION, Store, type SettingsVersion } from '../src/app/store.ts
 import { KV } from '../src/kv.ts'
 import { DEFAULT_RULES, LEGACY_DEFAULT_RULES } from '../src/policy.ts'
 import { basisOf, reasonsOf, withoutCopies } from '../src/app/migration.ts'
+import { primaryRepository } from '../src/app/setup.ts'
 import { Prompts, composePrompt, defaultPrompts } from '../src/app/prompts.ts'
 import { masterPrompt } from '../src/app/context.ts'
 
@@ -599,7 +600,43 @@ it('fills in the project of Tickets accepted before projects existed', () => {
   expect(store.tickets.get('t-widgets')?.project).toBe('widgets')
   expect(store.tickets.get('t-primary')?.project).toBe('primary')
   expect(store.tickets.get('t-kept')?.project).toBe('primary')
+  // Schema 12 consumed the repository setting above; schema 17 then retires it.
+  expect(store.settings().sources.github?.config).toEqual({ cli: 'gh' })
   expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  store.close()
+})
+it('removes the GitHub Source repository setting once the first project supplies the primary repository', () => {
+  const path = join(directory, 'repository.sqlite')
+  const seed = new Store(path)
+  seed.saveSettings({
+    sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: 'gh' } } },
+    executor: { projects: [{ id: 'widgets', name: 'Widgets', workspace: '/w/widgets', repository: 'acme/widgets', branch: '' }] },
+  })
+  seed.close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value='16' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  expect(store.settings().sources.github?.config).toEqual({ cli: 'gh' })
+  expect(store.settings().executor.projects.map(project => project.repository)).toEqual(['acme/widgets'])
+  // Every saved revision is rewritten too, so the history never shows the retired setting.
+  expect(store.settingsHistory().map(version => version.settings.sources.github?.config)).toEqual([{ cli: 'gh' }])
+  store.close()
+})
+it('removes the repository setting with no project registered, so setup asks for a project instead', () => {
+  const path = join(directory, 'repository-unbound.sqlite')
+  const seed = new Store(path)
+  seed.saveSettings({ sources: { github: { enabled: true, config: { repository: 'acme/legacy', cli: 'gh' } } } })
+  seed.close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value='16' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.settings().sources.github?.config).toEqual({ cli: 'gh' })
+  expect(store.settings().executor.projects).toEqual([])
+  // Setup reports the missing project (schema 17 derives the primary repository from the first one); the old name is gone.
+  expect(primaryRepository(store.settings())).toBe('')
   store.close()
 })
 it('ends the Request of a Ticket that had already ended before Requests existed', () => {

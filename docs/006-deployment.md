@@ -8,7 +8,7 @@ Use this guide to install, configure and operate dsh-superagent. It covers accou
 - **An agent GitHub account.** The agent comments, pushes branches and opens pull requests as this account, through a GitHub CLI signed in only as that account.
 - **Optional:** a Feishu bot for chat requests.
 
-Plugin configuration holds the state directory and machine limits. Use the panel for everything else: Sources for the repository and accounts, Policy for allowed lists, and Execution for worker directories and commands.
+Plugin configuration holds the state directory and machine limits. Use the panel for everything else: Sources for the agent accounts, Policy for allowed lists, and Execution for the projects, worker directories and commands.
 
 ### Permissions and isolation
 
@@ -32,7 +32,7 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
 ### Agent GitHub account
 
-1. Create a GitHub user account for the agent and give it write access to the repository. A GitHub App cannot be the agent, because dsh-superagent reads the account's notifications.
+1. Create a GitHub user account for the agent and give it write access to the primary repository and every other repository its projects name. A GitHub App cannot be the agent, because dsh-superagent reads the account's notifications.
 2. Give it a GitHub CLI that uses only its own credentials:
 
    ```sh
@@ -61,7 +61,7 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
    gh-agent.cmd api user --jq .login
    ```
 
-   The Deployment page saves the repository and the agent CLI, and verifies both before it stores them. Saving the Source with no repository is the exception, so you can unbind an installation: the service then waits for setup again, as on its first run.
+   The GitHub card saves the agent CLI; setup probes it, and verifies the agent's push access to the primary repository, before the change is stored. The primary repository is the first project under **Execution → Projects** — the card lists every watched repository. Saving the Source with no CLI is the exception, so you can unbind an installation: the service then waits for setup again, as on its first run.
 
 ### Feishu bot (optional)
 
@@ -208,8 +208,8 @@ CI runs the whole suite on macOS. `.github/workflows/smoke.yml` also starts a re
 
 1. `git pull && pnpm install --frozen-lockfile && pnpm build` and `pnpm check`; both exit 0.
 2. Create a profile, install the bundle with `link:` and set a `webserver` port and a `stateDir` as the [Install](#install) section shows.
-3. `scripts/dsh-superagent start` exits 3 with "The GitHub Source names no repository", then `status` exits 3; `scripts/dsh-superagent stop` exits 0 and `status` then exits 1.
-4. `scripts/verify-install --profile <name>` exits 2 before setup and 0 after the GitHub Source is saved; `--json` prints the schema line.
+3. `scripts/dsh-superagent start` exits 3 with "No Execution project is registered.", then `status` exits 3; `scripts/dsh-superagent stop` exits 0 and `status` then exits 1.
+4. `scripts/verify-install --profile <name>` exits 2 before setup and 0 after the agent CLI and a project are saved; `--json` prints the schema line.
 5. The panel opens at the printed URL, and the Superagent sidebar entry renders — compare it with the committed screenshots in [005](005-panel.md).
 6. A direct message on Feishu and a comment that mentions the agent both reach the Source, and one of them ends as a merged pull request.
 7. `scripts/dsh-superagent logs` are the same shape as on Windows and Linux, and `stop` leaves no process behind (`pgrep -f dsh-superagent` is empty).
@@ -326,7 +326,7 @@ Below the behavior controls the page lists the stored memories as expandable car
 
 Retention ages out only the automatic records of finished work after **Retention (days)** (default 30); a memory a person or agent wrote on purpose stays until it expires, is forgotten, or is unpinned and removed by hand. Pinned memories are never aged out.
 
-Memories live in the same `orchestrator.sqlite` (`memory` table, schema 16; the behavior lives in the `memory` settings block).
+Memories live in the same `orchestrator.sqlite` (`memory` table, schema 17; the behavior lives in the `memory` settings block).
 
 ### Hourly check
 
@@ -342,9 +342,9 @@ Check dsh-superagent: run `scripts/dsh-superagent --profile superagent status` i
 
 Setup must succeed before polling or work starts. Overview lists missing requirements and links to their settings. A settings change runs setup again. If you fix something outside the application, such as CLI authentication, choose **Check again**.
 
-1. **Sources.** Set the GitHub repository (`owner/name`) and agent CLI, for example `/home/me/.local/bin/gh-agent` on macOS and Linux, or `C:\Users\me\.local\bin\gh-agent.cmd` on Windows. That repository is the host's own; the Source also polls every repository a registered project names, so one installation watches all its projects. The Source card lists every watched repository — the deployment repository and each project's — and updates it when a project is added or removed. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. An Issue or PR of another project's repository gets a Thread id qualified with `owner/name#<number>`, so equal numbers in two repositories cannot collide. A project repository the agent account cannot read is reported in the Source's health (for example `project repositories unreadable: owner/name`) instead of failing the poll round, so one repository without a grant does not stop the others. A read position stays ten minutes behind the newest item it read, so an item GitHub indexes a moment after the listing that should have contained it is listed again next round; the deterministic Trigger id drops the overlap, and a slow round over several repositories cannot step past an event. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
+1. **Sources.** Set the agent CLI, for example `/home/me/.local/bin/gh-agent` on macOS and Linux, or `C:\Users\me\.local\bin\gh-agent.cmd` on Windows. The Source polls every repository a registered project names, so one installation watches all its projects; the deployment's primary repository is the first project under **Execution → Projects**, and setup verifies the agent's push access to it. The Source card lists every watched repository, the primary one marked **主仓库**, and updates it when a project is added, removed or reordered. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. An Issue or PR of another project's repository gets a Thread id qualified with `owner/name#<number>`, so equal numbers in two repositories cannot collide. A project repository the agent account cannot read is reported in the Source's health (for example `project repositories unreadable: owner/name`) instead of failing the poll round, so one repository without a grant does not stop the others. A read position stays ten minutes behind the newest item it read, so an item GitHub indexes a moment after the listing that should have contained it is listed again next round; the deterministic Trigger id drops the overlap, and a slow round over several repositories cannot step past an event. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
 2. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
-3. **Execution.** The projects this installation works on, then the directory root and a prepare command. **Projects** pairs each local workspace with its remote repository: an identifier (lowercase letters, digits and hyphens), a name, the absolute path of the local clone, `owner/name` of the remote repository, and an optional base branch (empty uses the repository's default). The list is part of the Execution settings block, so only the management panel or the API can change it. The overview can filter the waiting Tickets by project, shows a **Project Leads** section (one row per registered project: its Lead Session's state, running executors and undelivered messages; a row with a Session opens that Session in the main panel), and the Triggers list filters its Threads by the project each one's repository names, showing that project on the row. The Executor gives each Ticket of a project its own checkout automatically: a new branch `agent/<ticket name>` in `stateDir/work/<project>/<ticket name>`, created with `git worktree add` from the project's local clone at the project's base branch as that clone has it. The clone is not fetched for you, so fetch it yourself (or fetch in a prepare command) when the base branch has to be current. The worker environment names the project and its clone (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`), and `DSH_SUPERAGENT_GITHUB_REPOSITORY` is that project's repository. A request from Feishu names no repository: the main Session sees the registered projects on the candidate card and may accept the work for one (the message may name a project id itself); the Executor refuses an unknown project, and for an accepted single delivery a project that differs from a GitHub Trigger's own repository is refused, so a GitHub request stays in its repository's project. A request spanning several deliveries accepts with `deliverables`: one Request is created with one Ticket per delivery unit, each unit in its own registered project (which may differ from the Trigger's repository), and `after` indexes order the units that must wait. The Request sends the acknowledgement once, and when all of its Tickets end it sends one result notice per IM Channel listing every Ticket and its pull request; GitHub timelines already show each pull request. A request no registered project owns is refused with a pointer to **Execution → Projects**. A PR the worker reports is read from the Ticket's project repository, so a Ticket in a project waits for that merge and ends `merged` like one in the deployment's own repository. A prepare command below replaces the automatic checkout; use it when the Ticket's work has to start from something other than the base branch, such as a pull request's head:
+3. **Execution.** The projects this installation works on, then the directory root and a prepare command. **Projects** pairs each local workspace with its remote repository: an identifier (lowercase letters, digits and hyphens), a name, the absolute path of the local clone, `owner/name` of the remote repository, and an optional base branch (empty uses the repository's default). The first project in the list also supplies the deployment's primary repository: setup verifies the agent's push access to it, unqualified GitHub Thread ids refer to it, and the Source card marks it as the primary. Reordering the list moves the primary repository, so such a save restarts dsh-superagent, which verifies the new primary repository again. The list is part of the Execution settings block, so only the management panel or the API can change it. The overview can filter the waiting Tickets by project, shows a **Project Leads** section (one row per registered project: its Lead Session's state, running executors and undelivered messages; a row with a Session opens that Session in the main panel), and the Triggers list filters its Threads by the project each one's repository names, showing that project on the row. The Executor gives each Ticket of a project its own checkout automatically: a new branch `agent/<ticket name>` in `stateDir/work/<project>/<ticket name>`, created with `git worktree add` from the project's local clone at the project's base branch as that clone has it. The clone is not fetched for you, so fetch it yourself (or fetch in a prepare command) when the base branch has to be current. The worker environment names the project and its clone (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`), and `DSH_SUPERAGENT_GITHUB_REPOSITORY` is that project's repository. A request from Feishu names no repository: the main Session sees the registered projects on the candidate card and may accept the work for one (the message may name a project id itself); the Executor refuses an unknown project, and for an accepted single delivery a project that differs from a GitHub Trigger's own repository is refused, so a GitHub request stays in its repository's project. A request spanning several deliveries accepts with `deliverables`: one Request is created with one Ticket per delivery unit, each unit in its own registered project (which may differ from the Trigger's repository), and `after` indexes order the units that must wait. The Request sends the acknowledgement once, and when all of its Tickets end it sends one result notice per IM Channel listing every Ticket and its pull request; GitHub timelines already show each pull request. A request no registered project owns is refused with a pointer to **Execution → Projects**. A PR the worker reports is read from the Ticket's project repository, so a Ticket in a project waits for that merge and ends `merged` like one in the deployment's own repository. A prepare command below replaces the automatic checkout; use it when the Ticket's work has to start from something other than the base branch, such as a pull request's head:
 
    ```sh
    git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
@@ -415,25 +415,25 @@ A refusal has a status and `error`, its English text:
 
 The blocks:
 
-- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, `otherChats` as `"none"` or `"mentions"`, and `digestChat` (empty for no digest) with `digestHour` (local hour, default 9).
+- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the watched repositories and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, `otherChats` as `"none"` or `"mentions"`, and `digestChat` (empty for no digest) with `digestHour` (local hour, default 9). The repositories are not part of this config: the first project under Execution → Projects supplies the primary one, and the rest are derived from the projects.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
 - `executor`: `model`, `maxWorkers`, `projectWorkers`, `directory`, `prepare`, `blockedCommands`, `projects` and `worktreeKeepDays`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
-Changing a repository or CLI runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
+Changing a CLI, or the first project, runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
 ```sh
 api=http://127.0.0.1:3082/orchestrator/api
 rev=$(curl -s -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
 curl -s -X PUT -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
-  -d "{\"value\": {\"enabled\": true, \"config\": {\"repository\": \"acme/widgets\", \"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
+  -d "{\"value\": {\"enabled\": true, \"config\": {\"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
 ```
 
 ## Setup checks
 
 Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN.
 
-Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
+Setup verifies the agent's account and its push access to the primary repository (the first project's), writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
 The process environment that setup writes:
 
@@ -456,8 +456,14 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 16 (current)`, or
-   `schema 10 migrates to 16 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 17 (current)`, or
+   `schema 10 migrates to 17 on start` when the next start is the one that upgrades the database.
+
+The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
+settings and from their history, and setup derives the primary repository from the first project under **Execution →
+Projects**. If the old deployment repository was not that project's repository, the installation now watches the first
+project's repository as the primary instead; if the old repository is not one of the registered projects at all, it is
+no longer watched. Register it under Execution → Projects and put it first to keep it as the primary.
 
 Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
 **Default updated** after upgrading.
@@ -485,8 +491,8 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `The agent GitHub CLI is not set.` | Set the agent's CLI on the GitHub card |
 | `The agent GitHub CLI was not found.` | Set the wrapper's absolute path, or a command name on `PATH` |
 | `The agent GitHub CLI cannot read its account` | Sign the wrapper in with `auth login` |
-| `@… cannot read …` or `@… cannot push to …` | Give the agent account write access to the repository |
-| `The GitHub Source names no repository.` | Set the repository, `owner/name`, on the GitHub card |
+| `@… cannot read …` or `@… cannot push to …` | Give the agent account write access to the primary repository, or to the repository the message names |
+| `No Execution project is registered.` | Register a project under Execution → Projects; its repository becomes the primary repository setup checks |
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
 | `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |

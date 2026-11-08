@@ -621,7 +621,7 @@ describe('github source', () => {
     const settings = h.store.settings()
     h.store.saveSettings({ ...settings,
       executor: { ...settings.executor, projects: [{ id: 'locked', name: 'Locked', workspace: '/w/locked', repository: 'acme/locked', branch: 'main' }] },
-      sources: { ...settings.sources, github: { enabled: true, config: { repository: 'acme/widgets', cli: '/bin/false', observeIssues: true } } } })
+      sources: { ...settings.sources, github: { enabled: true, config: { cli: '/bin/false', observeIssues: true } } } })
     // The deployment's Issue stream answers; the locked project's answers 404, as a repository the agent cannot see does.
     github(h, { notifications: [], issues: [] }, true)
     const context = h.context({ kind: 'github', health: ['github'] })
@@ -1121,8 +1121,13 @@ it('reports GitHub as failing only after the configured number of consecutive fa
   expect(pollFailure(1, 3, eof)).toBeUndefined()
   expect(pollFailure(2, 3, eof)).toBeUndefined()
   expect(pollFailure(3, 3, eof)).toEqual({ state: 'error', detail: '3 consecutive failed polls; last: Error: Get "https://api.github.com/x": EOF', code: 'pollFailures', values: { count: '3', error: 'Error: Get "https://api.github.com/x": EOF' } })
-  expect(githubKind.schema.parse({})).toEqual({ repository: '', cli: '', pollSeconds: 60, failuresBeforeError: 3, observeIssues: false,
+  expect(githubKind.schema.parse({})).toEqual({ cli: '', pollSeconds: 60, failuresBeforeError: 3, observeIssues: false,
     observePulls: false, observeComments: false, observeCi: false })
+})
+it('drops the repository a GitHub Source config saved before schema 17 still carries', () => {
+  // The primary repository is the first registered project's now; a stored `repository` must not disable the Source.
+  expect(githubKind.schema.parse({ repository: 'acme/legacy', cli: 'gh', observeIssues: true })).toEqual({ cli: 'gh', pollSeconds: 60,
+    failuresBeforeError: 3, observeIssues: true, observePulls: false, observeComments: false, observeCi: false })
 })
 describe('feishu event consumer', () => {
   let dir: string

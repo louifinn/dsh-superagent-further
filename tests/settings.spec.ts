@@ -100,15 +100,26 @@ it('records nothing for a pause that changes nothing, refuses a sync while setup
   vi.mocked(Setup.prototype.configured).mockRestore()
   expect(() => settings.block('source:x')).toThrow(new UserError('unknownBlock', { block: 'source:x' }))
 })
-it('accepts an unbound GitHub Source when it validates a save, so an installation returns to its first-run state', async () => {
+it('accepts a GitHub Source saved without a CLI, and verifies any other account change against the first project\'s repository', async () => {
   h = await startRuntime()
   const { setup, store } = h.runtime
   const current = store.settings()
   const unbound = { ...current, sources: { ...current.sources, github: { enabled: true, config: {} } } }
   await expect(setup.checkAccounts('source:github', unbound)).resolves.toBeUndefined()
-  // Every other GitHub account change is still verified before it is stored.
-  const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { repository: 'acme/widgets' } } } }
+  // Every other GitHub account change is still verified before it is stored; the repository is the first project's.
+  const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { cli: 'dsh-superagent-missing-gh' } } } }
   await expect(setup.checkAccounts('source:github', partial)).rejects.toThrow(SetupError)
+})
+it('stores the GitHub Source without the retired repository setting and checks the first project\'s repository instead', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const block = settings.block('source:github')
+  const value = block.value as { enabled: boolean; config: Record<string, unknown> }
+  const saved = await settings.save('source:github', { enabled: true, config: { ...value.config, repository: 'acme/legacy' } }, block.revision, 'panel')
+  expect(saved.saved).toBe(true)
+  // The Source schema drops the retired field, and saving checked push access to the first project's acme/widgets instead.
+  expect(store.settings().sources.github?.config).toMatchObject({ cli: value.config.cli })
+  expect(store.settings().sources.github?.config).not.toHaveProperty('repository')
 })
 
 it("refuses a tool-originated change of the registered projects, and accepts the panel's", async () => {
@@ -123,6 +134,22 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   const saved = await settings.save('executor', { ...executor, projects }, revision, 'panel')
   expect(saved.saved).toBe(true)
   expect(store.settings().executor.projects).toEqual(projects)
+})
+
+it('runs setup again when the first project changes the primary repository, and not for the other projects', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const first = await settings.save('executor',
+    { ...store.settings().executor, projects: [{ id: 'other', name: 'Other', workspace: '/w/other', repository: 'acme/other',
+      branch: '' }] }, store.blockRevision('executor'), 'panel')
+  // The primary repository decides the deployment's Thread ids and worker environment, so setup has to verify it again.
+  expect(first.restarting).toBe(true)
+  const added = await settings.save('executor', { ...store.settings().executor, projects: [
+    ...store.settings().executor.projects,
+    { id: 'second', name: 'Second', workspace: '/w/second', repository: 'acme/second', branch: '' },
+  ] }, store.blockRevision('executor'), 'panel')
+  // A later project is polled without touching setup, so the save applies without a restart.
+  expect(added.restarting).toBe(false)
 })
 
 it('saves the default language from the panel only, and the block reads it back', async () => {
