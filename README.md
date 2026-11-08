@@ -53,9 +53,9 @@ The panel, from a real run:
    delivery unit and per project. The Request carries the acknowledgement and the final result; each Ticket
    carries its checkout, Lead, executor and pull request. A Ticket that no registered project can own is refused
    at acceptance with a pointer to **Execution → Projects**.
-4. **Executes.** A project **Lead** Session takes each Ticket for its project, checks out a worktree from the
-   project's local clone, and starts the executor as its own hidden subagent. Inputs, status requests and reports
-   go through the Lead. A person may also talk to the Lead directly.
+4. **Executes.** Each Ticket gets a worktree from its project's local clone and runs as a hidden subagent of that
+   project's **Lead** Session. Inputs, status requests and reports pass through the Lead, and a person may also talk
+   to the Lead directly.
 5. **Delivers.** The worker opens a pull request and reports it. A person reviews and merges. The Source observes
    the merge, the Ticket ends `merged`, and the Request reports one result. Failures stay visible: health, the reply
    queue, the outbox and the log all name what is stuck and what the operator can do next.
@@ -98,9 +98,9 @@ Orchestrator (main Session, `orchestrator-<hash>`)
 
 - The **Orchestrator** keeps Sources, Eval, admission, Policy and cross-project priority. It creates Requests and
   Tickets and dispatches Tickets to Leads; it does not do project-level execution.
-- A **Lead** owns one project: sequencing, retries, escalation, its project's checkout and its executors. It
-  carries the project's context (`Project <name>`, clone, repository, base branch) in its prompt, never changes
-  Policy or settings, and exposes the read-only `lead_status` tool. A person can open it from the panel and write
+- A **Lead** owns one project: its context, its Session and the executors that run as its children. It carries the
+  project's clone, repository and base branch in its prompt, receives each dispatched Ticket, and exposes the
+  read-only `lead_status` tool. It never changes Policy or settings. A person can open it from the panel and write
   to it directly; that is the project's highest-priority human input.
 - Executors are subagents of their Lead. They keep their own Session, checkout and worker preset, but they do not
   appear in the ordinary session list; the Lead is their parent, reports settle through it, and input reaches them
@@ -135,8 +135,8 @@ That direction was settled on 2026-11-08 and the analysis for a later segmented 
 The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
 fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
 execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **137 files, +7714 / −951** at the `0.2.0` line, and the local history started from a byte-identical
-import, so every change below was made by this fork.
+(`8c32a9d`) is **137 files, +7714 / −951** at the current head (the first release on this line was `0.2.0`), and
+the local history started from a byte-identical import, so every change below was made by this fork.
 
 | Area | Prototype | This fork | Why |
 | --- | --- | --- | --- |
@@ -151,7 +151,7 @@ import, so every change below was made by this fork.
 | Engineering | No CI, no release, no changelog; tests assumed POSIX | `check.yml` (3 OS × Node 22/24), `smoke.yml` (real macOS host), `release.yml` (tagged tarball), `.gitattributes`, semver/CHANGELOG, reproducible `verify-install` | Platform regressions and unverifiable installs are exactly the failures a daily tool cannot afford |
 | Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md) and [010 Project-level orchestrator](docs/010-project-orchestrator.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions and their reasons must be readable without the interview that produced them |
 
-### 7.1 Platforms and deployment
+### Platforms and deployment
 
 Every POSIX assumption was replaced with an explicit, tested platform path rather than a shim:
 
@@ -177,7 +177,7 @@ Every POSIX assumption was replaced with an explicit, tested platform path rathe
   locally and on CI, including batch/ACL tests that only run there. `scripts/verify-install` checks the installation
   in either host mode and exits `0/1/2` for ready / broken / waiting for setup.
 
-### 7.2 The project model and the Source
+### The project model and the Source
 
 The prototype's GitHub Source addressed one `repository` and one worker directory. This fork makes the project a
 first-class record on the management surface and derives the Source's work from it. One poll round reads
@@ -188,20 +188,20 @@ repository the agent cannot read is tolerated and reported, rather than failing 
 every watched repository and updates when projects change — the second defect the operator reported when opening the
 project layer.
 
-### 7.3 The Project Lead
+### The Project Lead
 
 The Lead is the fork's main architectural addition, and it is deliberately a **layer**, not a new domain concept: the
 domain still has Sources, Threads, Triggers, Tickets, Assignments, Reports and Attentions. A Lead is a durable Session
 bound to one project, with (1) its own prompt section carrying the project's clone, repository and base branch,
 (2) the preset tools it uses to reach and message its child executors — an executor's input is delivered
 through it, not by prompting a Session it owns — (3) the read-only `lead_status` tool,
-(4) dispatch and report traffic recorded in `lead_message`, schema 13, and (5) no way to change Policy or settings.
+(4) dispatch records in `lead_message`, schema 13, and (5) no way to change Policy or settings.
 Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. The panel shows one row per project
 (Lead Session, running executors, waiting messages) and opens the Lead when a person clicks it. Lead-hosted input and
 report routing were the P3 work; removing the root worker path was P4, finished on 2026-11-08, so onboarding now
 requires a project and there is one execution path.
 
-### 7.4 Requests above Tickets
+### Requests above Tickets
 
 The prototype's Ticket is the unit of authorized work and one delivery. It stays that way. A Request is the accepted
 human ask that may need several deliveries: it holds the Ticket ids, the single acknowledgement and the single final
@@ -211,7 +211,7 @@ attribute plus a prompt can express. The live proof: one GitHub request created 
 in `louifinn/project-check` and `louifinn/Napkid-Derivate`; PR #18 and PR #12 merged at `00:09Z`, and the Request
 ended `done` at `00:10:25Z`, reporting both pull requests once.
 
-### 7.5 Operations, state and recovery
+### Operations, state and recovery
 
 - **Migrations** — schemas 11–15 reshape records, fill Ticket projects, add Lead messages, add Requests and end
   Requests of already-ended Tickets. Each step runs in the opening transaction; `OLDEST_SCHEMA` and
@@ -228,7 +228,7 @@ ended `done` at `00:10:25Z`, reporting both pull requests once.
 - **Upgrade and rollback** — five documented steps, a backup of `orchestrator.sqlite` with `-wal`/`-shm`, and a
   rollback that restores it and re-runs `verify-install`; the daily path needs no backup unless the schema advanced.
 
-### 7.6 Trust, safety and the worker environment
+### Trust, safety and the worker environment
 
 The prototype left "which Trigger fields are trusted" as an open question. This fork answers it and pins the answer:
 source, thread, actor id, `human`, `addressed`, channel, time, URL, the receiving scope and declared routing metadata
@@ -240,7 +240,7 @@ scoped and documented. Credentials are still broader than ideal *by the operator
 `louibot` token and the current Feishu secret); 006 records where each lives and how to rotate it. Start with a short
 allow list and a test repository, as the responsibility section of the philosophy asks.
 
-### 7.7 Engineering and distribution
+### Engineering and distribution
 
 `pnpm check` is the single check: typecheck, 70 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
@@ -250,7 +250,7 @@ fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces
 lists every source file and spec. The bundle keeps the prototype's id, config shape and CLI-facing behaviour; additions
 are additive settings and panel rows, with a `CHANGELOG` and semver.
 
-### 7.8 What did not change
+### What did not change
 
 The domain model and vocabulary (Source, Thread, Trigger, admission, Ticket, Assignment, Report, Attention, Mandate,
 Policy), the Engine as the only writer with effects/relay/notice delivery, prompt composition and the numbered
@@ -324,7 +324,7 @@ manual for a running installation is 006.
 - [010 Project-level orchestrator](docs/010-project-orchestrator.md): the Orchestrator → Lead → Worker design and its
   decisions
 - [AGENTS.md](AGENTS.md): instructions for coding agents working in this repository
-- [docs/agents/](docs/agents/domain.md): the engineering-skills scaffolding used with coding agents
+- [docs/agents/domain.md](docs/agents/domain.md): the engineering-skills scaffolding used with coding agents
 
 ## Development
 
@@ -337,23 +337,23 @@ pnpm check        # typecheck + tests + build
 - CI (`.github/workflows/check.yml`) runs the same command on Linux, macOS and Windows with Node 22 and 24, so the
   Windows-only paths (batch-file CLIs, ACLs, the service script) run on every push. `.github/workflows/smoke.yml`
   starts a real host on macOS; `.github/workflows/release.yml` runs on a `v*` tag.
-- Linux can be exercised in WSL with Node 22 and pnpm 11.7.0; the helper scripts used during this fork are described
-  in 007 and 009. On Windows, the service script is `scripts\dsh-superagent.cmd` and the panel token is in the newest
-  `.artifacts/dsh-superagent-*.log`.
+- Linux can be exercised in WSL with Node 22 and pnpm 11.7.0; CI runs it on every push. On Windows, the service
+  script is `scripts\dsh-superagent.cmd` and the panel token is in the newest `.artifacts/dsh-superagent-*.log`.
 - Adding a Source is documented in [008](docs/008-cookbook.md); a new source file and spec must be added to the tables
   in 007, because `tests/docs.spec.ts` enforces it.
 
 ## Known limits and next steps
 
 - **macOS has CI and a smoke host, but no hand-run of the visible panel.** The release check in 006 keeps that step
-  for a person; screenshots for the current build are in [docs/](docs/panel-overview.png) and on the release.
+  for a person; [docs/panel-overview.png](docs/panel-overview.png) shows the current build and the release carries
+  the same screenshots.
 - **One host per state directory.** The in-app host and the service script are mutually exclusive; the guard names the
   other host and 006 documents the switch. A second profile (or `scripts/switch-project`) is the current way to have
   two projects hosted separately.
 - **Credentials are broader than ideal by operator decision** (classic `louibot` token, current Feishu secret). The
   upgrade path to a fine-grained token limited to the test repositories is recorded in 006 and 009 but not enforced.
-- **Bootstrap is gone; behavior is not automatic.** Onboarding requires a registered project, and the first request
-  after a fresh install fails until one exists — by design, with a pointer to the page.
+- **A project is now required to start.** A fresh installation reports `projectUnset` until one is registered, and
+  an accepted request that no project can own is refused — by design, with a pointer to the page.
 - **One executor per Ticket.** Multi-executor fan-out inside a Ticket stays a future option; cross-project and
   multi-deliverable work is handled by Requests with several Tickets instead.
 - **The 5 skipped tests on Windows are POSIX-only branches** (the deployment setup fake shell, POSIX file modes,
