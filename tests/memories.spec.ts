@@ -55,6 +55,29 @@ describe('Memories', () => {
     } finally { store.db.close() }
   })
 
+  it('browses by keyword and order, keeps pinned rows first, and counts matches', () => {
+    const { store } = open()
+    try {
+      const lib = store.memories.save({ kind: 'fact', project: 'lib', text: 'Vendor builds are slow.' }, '2026-01-01T00:00:00.000Z')
+      const app = store.memories.save({ kind: 'lesson', project: 'app', text: 'The vendor migration needs a backup.', tags: ['migration'] }, '2026-01-02T00:00:00.000Z')
+      const global = store.memories.save({ kind: 'decision', text: 'Keep releases weekly.' }, '2026-01-03T00:00:00.000Z')
+      expect(store.memories.browse().map(memory => memory.id)).toEqual([global.id, app.id, lib.id])
+      expect(store.memories.browse({ sort: 'oldest' }).map(memory => memory.id)).toEqual([lib.id, app.id, global.id])
+      expect(store.memories.browse({ sort: 'kind' }).map(memory => memory.kind)).toEqual(['decision', 'fact', 'lesson'])
+      expect(store.memories.browse({ sort: 'project' }).map(memory => memory.project)).toEqual(['', 'app', 'lib'])
+      // A pinned row leads every order, because pinning is how a person keeps a fact in view.
+      expect(store.memories.setPinned(lib.id, true)).toMatchObject({ id: lib.id, pinned: true })
+      expect(store.memories.browse({ sort: 'oldest' }).map(memory => memory.id)).toEqual([lib.id, app.id, global.id])
+      expect(store.memories.browse({ sort: 'newest' }).map(memory => memory.id)).toEqual([lib.id, global.id, app.id])
+      expect(store.memories.browse({ query: 'vendor' }).map(memory => memory.id)).toEqual([lib.id, app.id])
+      expect(store.memories.browse({ query: 'migration' }).map(memory => memory.id)).toEqual([app.id])
+      expect(store.memories.countMatching('vendor')).toBe(2)
+      expect(store.memories.countMatching('')).toBe(3)
+      expect(store.memories.setPinned(app.id, false)).toMatchObject({ id: app.id, pinned: false })
+      expect(store.memories.setPinned('missing', true)).toBeUndefined()
+    } finally { store.db.close() }
+  })
+
   it('forgets one memory, removes expired ones, and keeps the schema current', () => {
     const { store, path } = open()
     try {

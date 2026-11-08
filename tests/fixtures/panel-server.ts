@@ -314,12 +314,30 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'GET sources': { answer: sourceStatuses },
   'GET settings': { answer: settingsView },
-  'GET memories': { answer: () => ({ items: server.memories, total: server.memories.length,
-    pinned: server.memories.filter(memory => memory.pinned).length, config: server.settings.memory }) },
+  'GET memories': { query: ['q', 'sort', 'limit'], answer: ({ query }) => {
+    const needle = (query.q ?? '').toLowerCase()
+    const rows = server.memories.filter(memory => !needle
+      || memory.text.toLowerCase().includes(needle) || memory.tags.some(tag => tag.toLowerCase().includes(needle)))
+    const pinnedFirst = (a: typeof rows[number], b: typeof rows[number]) => Number(b.pinned) - Number(a.pinned)
+    const sort = query.sort ?? 'newest'
+    const order = sort === 'oldest' ? (a: typeof rows[number], b: typeof rows[number]) => a.at.localeCompare(b.at)
+      : sort === 'kind' ? (a: typeof rows[number], b: typeof rows[number]) => a.kind.localeCompare(b.kind) || b.at.localeCompare(a.at)
+        : sort === 'project' ? (a: typeof rows[number], b: typeof rows[number]) => a.project.localeCompare(b.project) || b.at.localeCompare(a.at)
+          : (a: typeof rows[number], b: typeof rows[number]) => b.at.localeCompare(a.at)
+    return { items: [...rows].sort((a, b) => pinnedFirst(a, b) || order(a, b)).slice(0, Number(query.limit ?? 50)),
+      matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
+      config: server.settings.memory }
+  } },
   'POST memory/forget': { body: true, answer: ({ body }) => {
     const before = server.memories.length
     server.memories = server.memories.filter(memory => memory.id !== body.id)
     return { forgotten: server.memories.length !== before }
+  } },
+  'POST memory/pin': { body: true, answer: ({ body }) => {
+    const row = server.memories.find(memory => memory.id === body.id)
+    if (row === undefined) return refuse(404, 'Memory not found')
+    row.pinned = body.pinned
+    return { pinned: row.pinned }
   } },
   'POST sources/:id/labels': { answer: () => {
     // Label refresh failures come from the bot CLI and are returned verbatim.

@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
+import { MEMORY_SORTS } from '../memory.ts'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
 import { sourceSkills } from './context.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
@@ -150,6 +151,7 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
   limit: limit(30, 200) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
+const MemoriesQuery = z.object({ q: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'), limit: limit(50, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
@@ -213,10 +215,16 @@ function routes(runtime: HttpHost): Routes {
     // `scripts/dsh-superagent stop` ends a detached service on Windows where no graceful signal can be delivered.
     'POST shutdown': () => { setTimeout(() => { runtime.requestShutdown() }, 0); return { stopping: true } },
     'GET models': () => runtime.models(),
-    'GET memories': () => memoriesView(store),
+    'GET memories': ({ query }) => { const { q, sort, limit } = MemoriesQuery.parse(query); return memoriesView(store, { query: q, sort, limit }) },
     'POST memory/forget': async ({ body }) => {
       const { id } = z.object({ id: z.string().min(1) }).parse(await body())
       return { forgotten: store.memories.forget(id) }
+    },
+    'POST memory/pin': async ({ body }) => {
+      const { id, pinned } = z.object({ id: z.string().min(1), pinned: z.boolean() }).parse(await body())
+      const row = store.memories.setPinned(id, pinned)
+      if (row === undefined) throw new RouteError(404, 'Memory not found')
+      return { pinned: row.pinned }
     },
     'GET prompts': ({ query }) => { const { revision, offset } = PromptsQuery.parse(query); return promptsView(runtime, revision, offset) },
     'PUT prompts': async input => {

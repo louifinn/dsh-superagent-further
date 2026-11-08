@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { MemoryConfigSchema, type MemoryConfig } from '../policy.ts'
 import {
   MemoryInputSchema, MemorySchema, memoryHash, memoryId, memoryScope,
-  type Memory, type MemoryInput,
+  type Memory, type MemoryInput, type MemorySort,
 } from '../memory.ts'
 
 const HEADING = '## Memory\nWhat earlier Sessions learned, decided or were told, carried here so it does not have to be rediscovered. '
@@ -66,6 +66,44 @@ export class Memories {
   /** Every stored memory, newest first, up to `limit`. */
   list(limit = 50): Memory[] {
     return this.rows('SELECT value FROM memory ORDER BY at DESC LIMIT ?', [limit])
+  }
+
+  /**
+   * The Memory page's rows: an optional keyword in the text or tags, ordered by `sort` within the pinned ones (which always
+   * come first, because pinning is how a person keeps a fact visible). `limit` bounds the page.
+   */
+  browse(options: { query?: string; sort?: MemorySort; limit?: number } = {}): Memory[] {
+    const query = options.query?.trim() ?? ''
+    const needle = this.pattern(query)
+    const where = query
+      ? " WHERE (json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"
+      : ''
+    const values: (string | number)[] = query ? [needle, needle] : []
+    const ordering = {
+      newest: 'at DESC', oldest: 'at ASC',
+      kind: "json_extract(value, '$.kind') ASC, at DESC",
+      project: "json_extract(value, '$.project') ASC, at DESC",
+    }[options.sort ?? 'newest']
+    values.push(Math.min(options.limit ?? 50, MAX_ROWS))
+    return this.rows(`SELECT value FROM memory${where} ORDER BY json_extract(value, '$.pinned') DESC, ${ordering} LIMIT ?`, values)
+  }
+
+  /** How many memories match a keyword in their text or tags; everything when the keyword is empty. */
+  countMatching(query = ''): number {
+    const trimmed = query.trim()
+    if (!trimmed) return this.total()
+    const needle = this.pattern(trimmed)
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM memory WHERE (json_extract(value, '$.text') LIKE ? ESCAPE '\\'"
+      + " OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')").get(needle, needle) as { n: number }).n)
+  }
+
+  /** Pins or unpins one memory; returns the stored row, or undefined when no such memory exists. */
+  setPinned(id: string, pinned: boolean): Memory | undefined {
+    const row = this.get(id)
+    if (row === undefined) return undefined
+    const next = MemorySchema.parse({ ...row, pinned })
+    this.db.prepare('UPDATE memory SET value = ? WHERE id = ?').run(JSON.stringify(next), id)
+    return next
   }
 
   /**

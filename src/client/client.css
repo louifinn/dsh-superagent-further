@@ -384,3 +384,14 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 
 /* The Tickets delivering one open Request, shown under its row. */
 .dt-request-tickets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* The Memory page: the keyword and order controls, then one expandable card per stored memory. */
+.dt-memory-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dt-memory-toolbar > :first-child { flex: 1 1 200px; }
+.dt-memory-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-memory-card { padding: 8px 0 8px 28px; display: flex; flex-direction: column; gap: 10px; }
+.dt-memory-text { margin: 0; font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dt-memory-facts { margin: 0; display: grid; grid-template-columns: minmax(88px, max-content) 1fr; gap: 4px 12px; font-size: 12px; line-height: 18px; }
+.dt-memory-fact { display: contents; }
+.dt-memory-fact dt { color: var(--dsw-alias-label-caption); }
+.dt-memory-fact dd { margin: 0; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }

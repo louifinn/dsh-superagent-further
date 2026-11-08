@@ -10,6 +10,10 @@ export type MemoryKind = z.infer<typeof MemoryKindSchema>
 export const MemoryScopeSchema = z.enum(['global', 'project', 'ticket'])
 export type MemoryScope = z.infer<typeof MemoryScopeSchema>
 
+/** How the Memory page orders stored rows: the pinned ones always come first, then this order. */
+export const MEMORY_SORTS = ['newest', 'oldest', 'kind', 'project'] as const
+export type MemorySort = typeof MEMORY_SORTS[number]
+
 /** Where a memory came from: the Trigger, Ticket, Request or Session it was learned in, as far as it is known. */
 export const MemorySourceSchema = z.object({
   trigger: z.string().trim().min(1).optional(),

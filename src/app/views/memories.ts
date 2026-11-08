@@ -1,9 +1,9 @@
 /** The Memory page's view: what is stored, how much of it, and the behavior the panel's controls edit. */
-import type { Memory } from '../../memory.ts'
+import type { Memory, MemorySort } from '../../memory.ts'
 import type { MemoryConfig } from '../../policy.ts'
 import type { Store } from '../store.ts'
 
-/** One stored memory as the panel shows it; the hash and internal source links stay on the host. */
+/** One stored memory as the panel shows it; the hash stays on the host. */
 export interface MemoryView {
   id: string
   scope: Memory['scope']
@@ -12,6 +12,7 @@ export interface MemoryView {
   kind: Memory['kind']
   text: string
   tags: string[]
+  source: Memory['source']
   pinned: boolean
   at: string
   expiresAt?: string
@@ -19,15 +20,31 @@ export interface MemoryView {
 
 export interface MemoriesView {
   items: MemoryView[]
+  /** How many memories are stored in total. */
   total: number
+  /** How many of the stored memories match the page's keyword. */
+  matched: number
   pinned: number
   config: MemoryConfig
 }
 
-/** Build the Memory page view: the newest `limit` rows, the totals, and the settings the page's controls edit. */
-export function memoriesView(store: Store, limit = 50): MemoriesView {
-  const items = store.memories.list(limit).map(({ id, scope, project, ticket, kind, text, tags, pinned, at, expiresAt }) => ({
-    id, scope, project, ticket, kind, text, tags, pinned, at, ...expiresAt === undefined ? {} : { expiresAt },
+/** How the page reads its list: a keyword, an order and a page size. */
+export interface MemoriesOptions {
+  query?: string
+  sort?: MemorySort
+  limit?: number
+}
+
+/** Build the Memory page view: the page's rows, the totals, and the settings the page's controls edit. */
+export function memoriesView(store: Store, options: MemoriesOptions = {}): MemoriesView {
+  const items = store.memories.browse(options).map(({ id, scope, project, ticket, kind, text, tags, source, pinned, at, expiresAt }) => ({
+    id, scope, project, ticket, kind, text, tags, source, pinned, at, ...expiresAt === undefined ? {} : { expiresAt },
   }))
-  return { items, total: store.memories.total(), pinned: store.memories.pinnedTotal(), config: store.settings().memory }
+  return {
+    items,
+    total: store.memories.total(),
+    matched: store.memories.countMatching(options.query ?? ''),
+    pinned: store.memories.pinnedTotal(),
+    config: store.settings().memory,
+  }
 }

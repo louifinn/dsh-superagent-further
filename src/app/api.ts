@@ -3,6 +3,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import type { PromptConfig, Prompts } from './prompts.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'
 import type { HistoryView } from './settings-history.ts'
+import type { MemorySort } from '../memory.ts'
 import type { MemoriesView } from './views/memories.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
@@ -47,8 +48,9 @@ export interface Api {
   'PUT prompts': { body: { config: PromptConfig; baseRevision: number }; response: { revision: number; context_delivery: Delivery } }
   'POST prompts/preview': { body: PromptConfig; response: ReturnType<Prompts['preview']> }
   /** The Memory page: stored memories with their totals and the config the page edits. */
-  'GET memories': { response: MemoriesView }
+  'GET memories': { query?: { q?: string; sort?: MemorySort; limit?: number }; response: MemoriesView }
   'POST memory/forget': { body: { id: string }; response: { forgotten: boolean } }
+  'POST memory/pin': { body: { id: string; pinned: boolean }; response: { pinned: boolean } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

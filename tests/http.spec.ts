@@ -110,19 +110,44 @@ it('acknowledges a shutdown before stopping the runtime, since the process ends 
   expect(stops).toEqual(['shutdown'])
 })
 
-it('lists stored memories and forgets one for the Memory page', async () => {
+it('searches, orders, pins and forgets stored memories for the Memory page', async () => {
+  const browsed: unknown[] = []
+  const pinned: boolean[] = []
   const forgotten: string[] = []
   const rows = [{ id: 'm1', scope: 'global' as const, project: '', ticket: '', kind: 'fact' as const, text: 'A stored fact.',
-    tags: [], pinned: false, at: '2026-01-01T00:00:00.000Z' }]
+    tags: [], source: {}, pinned: false, at: '2026-01-01T00:00:00.000Z' }]
   const call = serve({ store: {
     settings: () => ({ memory: MemoryConfigSchema.parse({}) }),
-    memories: { list: () => rows, total: () => 1, pinnedTotal: () => 0, forget: (id: string) => { forgotten.push(id); return true } },
+    memories: {
+      browse: (options: unknown) => { browsed.push(options); return rows.map(row => ({ ...row, source: {} })) },
+      total: () => 3, countMatching: () => 2, pinnedTotal: () => 1,
+      forget: (id: string) => { forgotten.push(id); return true },
+      setPinned: (id: string, next: boolean) => { pinned.push(next); return { ...rows[0], id, pinned: next } },
+    },
   } })
-  const listed = await call('GET', 'memories')
+  // The page's keyword, order and page size reach the store; the response carries both counts the hint names.
+  const listed = await call('GET', 'memories?q=fact&sort=oldest&limit=25')
   expect(listed.status).toBe(200)
-  expect(listed.body).toMatchObject({ total: 1, pinned: 0, config: { enabled: true, inject: true }, items: [{ id: 'm1', text: 'A stored fact.' }] })
+  expect(listed.body).toMatchObject({ total: 3, matched: 2, pinned: 1, config: { enabled: true, inject: true }, items: [{ id: 'm1' }] })
+  expect(browsed).toEqual([{ query: 'fact', sort: 'oldest', limit: 25 }])
+  // An unknown order falls back to the newest; an omitted keyword is the empty string.
+  expect((await call('GET', 'memories?sort=nonsense')).status).toBe(200)
+  expect(browsed).toHaveLength(2)
+  expect(browsed[1]).toMatchObject({ query: '', sort: 'newest', limit: 50 })
+  expect(await call('POST', 'memory/pin', { id: 'm1', pinned: true })).toEqual({ status: 200, body: { pinned: true } })
+  expect(pinned).toEqual([true])
   expect(await call('POST', 'memory/forget', { id: 'm1' })).toEqual({ status: 200, body: { forgotten: true } })
   expect(forgotten).toEqual(['m1'])
-  // An empty id is rejected before reaching the store.
+  // Empty ids are rejected before reaching the store.
   expect((await call('POST', 'memory/forget', { id: '' })).status).toBe(400)
+  expect((await call('POST', 'memory/pin', { id: '', pinned: true })).status).toBe(400)
+})
+
+it('answers 404 for a memory that is not stored', async () => {
+  const call = serve({ store: {
+    settings: () => ({ memory: MemoryConfigSchema.parse({}) }),
+    memories: { setPinned: () => undefined },
+  } })
+  expect(await call('POST', 'memory/pin', { id: 'gone', pinned: true }))
+    .toEqual({ status: 404, body: { error: 'Memory not found' } })
 })
