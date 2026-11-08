@@ -102,6 +102,31 @@ Explicit requests work in every mode. Start in `observe` and switch to `auto` af
 
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
 
+The built-in rules are named and worded in Chinese, because the operator and every person these Tickets serve read Chinese. Their ids stay stable for Decisions, Mandates and history entries:
+
+| id | Name | Kind of work |
+| --- | --- | --- |
+| `copy` | 文案纠错 | Correcting a typo, wording, punctuation or existing translation |
+| `visual` | 视觉修正 | Local spacing, alignment, overflow or styling with a specified or objectively established target |
+| `bugfix` | 缺陷修复 | Reproducing and fixing a concrete reported defect, with the expectation it can be checked |
+| `feature` | 功能实现 | Implementing a small, settled feature request whose observable result is stated |
+| `docs` | 文档/配置/脚本 | Documentation, configuration or script maintenance with a stated correction |
+| `tests` | 测试与 CI 修复 | Repairing a failing test or CI check without weakening, deleting or skipping coverage |
+| `refactor` | 重构/性能 | Behavior-preserving structural or performance work with a measurable goal |
+| `research` | 调研与报告 | Investigating a question and reporting the answer and its evidence, changing nothing |
+| `review` | 审查（全仓或局部变更） | Reviewing a pull request, branch, commit, change or the repository against a named standard |
+| `qa` | 只读调研问答 | Answering a question from a read-only investigation of the code or repository |
+
+`copy` and `visual` ship enabled, as before. The eight newer categories ship disabled, so upgrading the rule set changes no existing admission behavior; the operator enables a category with its switch on the Eval page once its boundary fits the deployment.
+
+The admission boundary is the same for every category: intent and a deliverable must be clear, and the goal must be objectively checkable. A clear request is accepted even when details are not settled — the worker then pins the scope with one concrete question in the Ticket instead of guessing. A rule never expands its own scope, and a rule's wording does not authorize adjacent changes.
+
+Review and read-only categories end with a report rather than a pull request. Their Ticket scope is the named review subject, repository question or requested report: the worker may read the repository but change nothing. A ready report with findings and evidence completes such a Ticket without a file change, branch or pull request. The acknowledgement names the review or answer that will be delivered.
+
+Two candidate categories are deliberately not part of the active rule set yet: **更改 SuperAgent 配置** and **项目 dsh 自动化任务**. The first needs a controlled way to write and roll back deployment settings, and the second needs the later capability survey (M4) to settle its safety boundary. Neither is authorized by this Policy until such a capability exists and its own rule is added.
+
+Existing installations migrate their rules when the settings are read, not through a schema step. A stored rule pair that is still exactly the old English `copy` and `visual` defaults is replaced by the whole Chinese set; the two original rules stay enabled and the eight newer categories arrive disabled. If the operator renamed or edited a rule, or added or removed one, that change is preserved: each individually untouched built-in is translated in place, a disabled built-in is translated but stays disabled, custom rules stay as they are, and a removed category is never resurrected. An empty rule list stays empty.
+
 For that Ticket, a rule's process and communication requirements override the defaults. A silence rule can suppress an acknowledgement; a review rule can name the required reviewer and approval before merge. Requirements that apply to every Ticket belong in team prompt sections instead.
 
 ## Policy version

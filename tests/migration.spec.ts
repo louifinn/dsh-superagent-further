@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
+import { SCHEMA_VERSION, Store, type SettingsVersion } from '../src/app/store.ts'
 import { KV } from '../src/kv.ts'
+import { DEFAULT_RULES, LEGACY_DEFAULT_RULES } from '../src/policy.ts'
 import { basisOf, reasonsOf, withoutCopies } from '../src/app/migration.ts'
 import { Prompts, composePrompt, defaultPrompts } from '../src/app/prompts.ts'
 import { masterPrompt } from '../src/app/context.ts'
@@ -171,6 +172,36 @@ it('writes a schema 10 database in its current shape once, so nothing reads an o
   const again = new Store(path)
   expect(again.tickets.get('t1')).toEqual(migrated)
   again.close()
+})
+
+it('localizes untouched built-in rules and adds the new categories only to an installation that never edited them', () => {
+  const pristine = join(directory, 'pristine.sqlite')
+  schema10(pristine, { settings: { policy: { rules: LEGACY_DEFAULT_RULES } } })
+  const untouched = new Store(pristine)
+  expect(untouched.settings().policy.rules).toEqual(DEFAULT_RULES)
+  untouched.close()
+
+  const custom = join(directory, 'custom.sqlite')
+  schema10(custom, { settings: { policy: { rules: [{ ...LEGACY_DEFAULT_RULES[0]!, name: '我们的文案纠错' }, { ...LEGACY_DEFAULT_RULES[1]!, enabled: false }] } } })
+  const edited = new Store(custom)
+  expect(edited.settings().policy.rules).toEqual([{ ...LEGACY_DEFAULT_RULES[0]!, name: '我们的文案纠错' },
+    { ...LEGACY_DEFAULT_RULES[1]!, name: '视觉修正', instruction: DEFAULT_RULES[1]!.instruction, enabled: false }])
+  edited.close()
+})
+
+it('normalizes the stored rules of a current-schema installation when it reads them, without a new revision', () => {
+  const path = join(directory, 'current.sqlite')
+  const store = new Store(path)
+  const version: SettingsVersion = { revision: 1, savedAt: '', source: 'panel', block: 'policy', policyVersion: '', policyChanged: false, notified: [],
+    settings: { policy: { rules: LEGACY_DEFAULT_RULES } } as unknown as SettingsVersion['settings'] }
+  store.set(KV.settings.version(1), version)
+  store.set(KV.settings.revision, 1)
+  store.close()
+  const reopened = new Store(path)
+  expect(reopened.settings().policy.rules).toEqual(DEFAULT_RULES)
+  // Reading normalizes: it does not write a settings revision, so the history keeps what the operator actually saved.
+  expect(reopened.settingsHistory()).toHaveLength(1)
+  reopened.close()
 })
 
 it('keeps each message as a receipt of what became of it, with why one was dropped by the code the panel words it by', () => {

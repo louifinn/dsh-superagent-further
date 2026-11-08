@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { LanguageConfigSchema, MemoryConfigSchema, SettingsSchema, assessmentOutcome, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import { DEFAULT_RULES, LEGACY_DEFAULT_RULES, LanguageConfigSchema, MemoryConfigSchema, SettingsSchema, assessmentOutcome, policyEffects,
+  settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
 import type { MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
@@ -276,6 +277,46 @@ it('reads a stored GitHub Source configuration that names a merge account withou
   expect(settings.sources.github!.config).toEqual({ repository: 'acme/widgets', cli: 'gh-agent', pollSeconds: 120 })
 })
 
+describe('localized default rules and their migration', () => {
+  it('ships ten localized categories, in a stable order, when no rules are stored', () => {
+    expect(DEFAULT_RULES.map(rule => rule.id)).toEqual(['copy', 'visual', 'bugfix', 'feature', 'docs', 'tests', 'refactor', 'research', 'review', 'qa'])
+    expect(DEFAULT_RULES.every(rule => /\p{Script=Han}/u.test(rule.name) && /\p{Script=Han}/u.test(rule.instruction))).toBe(true)
+    // The first two keep the ids and positions existing Tickets, decisions and history entries name, and stay enabled as before.
+    expect(DEFAULT_RULES.filter(rule => rule.enabled).map(rule => rule.id)).toEqual(['copy', 'visual'])
+    expect(DEFAULT_RULES.slice(0, 2).map(rule => rule.id)).toEqual(['copy', 'visual'])
+    expect(SettingsSchema.parse({}).policy.rules).toEqual(DEFAULT_RULES)
+  })
+  it('replaces an untouched legacy rule pair with the whole localized set, once', () => {
+    const upgraded = SettingsSchema.parse({ policy: { rules: LEGACY_DEFAULT_RULES } }).policy.rules
+    expect(upgraded).toEqual(DEFAULT_RULES)
+    expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
+  })
+  it('localizes only individually untouched built-ins and never adds, revives or edits operator changes', () => {
+    const renamed = { ...LEGACY_DEFAULT_RULES[0]!, name: 'Copy fixes, ours', enabled: false }
+    const edited = { ...LEGACY_DEFAULT_RULES[1]!, instruction: 'Only fix our banner.' }
+    const pair = SettingsSchema.parse({ policy: { rules: [renamed, { ...LEGACY_DEFAULT_RULES[1]!, enabled: false }] } }).policy.rules
+    // The edited rule stays exactly as it was; the untouched one is localized with its enabled state kept.
+    expect(pair[0]).toEqual(renamed)
+    expect(pair[1]).toMatchObject({ id: 'visual', name: '视觉修正', enabled: false })
+    expect(pair).toHaveLength(2)
+    // An edited neighbour does not stop an untouched built-in from being localized, and no category is added.
+    const mixed = SettingsSchema.parse({ policy: { rules: [LEGACY_DEFAULT_RULES[0]!, edited] } }).policy.rules
+    expect(mixed.map(rule => rule.name)).toEqual(['文案纠错', edited.name])
+    expect(mixed[1]).toEqual(edited)
+    // An extra custom rule breaks the pristine pair, so its categories are not added, and the custom rule is untouched.
+    const extra = { id: 'mine', name: '我的规则', enabled: true, instruction: '只改这里。' }
+    const withExtra = SettingsSchema.parse({ policy: { rules: [...LEGACY_DEFAULT_RULES, extra] } }).policy.rules
+    expect(withExtra.map(rule => rule.id)).toEqual(['copy', 'visual', 'mine'])
+    expect(withExtra[2]).toEqual(extra)
+    // A disabled built-in pair localizes in place without being enabled or gaining the new categories.
+    const disabled = LEGACY_DEFAULT_RULES.map(rule => ({ ...rule, enabled: false }))
+    expect(SettingsSchema.parse({ policy: { rules: disabled } }).policy.rules.map(rule => [rule.id, rule.name, rule.enabled]))
+      .toEqual([['copy', '文案纠错', false], ['visual', '视觉修正', false]])
+    // An empty list is an operator choice: it stays empty instead of resurrecting the defaults.
+    expect(SettingsSchema.parse({ policy: { rules: [] } }).policy.rules).toEqual([])
+  })
+})
+
 describe('assessment outcomes', () => {
   const settings = (mode: 'auto' | 'observe') => {
     const parsed = SettingsSchema.parse({})
@@ -301,6 +342,15 @@ describe('assessment outcomes', () => {
     expect(settingsPolicy(auto, scope).admitsInferred(['unknown'])).toBe(false)
     expect(settingsPolicy(auto, scope).admitsInferred([])).toBe(false)
     expect(settingsPolicy(settings('observe'), scope).admitsInferred([enabled])).toBe(false)
+  })
+  it('accepts a matched review or read-only rule when the requested deliverable settled the direction', () => {
+    // These categories ship disabled; an operator who enables them gets the same admission bar as the built-in pair.
+    const base = settings('auto')
+    const current = { ...base, policy: { ...base.policy, rules: DEFAULT_RULES.map(rule => ({ ...rule, enabled: true })) } }
+    const assessments = current.policy.rules.map(rule => ({ rule_id: rule.id, matched: rule.id === 'review' || rule.id === 'qa', reason: 'asked for a review and read-only answer' }))
+    const review = { ...accept(current), rule_assessments: assessments, title: '审查 PR #12', scope: '只读审查',
+      direction: { ...direction, evidence: '请审查这个 PR，并用只读方式回答问题' }, intent_evidence: '请审查这个 PR，并用只读方式回答问题', worktree_name: 'review-pr' }
+    expect(assessmentOutcome(review, current, 'inferred')).toMatchObject({ kind: 'accept', rules: ['review', 'qa'], name: 'review-pr' })
   })
 })
 
