@@ -268,3 +268,23 @@ describe('default language', () => {
     expect(guides.work).toContain("repository's established language")
   })
 })
+
+describe('review and read-only deliverables', () => {
+  it('puts every enabled localized rule in the main Session Policy, in panel order', () => {
+    const settings = SettingsSchema.parse({})
+    const rules = settings.policy.rules.filter(rule => rule.enabled)
+    const text = policySection(settings).text
+    expect(text).toContain('文案纠错')
+    for (const rule of rules) expect(text).toContain(`- ${rule.name} (${rule.id}): ${rule.instruction}`)
+  })
+  it('lets a worker finish a review or read-only answer with no file change or PR, and tells an assessor that deliverable is the request', () => {
+    expect(guides.work).toContain('a review or read-only question authorizes reading and reporting, never editing')
+    expect(guides.work).toContain('a review, research or read-only answer is ready with its findings and evidence in the report')
+    expect(guides.work).toContain('needs no file change, branch or PR')
+    expect(guides.work).toContain('for a review, research or read-only question it means the requested analysis or answer is complete')
+    expect(mainAdmissionPolicy).toContain('a review performed, or a question answered from a read-only investigation')
+    expect(mainAdmissionPolicy).toContain('For a review or read-only research/report category')
+    expect(mainAdmissionPolicy).toContain('set implementation_requested true')
+    expect(mainAdmissionPolicy).toContain('may read the repository but change nothing')
+  })
+})

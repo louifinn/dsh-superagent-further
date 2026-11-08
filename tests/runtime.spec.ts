@@ -334,8 +334,9 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   // The rules are in the main Session's Policy section; the context names the Policy version it was built from.
   expect(details).not.toHaveProperty('rules')
   expect(details).toMatchObject({ trigger_id: trigger.id, strength: 'inferred', policy_version: policyVersion(runtime.store.settings()), thread: expect.objectContaining({ complete: true, loaded_messages: 0 }) })
+  const enabled = () => runtime.store.settings().policy.rules.filter(rule => rule.enabled)
   const decision = (id: string) => ({ trigger_id: id, decision: 'accept', project: 'default', title: '文案修订', worktree_name: 'copy-fix', scope: '改副标题', reason: 'explicit copy change', intent_evidence: 'quoted', acknowledgement: '收到，把副标题改成“浏览网页”。',
-    rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy change' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
+    rule_assessments: enabled().map(rule => ({ rule_id: rule.id, matched: rule.id === 'copy', reason: rule.id === 'copy' ? 'copy change' : 'not this category' })),
     direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'the message names the replacement' } })
   expect(await runTool(runtime.masterId, 'orchestrator_eval_decide', decision(trigger.id))).toMatchObject({ decision: 'ignore', reason: expect.stringContaining('Observe mode') })
   expect(runtime.store.tickets.list()).toEqual([])
@@ -360,8 +361,9 @@ it('accepts silently under a rule that says so, gives the worker the rule proced
   await receive(trigger)
   vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ items: [{ message_id: 'om_20', chat_id: CHAT }] })
   await runTool(runtime.masterId, 'orchestrator_eval', { trigger_id: trigger.id })
+  const enabled = runtime.store.settings().policy.rules.filter(rule => rule.enabled)
   const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', { trigger_id: trigger.id, decision: 'accept', project: 'default', title: '主题图标颜色', worktree_name: 'theme-icon-color', scope: 'bug', reason: 'reported defect', intent_evidence: 'quoted',
-    rule_assessments: [{ rule_id: 'copy', matched: false, reason: 'no' }, { rule_id: 'visual', matched: false, reason: 'no' }, { rule_id: 'silent-bugfix', matched: true, reason: 'bug report' }],
+    rule_assessments: enabled.map(rule => ({ rule_id: rule.id, matched: rule.id === 'silent-bugfix', reason: rule.id === 'silent-bugfix' ? 'bug report' : 'not this category' })),
     direction: { implementation_requested: true, target_basis: 'existing-standard', requires_design_decision: false, evidence: 'expected colour is the light palette' } })
   const ticket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
   expect(runtime.store.replyStatus(key('ack', trigger.id))).toBeUndefined()
@@ -493,10 +495,13 @@ it('shows a message that carries JSON, with or without a label, as its label and
   expect(readable('label: {not json}')).toBe('label: {not json}')
 })
 
-it('ends a ticket on ready when no PR is bound', async () => {
+it('ends a review or read-only ticket on ready with no PR, and delivers its findings as the result', async () => {
   const { ticket, sessionId } = await acceptedTicket()
-  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'done locally' })
+  const findings = '审查完成：未发现阻塞问题。'
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: findings })
   expect(runtime.store.tickets.get(ticket.id)).toMatchObject({ ended: expect.objectContaining({ outcome: 'completed' }) })
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', state: 'ready', summary: findings })
+  expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: findings })).toEqual({ status: 'sent' })
   await expect(runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'late' })).rejects.toThrow('Ticket ended')
 })
 
@@ -779,8 +784,9 @@ it('describes rule edits in the Policy history and skips Policy syncs that chang
   // The sync chat lists exactly the allowed users already, so nothing is saved.
   await runtime.settings.sync('feishu')
   expect(revision()).toBe(before)
-  await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [{ ...settings.policy.rules[0]!, name: '文案' }, { ...settings.policy.rules[1]!, enabled: false }, { id: 'docs', name: '文档', enabled: true, instruction: 'x' }] }, runtime.store.blockRevision('policy'), 'panel')
-  expect(policyHistory(runtime.store, runtime.sources, policyVersion(runtime.store.settings())).items[0]!.changes).toEqual([{ code: 'ruleRenamed', from: 'Copy fixes', to: '文案' }, { code: 'ruleDisabled', name: 'Visual fixes' }, { code: 'ruleAdded', name: '文档' }])
+  const rules = settings.policy.rules.map(rule => rule.id === 'copy' ? { ...rule, name: '文案' } : rule.id === 'visual' ? { ...rule, enabled: false } : rule)
+  await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [...rules, { id: 'extra', name: '补充', enabled: true, instruction: 'x' }] }, runtime.store.blockRevision('policy'), 'panel')
+  expect(policyHistory(runtime.store, runtime.sources, policyVersion(runtime.store.settings())).items[0]!.changes).toEqual([{ code: 'ruleRenamed', from: '文案纠错', to: '文案' }, { code: 'ruleDisabled', name: '视觉修正' }, { code: 'ruleAdded', name: '补充' }])
 })
 
 it('records an admission table change in the Policy history as one line for its Source, with a new Policy version', async () => {

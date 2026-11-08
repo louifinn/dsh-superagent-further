@@ -190,6 +190,23 @@ it('lists each Source\'s bots next to its people and saves them, and sets the Gi
   expect(server.settings.policy.sources.github!.bots).toEqual([{ id: 'dependabot[bot]' }])
 })
 
+it('shows a rule change in the Policy history in Chinese, naming the rule it affected', async () => {
+  server.history.items[1]!.changes = [{ code: 'ruleRenamed', from: '文案纠错', to: '文案修改' },
+    { code: 'ruleInstruction', name: '文案修改' }, { code: 'ruleDisabled', name: '视觉修正' }, { code: 'ruleRemoved', name: '审查' }]
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  // The editor keeps the Chinese rule name and instruction the API returned.
+  expect(all('.dt-rule').map(rule => rule.querySelector('[data-disclosure-row]')!.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('文案修改')]))
+  expect(all('.dt-rule .dt-rule-preview').map(preview => preview.textContent)).toContain('修正明确的文案错误')
+  await click(zh.configHistory)
+  await settle()
+  expect(text()).toContain('规则改名：文案纠错 → 文案修改')
+  expect(text()).toContain('规则条件修改：文案修改')
+  expect(text()).toContain('规则停用：视觉修正')
+  expect(text()).toContain('删除规则：审查')
+})
+
 it('shows the GitHub Source\'s switches for what it receives across the repository, and the admission rows they open, in English', async () => {
   server.settings.sources.github = { ...server.settings.sources.github!, config: { ...server.settings.sources.github!.config,
     observeIssues: true, observeCi: true } }
