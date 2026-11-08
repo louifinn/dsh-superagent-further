@@ -221,7 +221,20 @@ the bootstrap exception for an installation with no project registered yet; P4b 
 a project during onboarding. That step and the bootstrap removal go together: the current host test
 harness accepts Tickets without projects and asserts a root worker Session, so P4b starts by moving the
 harness (and the specifications that assert root deliveries) onto Lead-hosted executors, then makes the
-setup require a project. **P5 — Request bundle.** One acceptance becomes one Request plus 1..N Tickets, one per delivery unit
+setup require a project.
+
+P4b steps, in order: (1) seed a default project in the host test fixture before the Runtime opens,
+so setup passes; (2) `tests/runtime.spec.ts` seeds its own default project and its `route` helper names
+it on an accept that names none; (3) the fixture's fake `subagents.startActivation` delivers the
+activation prompt to the reserved child, as the real spawn provider does; (4) the assertions that read
+root deliveries (`relays(worker)`, `sessions.prompt`) move to the Lead's `sendMessage` and the child's
+deliveries; (5) `dsh --profile …` onboarding and `SETUP.md`/006 require one registered project, so
+`SetupError('projectUnset')` is a first-run state rather than a surprise; (6) the bootstrap escapes in
+the route tool, the assessor, `Executor.prepare` and `DshExecutor.deliverInput` are removed and a live
+Feishu/GitHub run confirms both entry points still end merged. Step (5) belongs with the operator-facing
+onboarding change; the first four are pure tests/fixture work.
+
+**P5 — Request bundle.** One acceptance becomes one Request plus 1..N Tickets, one per delivery unit
 (the Orchestrator splits, using the registered projects and, for a Feishu message, the projects the
 assessment names). Each Ticket keeps today's authority and execution: one project, checkout, Lead, PR
 and end. `after` edges order the Tickets; the Orchestrator dispatches a Ticket to its project's Lead
