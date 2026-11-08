@@ -151,13 +151,14 @@ The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approv
 - [x] Live proof: the operator's GitHub request `90df28d6…` spanned `louifinn/project-check` and `louifinn/Napkid-Derivate` and produced two Tickets (`f1c13ebd…` project-check, `a2b31e18…` derivate), PR #18 and PR #12, both merged at 00:09Z on 2026-11-08, with the Request ended `done` at 00:10:25Z; a Feishu request naming one project still works unchanged.
 ## Sprint 7 checklist
 
-The memory layer answers the real problem found in long Sessions: the conversation is compressed, but what was learned and decided should not have to be rediscovered. It ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine.
+The memory layer answers the real problem found in long Sessions: the conversation is compressed, but what was learned and decided should not have to be rediscovered. It ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine. Scope decision (2026-11-08): the installation-wide scope and an ended Request's summary belong to the Orchestrator; a project Lead writes and reads only its own project, so a Request summary never reaches a Lead.
 
 - [x] Store: schema 16 `memory` table with scopes (installation, project, ticket), kinds (fact, decision, preference, lesson), tags, source, pinning, expiry and content deduplication; `src/memory.ts` and `src/app/memories.ts`, covered by `tests/memories.spec.ts`.
 - [x] Tools: `memory_write`, `memory_search` (keyword in text or tags, scoped, pinned first) and `memory_forget` for the main Session (whole installation) and each project Lead (its own project only); `src/app/tools/memory.ts`, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`.
 - [x] Prompt section: a generated `runtime/memory` part with the pinned and most recent memories, rebuilt per model request within a 1,200-character budget; covered by `tests/memories.spec.ts` and `tests/runtime.spec.ts`.
 - [x] Deterministic recall of work: ending a Ticket or a Request stores a memory derived from the record, with no model call; covered by `tests/runtime.spec.ts`.
 - [ ] Panel: a memory page to browse, pin and forget entries (follow-up).
+- [x] Scope: a project Lead's memory tools and prompt section are limited to its project; the installation-wide scope, including an ended Request's summary, is Orchestrator-only (decided 2026-11-08, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`).
 
 ## Sprint 1 checklist
 

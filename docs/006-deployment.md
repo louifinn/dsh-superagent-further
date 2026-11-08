@@ -318,7 +318,7 @@ The main Session and each project Lead can remember facts that outlive a Session
 
 The composed prompt carries the pinned memories and the most recent others as a generated `runtime/memory` section, rebuilt for every model request within a 1,200-character budget, so a memory stored during a Session is visible to its next turn. The main Session's prompt carries the whole installation's memories; a project Lead's carries only its own project's.
 
-A Ticket and a Request are also remembered deterministically when they end, with no model call: the Ticket's title, project, outcome and time, and the Request's title, Ticket count and outcome. A later Session can recall what happened without replaying the conversation; the same facts remain readable through `orchestrator_read tickets` and `orchestrator_read decisions`.
+A Ticket and a Request are also remembered deterministically when they end, with no model call: the Ticket's title, project, outcome and time, and the Request's title, Ticket count and outcome. The Request's memory is installation-wide, so it belongs to the Orchestrator: a project Lead sees only its own project's Ticket memories, never the Request summary or another project's facts. That division is deliberate (decided 2026-11-08): the Orchestrator is the only role that sees across projects, and one summary avoids duplicating it into every project. A later Session can recall what happened without replaying the conversation; the same facts remain readable through `orchestrator_read tickets` and `orchestrator_read decisions`.
 
 Memories live in the same `orchestrator.sqlite` (`memory` table, schema 16). To clean them, call `memory_forget`; expiry handles the rest.
 
