@@ -133,16 +133,15 @@ The project layer is designed in `docs/010-project-orchestrator.md`. This is the
   activation request and tracking, the Lead-hosted launch path, disposal on stop and shutdown, Lead-steered input
   delivery across a restart, the merged-PR end, and the project-aware `WorkerSlots` (per-project `projectWorkers` beside the global `maxWorkers`); the host-level fake-subagent test and the recovery-adoption test pass.)
 - [x] P3 Entry points and panel: the Orchestrator dispatches accepted Tickets to the Lead (the panel Lead row landed, with its payload and Project Leads section, a Lead Session now carries the read-only `lead_status` tool, and a lead-mode launch records its dispatch as a delivered assignment message), input and status requests reach a Lead-hosted child through its Lead, and both real entry points are proven end to end through a Lead (GitHub Issue #9 → PR #10 merged, Feishu message → PR #11 merged, each with the Lead visible and the executor a hidden child); docs 001/003/004/006/007 are updated.
-- [~] P4 Cleanup: the `executor.orchestration` switch is removed; a Project Ticket always runs under its
+- [x] P4 Cleanup: the `executor.orchestration` switch is removed; a Project Ticket always runs under its
   Lead, an acceptance no registered project can own is refused with a pointer to **Execution → Projects**
-  (the operator's decision: one path, no implicit fallback). Left in P4b: move the host test harness
-  and its root-worker assertions onto Lead-hosted executors, then make onboarding require a project and
-  remove the bootstrap root path; the deferred one-Ticket-to-many-executors design is recorded in
-  `docs/010-project-orchestrator.md`.
+  (the operator's decision: one path, no implicit fallback). (Landed: the Lead-only execution path, the
+  host test harness migrated to Lead-hosted executors, `tests/model-surface.spec.ts` driving the Lead
+  harness, and onboarding that requires a project — the bootstrap root path is gone; CI green on `1e92d5a`.)
 
 ## Sprint 6 checklist
 
-The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approved 2026-11-08). Each item ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine. It runs after P4b.
+The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approved 2026-11-08). Each item ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine. It runs after P4.
 
 - [x] Request records: schema 14 adds a Request (the accepted human ask) with its Mandate, Decision, Channels and Tickets; a Ticket gains `requestId` and `after` edges; the migration backfills one Request per existing Ticket so history keeps its identity. Covered by `tests/migration.spec.ts` and `tests/core-engine.spec.ts`.
 - [x] Automatic split at acceptance: one accept creates one Request and 1..N ordinary Tickets, one per delivery unit, chosen by the main Session from the request text and the registered projects; a Feishu acceptance may name several projects; each Ticket still has one project, checkout, Lead and pull request. The accept carries `deliverables` (`project`, `title`, `after` indexes) from the assessment tool or the route tool; `Tickets.create` writes one Ticket per unit (the first keeps the Decision ticket id, later ones `key('ticket', decisionId, index)`) and only the first carries the acknowledgement.

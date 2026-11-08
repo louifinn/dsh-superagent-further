@@ -95,7 +95,7 @@ async function start() {
     const collected = { stdout: reader(answers[argv.join(' ')] ?? ''), stderr: reader('') }
     return { done: Promise.resolve({ exitCode: 0, signal: null }), collected }
   } }
-  const agents = new Map<string, { status: string }>()
+  const agents = new Map<string, Record<string, any>>()
   const tools = new Map<string, Map<string, Tool>>()
   const sections = new Map<string, Section>()
   const skills = new Map<string, Skill[]>()
@@ -128,17 +128,42 @@ async function start() {
       inject: record, status: 'idle', cancel: () => {}, whenIdle: async () => {}, session } as never)
   }
   const resolveAgent = async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } }
+  /** The Lead's side of the DSH subagent service: a start creates the reserved child, which records its tools and prompts. */
+  const subagents = {
+    startActivation: async (spec: { childId: string; request: { prompt: unknown[]; parent: { id: string }; agentPreset: string } }) => {
+      await create({ sessionId: spec.childId })
+      const child = agents.get(spec.childId) as unknown as { session: { header?: unknown }; status: string; followup: (message: unknown) => void }
+      child.session.header = { parentSession: spec.request.parent.id, agentPreset: spec.request.agentPreset }
+      await ctx.parallel('agent/created', { agent: child } as never)
+      child.followup({ id: 'activation-' + spec.childId, role: 'user', content: spec.request.prompt, source: { kind: 'dsh-superagent', form: 'relay' } })
+      child.status = 'running'
+      return { childId: spec.childId, result: new Promise(() => {}), dispose: async () => {} }
+    },
+    sendMessage: async (_sender: unknown, targetId: string, content: unknown[]) => {
+      const child = agents.get(targetId) as unknown as { status: string; followup: (message: unknown) => void; steer: (message: unknown) => void } | undefined
+      if (!child) throw new Error('Session ' + targetId + ' not found')
+      const message = { id: 'message-' + targetId, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } }
+      if (child.status === 'idle') child.followup(message)
+      else child.steer(message)
+      return 'message-' + targetId
+    },
+    interrupt: async () => {}, waitForChildren: async () => {}, listChildren: async () => [],
+    drainChildren: async () => {}, drainDescendants: async () => {},
+  }
   const ctx = new Context()
   const history = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
   const services = { agents, llm: { resolveCallConfig: async (value: unknown) => value },
     workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) },
     sessionController: { create, resolveAgent, selectModel: async () => {}, rename: async () => {}, inspect: async () => ({ events: [] }) },
     sessionPersistence: { flush: async () => {}, open: async () => history }, permissionPresets: { set: () => {} }, subprocess,
-    webServer: { host: '127.0.0.1', port: 3082, register: () => () => {} } }
+    webServer: { host: '127.0.0.1', port: 3082, register: () => () => {} }, subagents } as Record<string, unknown>
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   const seed = new Store(join(directory, 'orchestrator.sqlite'))
   const github = { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }
-  seed.saveSettings(SettingsSchema.parse({ ...seed.settings(), sources: { github, feishu: { enabled: true, config: { cli: BOT } } } }))
+  const project = { id: 'default', name: 'Default', workspace: directory, repository: 'acme/widgets', branch: '' }
+  const seeded = seed.settings()
+  seed.saveSettings(SettingsSchema.parse({ ...seeded, executor: { ...seeded.executor, projects: [project] },
+    sources: { github, feishu: { enabled: true, config: { cli: BOT } } } }))
   seed.close()
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), () => {})
   await runtime.ready
@@ -164,7 +189,7 @@ async function drive(host: Host) {
   const request = feishu('1', '@bot 修一下回归'), thanks = feishu('3', '@bot 谢谢'), chat = feishu('4', '中午吃什么', { mentions: [] })
   await runtime.receive(request); await runtime.receive(thanks); await runtime.receive(chat)
   const routed = await run(master, 'orchestrator_route', { decisions: [
-    { kind: 'accept', trigger_id: request.id, title: '修复回归', worktree_name: 'fix-regression', acknowledgement: '收到，修复回归。' },
+    { kind: 'accept', trigger_id: request.id, project: 'default', title: '修复回归', worktree_name: 'fix-regression', acknowledgement: '收到，修复回归。' },
     { kind: 'ignore', trigger_id: thanks.id, reason: 'Thanks only.' }, { kind: 'ignore', trigger_id: chat.id, reason: 'Lunch chat.' }] }) as
     { results: { decision?: string; reason?: string; ticket?: { ticket_id: string } }[] }
   expect(routed.results.map(result => result.decision)).toEqual(['accept', 'ignore', 'ignore'])
@@ -176,7 +201,7 @@ async function drive(host: Host) {
   await runtime.receive(proposal)
   vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ items: [{ message_id: 'om_5', chat_id: CHAT }] })
   await run(master, 'orchestrator_eval', { trigger_id: proposal.id })
-  const proactive = (await run(master, 'orchestrator_eval_decide', { trigger_id: proposal.id, decision: 'accept', title: '文案修订', worktree_name: 'copy-fix',
+  const proactive = (await run(master, 'orchestrator_eval_decide', { trigger_id: proposal.id, decision: 'accept', project: 'default', title: '文案修订', worktree_name: 'copy-fix',
     scope: '改副标题', reason: 'explicit copy change', intent_evidence: 'quoted', acknowledgement: '收到，把副标题改成“浏览网页”。',
     rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy change' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
     direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'it names the text' } })).ticket as { ticket_id: string }
@@ -286,9 +311,9 @@ function collect(host: Host, { a, b, workerA, workerB, refusal }: Awaited<Return
   return surfaces
 }
 
-// The Lead-hosted execution path replaced the root worker Session this sweep drives. Its contract checks move to a
-// Lead host with the rest of the P4b harness migration (docs/010); until then the suite is skipped instead of running red.
-describe.skip('model surface contract', () => {
+// The sweep drives the Lead-hosted execution path: it registers one project, its fake subagent service starts and messages
+// the reserved child Session, and the two accepts above name that project (docs/010, P4).
+describe('model surface contract', () => {
 let host: Host
 let sessions: Awaited<ReturnType<typeof drive>>
 let surfaces: Surface[]

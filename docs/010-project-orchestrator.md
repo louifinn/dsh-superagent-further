@@ -67,7 +67,7 @@ own architecture set the facts:
 | Concurrency | 2 executor subagents per Lead by default, 8 globally, both configurable |
 | First slice | Pure foundation layer first: presets, Session governance, message records and project-aware interfaces, with no entry-point change |
 | Unresolvable project | Refuse the acceptance and point at **Execution → Projects**; one path, no implicit fallback |
-| One Ticket, several executors | Deferred inside a Ticket. The operator approved the Request bundle for cross-project work: one acceptance creates one Request plus one Ticket per delivery unit, so parallelism between projects never needs several executors on one Ticket. The analysis for a later segmented fan-out stays in "Splitting work across executors" so the implementation does not drift |
+| One Ticket, several executors | Deferred inside a Ticket, and **settled on 2026-11-08**: one executor per Ticket stands; the recorded analysis stays a future option, not a pending decision. The operator approved the Request bundle for cross-project work: one acceptance creates one Request plus one Ticket per delivery unit, so parallelism between projects never needs several executors on one Ticket |
 | Cross-project requests | A **Request** groups per-delivery Tickets (approved 2026-11-08): one acceptance makes one Request and 1..N ordinary Tickets, each with one project, checkout, Lead and pull request; the Orchestrator creates and coordinates them, a project Lead only executes its own |
 | Dependencies between Tickets | Simple `after` edges: the Orchestrator dispatches a Ticket to its project Lead only once its prerequisites have ended; serial and parallel both fall out of the edges |
 | Delivery and aggregation | One pull request per Ticket (a cross-project request necessarily has several); the Request produces the single acknowledgement, the single final result listing the pull requests, and the single "done" state |
@@ -222,8 +222,9 @@ a `default` project before the Runtime opens, its fake `startActivation` creates
 delivers the activation prompt, its `sendMessage` steers a running child and wakes an idle one, and the
 root-delivery assertions became Lead and child deliveries. `tests/runtime-concurrency.spec.ts` marks
 inputs read by the `trigger_id` the delivered JSON carries (the Lead's message id is its own), and
-`tests/model-surface.spec.ts` is explicitly skipped until its own root-driver harness moves to the Lead
-host. `pnpm check` is green (1301 passed, 12 skipped of 1313); both real entry points still end merged.
+The model-surface sweep now runs on the Lead harness too: it registers a project, its fake subagent
+service starts and messages the reserved child, and both accepts name the project. `pnpm check` is green
+(1308 passed, 5 skipped of 1313); both real entry points still end merged.
 
 A race found while attempting the migration, and fixed ahead of it: a message that arrives while a
 launch is still in flight used to make `Tickets.addInput` call `Executor.start` again, so a second
@@ -249,11 +250,12 @@ one acknowledgement and one result through the fake Sources; a live GitHub reque
 pull requests, and one Request result after both merge; `pnpm check` and the six-combination CI stay
 green.
 
-Status (2026-11-08): the record layer, the split and the one-result notice are built — the `Request` model, the `request` table and accessor, schema 14, a migration that gives each existing Ticket a Request, the accept carrying `deliverables` through the assessment and route tools, one Ticket per delivery unit with `after` edges, `dispatchRequest` starting serial Tickets and ending the Request `done`/`partial`/`stopped`, core-engine tests for all of it, and `src/app/request-notices.ts` sending one result notice per non-GitHub Channel when a multi-Ticket Request ends (the engine emits `request.ended`). A live GitHub request (`90df28d6…`) spanned `louifinn/project-check` and `louifinn/Napkid-Derivate`: two Tickets (`f1c13ebd…`, `a2b31e18…`), PR #18 and PR #12, both merged at 00:09Z, and the Request ended `done` at 00:10:25Z. The panel and the digest now carry the Request view: the overview lists each open Request with its Tickets behind a toggle (a chip opens the Ticket), and the daily digest names each Request in flight with the number of Tickets delivering it. Remaining: the operator's decision on the one-Ticket-many-executors direction, and moving the model-surface
-sweep to a Lead host.
+Status (2026-11-08): the record layer, the split and the one-result notice are built — the `Request` model, the `request` table and accessor, schema 14, a migration that gives each existing Ticket a Request, the accept carrying `deliverables` through the assessment and route tools, one Ticket per delivery unit with `after` edges, `dispatchRequest` starting serial Tickets and ending the Request `done`/`partial`/`stopped`, core-engine tests for all of it, and `src/app/request-notices.ts` sending one result notice per non-GitHub Channel when a multi-Ticket Request ends (the engine emits `request.ended`). A live GitHub request (`90df28d6…`) spanned `louifinn/project-check` and `louifinn/Napkid-Derivate`: two Tickets (`f1c13ebd…`, `a2b31e18…`), PR #18 and PR #12, both merged at 00:09Z, and the Request ended `done` at 00:10:25Z. The panel and the digest now carry the Request view: the overview lists each open Request with its Tickets behind a toggle (a chip opens the Ticket), and the daily digest names each Request in flight with the number of Tickets delivering it. Remaining: none. The model-surface sweep runs on the Lead harness, and the one-Ticket-many-executors
+direction is settled (see the decision table): one executor per Ticket stands and the recorded analysis
+stays a future option, not a pending decision.
 ## Splitting work across executors: alternatives and the recommendation
 
-Status: **analysis, background**; the operator approved the Request bundle below for cross-project work, so ticket-level parallelism stays deferred until a measured latency need. The operator asked
+Status: **analysis, background, settled**: the operator approved the Request bundle below for cross-project work and settled the direction on 2026-11-08 — one executor per Ticket stands, so ticket-level parallelism stays deferred until a measured latency need. The operator asked
 whether a Ticket should be split (into segments, or into several Tickets with a dependency graph),
 what a Ticket actually is, and which design is theoretically best under this project's philosophy.
 
