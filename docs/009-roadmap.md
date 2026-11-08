@@ -6,10 +6,11 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1348 passed and 5 skipped (1353) on Windows after the Language setting (search, project filter, order, paging), the localized and expanded proactive rules, the derived primary repository and the setup wizard; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1348 passed and 5 skipped (1353) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the localized and expanded proactive rules, the derived primary repository and the setup wizard; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
+- The deployment has one primary repository, derived from the first registered project rather than configured on the GitHub Source: schema 17 removes the Source's own `repository` setting from the stored settings and every saved revision, setup verifies push access to the first project's repository, and unqualified `github:<n>` Thread ids belong to it while every other project's ids are qualified `owner/name#<ref>`.
 - A memory layer outlives Sessions: the main Session and each project Lead can write, search and forget memories (`memory_write`, `memory_search`, `memory_forget`), a runtime-context snapshot carries pinned and recent memories (appended after the cached history, so a write does not rewrite the system prompt), ended Tickets and Requests are remembered deterministically, and the panel's **Memory** page switches injection and automatic writing on or off, edits the limits live, and lists the stored memories as searchable, orderable cards that expand to every stored field and can be pinned or forgotten (schema 16).
 - The operator's default language is a language settings block (Settings → Language): free text, panel-only, revisioned with the other blocks, and carried to every decorated Session in the runtime-context snapshot, so a save applies to the next model request without a restart; the prompts say a Feishu or GitHub reply follows the message it answers and repository artifacts keep the repository's language.
 - The proactive rules are Chinese named and worded: ten categories cover copy, visual, defect, feature, docs/config/scripts, tests and CI, refactor/performance, research and reports, review, and read-only investigation Q&A. An existing installation keeps its operator edits, while an untouched English `copy`/`visual` pair is localized when the settings are read. A review or read-only request can finish ready with its findings and evidence, without a file change, branch or pull request.
@@ -98,7 +99,7 @@ The P2 scope, in the order this session takes it.
   strings pass is a test (`tests/locales.spec.ts`: only names and placeholders may stay in English); the panel screenshots
   for the 0.2.0 build are committed in 005 and attached to the v0.2.0 release (taken with Playwright's Chromium, since
   the system Chrome cannot start headless here); 006 keeps the visible-rendering and real-account steps for a release.
-  strings.
+
 ## Sprint 4 checklist
 
 One installation, several projects. Sprint 3's "several repositories" item used one profile per project; the management
@@ -210,4 +211,14 @@ The setup wizard is how a fresh install reaches its first Ticket without editing
 - [x] Wizard dialog: welcome, the first project with the Execution fields, the GitHub account check, the optional Feishu Source, the default language and a summary; every step can be skipped or revisited, each save writes its settings block with the current revision, and a restart says so; covered by `tests/panel-setup-wizard.spec.tsx`.
 - [x] Entry and memory: the wizard opens by itself on a first run once per browser session, the header **Setup wizard** reopens it afterwards, and the server's record — not the browser — decides across sessions; covered by `tests/panel-setup-wizard.spec.tsx`.
 - [x] Docs: [005 Panel](005-panel.md) describes the dialog, [006 Deployment](006-deployment.md) the first start, and [007 Architecture](007-architecture.md) lists both modules and the panel test.
+
+## Sprint 11 checklist
+
+The primary repository is derived instead of configured, so one project list is the only source of truth for the repository the unqualified Thread ids name. It ends with `pnpm check` green.
+
+- [x] Retired setting: schema 17 removes the GitHub Source's own `repository` setting from the stored settings and every saved revision, and a Source started from an old configuration drops it; covered by `tests/migration.spec.ts` and `tests/sources.spec.ts`.
+- [x] Derived primary repository: setup takes the first registered project's repository as the deployment's primary repository, checks push access to it, and asks again when the first project changes; covered by `tests/settings.spec.ts`.
+- [x] Thread ids and polling: the primary repository keeps the plain `github:<n>` Thread id, every other project's ids are qualified `owner/name#<ref>`, and every registered project is polled; covered by `tests/sources.spec.ts`.
+- [x] Panel: the Source card lists the watched repositories and marks the primary one, and has no repository field; covered by `tests/panel-source.spec.tsx`.
+- [x] Docs: [001 Domain model](001-domain.md), [006 Deployment](006-deployment.md) and [007 Architecture](007-architecture.md) describe the derived primary repository, and [005 Panel](005-panel.md) the Source card.
 
