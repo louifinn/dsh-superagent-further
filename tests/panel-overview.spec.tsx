@@ -48,6 +48,23 @@ it('shows one row per registered project with its Lead Session, executors and wa
   expect(server.opened).toContain('lead-app')
 })
 
+it('shows one row per open Request and lists its Tickets behind a toggle', async () => {
+  server.asks = [{ id: 'ask-1', title: '两个项目', createdAt: '2026-09-23T00:00:00Z', tickets: [
+    { id: 't71', title: '在 App 加文件', project: 'app', stage: 'working' },
+    { id: 't72', title: '在 Lib 加文件', project: 'lib', stage: 'person' }] }]
+  await mount()
+  expect(all('.dt-section-title').map(title => title.textContent)).toContain('待交付请求1')
+  const section = all('.dt-section').find(item => item.querySelector('.dt-section-title')?.textContent === '待交付请求1')!
+  const row = section.querySelector('.dt-request')!
+  expect(row.textContent).toContain('两个项目')
+  expect(row.textContent).toContain(zh.requestTicketsLabel)
+  expect(row.textContent).toContain('2')
+  // The Tickets stay hidden until the Request row opens.
+  expect(row.querySelector('.dt-request-tickets')).toBeNull()
+  await click(row.querySelector<HTMLElement>('.dt-open')!)
+  expect([...row.querySelectorAll('.dt-request-tickets button')].map(button => button.textContent)).toEqual(['在 App 加文件', '在 Lib 加文件'])
+})
+
 it('names the project a Ticket belongs to', async () => {
   server.person = [ticketSummary({ id: 't7', title: '项目里的工单', project: 'napkid' }, { stage: 'person', action: 'review' })]
   await mount()

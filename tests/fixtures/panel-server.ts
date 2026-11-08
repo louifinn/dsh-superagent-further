@@ -112,6 +112,8 @@ export interface PanelServer {
   outbox: NonNullable<ApiResponse<'GET overview'>>['outbox']
   /** The project Lead rows the overview shows; each test may replace them. */
   leads: NonNullable<ApiResponse<'GET overview'>>['leads']
+  /** The open Request rows the overview shows; each test may replace them. */
+  asks: NonNullable<ApiResponse<'GET overview'>>['requests']
 }
 export let server: PanelServer
 
@@ -206,6 +208,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
     policyVersion: 'abcdef1234567890',
     leads: server.leads,
+    // One row per open Request, with the Tickets that deliver it.
+    requests: server.asks,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -254,7 +258,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },

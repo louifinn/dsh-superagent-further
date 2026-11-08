@@ -1,5 +1,6 @@
 /** Overview page: pending Tickets requiring human action, active system problems, 24-hour flow counts, and Executor load. */
 import { useState, type ReactNode } from 'react'
+import type { ApiResponse } from '../app/api.ts'
 import { usePoll, type Problem } from './api.ts'
 import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
@@ -58,6 +59,25 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
   }
 }
 
+/** One open Request: its accepted ask, with the Tickets delivering it behind a toggle. */
+function RequestEntry({ request }: { request: ApiResponse<'GET overview'>['requests'][number] }) {
+  const { t, navigate } = usePanel()
+  const [open, setOpen] = useState(false)
+  return <li className="dt-row dt-link dt-request">
+    <div className="dt-row-main">
+      <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap" aria-expanded={open}
+        onClick={() => setOpen(!open)}>{request.title}</button></div>
+      <div className="dt-row-meta">
+        <LabelValue label={t('requestTicketsLabel')} value={String(request.tickets.length)} />
+      </div>
+      {open && <div className="dt-request-tickets">
+        {request.tickets.map(ticket => <Button key={ticket.id} size="sm" variant="outline"
+          onClick={() => navigate({ page: 'execution', id: ticket.id })}>{ticket.title}</Button>)}
+      </div>}
+    </div>
+  </li>
+}
+
 export function OverviewPage() {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
@@ -104,6 +124,10 @@ export function OverviewPage() {
           </div>
         </li>)}
       </ul>
+    </Section>}
+    {/* One row per open Request; open it to see the Tickets that deliver it. */}
+    {data.requests.length > 0 && <Section title={t('requestsTitle')} count={data.requests.length}>
+      <ul className="dt-list">{data.requests.map(request => <RequestEntry key={request.id} request={request} />)}</ul>
     </Section>}
     {data.problems.length > 0 && <Section title={t('problems')} count={data.problems.length}>
       <ul className="dt-list dt-cards">{data.problems.map((problem, index) => <ProblemLine key={index} problem={problem}

@@ -9,7 +9,7 @@ import type { Outbox } from './outbox.ts'
 import type { Store } from './store.ts'
 
 export interface SourceContextDeps {
-  readonly store: Pick<Store, 'atomic' | 'get' | 'set' | 'delete' | 'keys' | 'threads' | 'tickets' | 'triggers' | 'read' | 'settings'>
+  readonly store: Pick<Store, 'atomic' | 'get' | 'set' | 'delete' | 'keys' | 'threads' | 'tickets' | 'triggers' | 'read' | 'settings' | 'requests'>
   readonly outbox: Pick<Outbox, 'send'>
   readonly engine: Pick<EngineForSources, 'bindThread' | 'threadClosed'>
   readonly commands: Commands
@@ -36,6 +36,8 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
   return {
     get deployment() { return deps.deployment },
     get projects() { return deps.store.settings().executor.projects },
+
+  get requests() { return deps.store.requests.list() },
     commands: deps.commands,
     ready: deps.ready,
     configured: () => deps.configured(),

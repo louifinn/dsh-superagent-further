@@ -381,3 +381,6 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-admission-slot { display: inline-flex; flex: none; width: 16px; }
 .dt-info-warn { color: var(--dsw-alias-state-warn-primary); }
 .dt-field-segmented { max-width: 240px; }
+
+/* The Tickets delivering one open Request, shown under its row. */
+.dt-request-tickets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

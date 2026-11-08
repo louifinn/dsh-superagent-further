@@ -10,6 +10,8 @@ import { ticketRow, type ExecutorLoad } from './tickets.ts'
 
 /** One project's Lead in the panel: its Session, and the executors and messages the project holds. */
 export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number }
+/** One open Request in the panel: the accepted ask and the Tickets delivering it, so a cross-project request reads as one row. */
+export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
 import { preview } from './text.ts'
 
 /** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
@@ -70,6 +72,14 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
       attempts: item.attempts, error: item.error } })),
   ]
   const open = store.tickets.open().sort(newestFirst)
+  // One row per open Request, naming the Tickets that deliver it; a Request with one Ticket still reads as one row.
+  const openRequests = store.requests.list().filter(request => !request.ended).map(request => ({
+    id: request.id, title: request.title, createdAt: request.createdAt,
+    tickets: request.ticketIds.flatMap(id => {
+      const ticket = store.tickets.get(id)
+      return ticket ? [{ id: ticket.id, title: ticket.title, project: ticket.project ?? '', stage: ticketStage(ticket).stage }] : []
+    }),
+  }))
   const stats = Object.values(store.read.triggerStats(since))
   const received = stats.reduce((sum, item) => sum + item.received, 0), filtered = stats.reduce((sum, item) => sum + item.filtered, 0)
   const judgement = store.read.flow(since)
@@ -85,6 +95,7 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     projects: settings.executor.projects.map(({ id, name }) => ({ id, name })),
     policyVersion: policyVersionValue,
     leads,
+    requests: openRequests,
   }
 }
 export type OverviewView = ReturnType<typeof overview>

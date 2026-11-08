@@ -6,7 +6,7 @@
  * and no Thread, and it reports its own health entry, so a failed send is visible rather than silent.
  */
 import { setTimeout as delay } from 'node:timers/promises'
-import { ticketStage, type Ticket } from '../core/index.ts'
+import { ticketStage, type Request, type Ticket } from '../core/index.ts'
 import { KV } from '../kv.ts'
 import type { FeishuConfig } from './feishu.ts'
 import { SOURCE } from './feishu-trigger.ts'
@@ -75,7 +75,8 @@ const byProject = (tickets: readonly Ticket[]): [string, Ticket[]][] => {
  * waiting Ticket names a project, the list is grouped under the project names in `names`; otherwise it
  * stays one flat list, exactly as before projects existed.
  */
-export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonly<Record<string, string>> = {}): string => {
+export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonly<Record<string, string>> = {},
+  requests: readonly Request[] = []): string => {
   const person = tickets.filter(ticket => ticketStage(ticket).stage === 'person')
   const working = tickets.length - person.length
   const speakChinese = person.length === 0
@@ -111,6 +112,16 @@ export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonl
     if (ordered.length > shown) lines.push(speakChinese ? `（其余 ${ordered.length - shown} 单见面板。）` : `(${ordered.length - shown} more are in the panel.)`)
     if (working > 0) lines.push(speakChinese ? `另外 ${working} 单在进行。` : `${working} more ${working === 1 ? 'is' : 'are'} working.`)
   }
+  // A Request spans Tickets, so the digest names each one once, rather than leaving cross-project work invisible between rows.
+  const inFlight = requests.filter(request => !request.ended)
+  if (inFlight.length > 0) {
+    lines.push(speakChinese ? `进行中的请求 ${inFlight.length} 个：` : `${inFlight.length} ${inFlight.length === 1 ? 'Request is' : 'Requests are'} in flight:`)
+    for (const request of inFlight.slice(0, SHOWN)) {
+      const count = request.ticketIds.length
+      lines.push(speakChinese ? `· 「${request.title}」（${count} 个工单）` : `· "${request.title}" (${count} ${count === 1 ? 'Ticket' : 'Tickets'})`)
+    }
+    if (inFlight.length > SHOWN) lines.push(speakChinese ? `（其余 ${inFlight.length - SHOWN} 个请求见面板。）` : `(${inFlight.length - SHOWN} more are in the panel.)`)
+  }
   lines.push(speakChinese ? '这条摘要每天一次；工单的实际状态以面板为准。' : 'This summary comes once a day; the panel has the current state.')
   return lines.join('\n')
 }
@@ -140,7 +151,7 @@ export async function digestTick(ctx: SourceContext, now = new Date()): Promise<
   }
   try {
     const names = Object.fromEntries((ctx.projects ?? []).map(({ id, name }) => [id, name]))
-    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now, names))
+    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now, names, ctx.requests ?? []))
     ctx.state.set(KV.feishu.digest, { day, at: now.toISOString() })
     ctx.report('digest', { state: 'ready', detail: 'Sent today', nextAt })
     return 'sent'

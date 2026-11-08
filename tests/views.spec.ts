@@ -175,6 +175,22 @@ it('lists an Eval past its deadline, and as dsh-superagent\'s own errors only pa
   expect(found.filter(item => item.kind === 'source-error').map(item => item.source.health.name)).toEqual(['feishu', 'history'])
 })
 
+it('lists each open Request with the Tickets delivering it, and no ended one', () => {
+  const host = views()
+  live('t1')
+  live('t2')
+  store.tickets.save({ ...store.tickets.get('t1')!, title: '在 App 加文件', project: 'app' })
+  store.tickets.save({ ...store.tickets.get('t2')!, title: '在 Lib 加文件', project: 'lib' })
+  const mandate = store.tickets.get('t1')!.mandate
+  store.requests.save({ id: 'r1', title: '两个项目', decisionId: 'd1', mandate, channels: [], ticketIds: ['t1', 't2'], createdAt: at })
+  store.requests.save({ id: 'r2', title: '已经交付', decisionId: 'd2', mandate, channels: [], ticketIds: ['t3'], createdAt: at,
+    ended: { at, by: 'executor', outcome: 'done' } })
+  const found = overview(host, {}, 'v1', load).requests
+  expect(found).toHaveLength(1)
+  expect(found[0]).toMatchObject({ id: 'r1', title: '两个项目', tickets: [{ id: 't1', title: '在 App 加文件', project: 'app' },
+    { id: 't2', title: '在 Lib 加文件', project: 'lib' }] })
+})
+
 it('says no Source runs when every Source is off, and states a Source missing or off', () => {
   const host = views()
   expect(problems(host).map(item => item.kind)).not.toContain('no-source')

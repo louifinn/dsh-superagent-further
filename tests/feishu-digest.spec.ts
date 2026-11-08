@@ -1,6 +1,6 @@
 /** The Feishu daily digest: what it says and when it sends, through a fake Source context. */
 import { describe, expect, it, vi } from 'vitest'
-import type { Ticket } from '../src/core/index.ts'
+import type { Request, Ticket } from '../src/core/index.ts'
 import { SOURCE } from '../src/sources/feishu-trigger.ts'
 import { digestDay, digestText, digestTick, nextDigest } from '../src/sources/feishu-digest.ts'
 import type { FeishuConfig } from '../src/sources/feishu.ts'
@@ -77,6 +77,18 @@ describe('Feishu digest', () => {
     const text = digestText([], noon())
     expect(text).toContain('今天没有待你处理的工单。Nothing waits for you today.')
     expect(text.split('\n')[0]).toBe('Daily digest · 2026-11-07')
+  })
+
+  it('names each open Request once, with the Tickets delivering it', () => {
+    const request = { id: 'r1', title: '两个项目', decisionId: 'd1', mandate: {}, channels: [], ticketIds: ['a', 'b'],
+      createdAt: '2026-11-01T00:00:00.000Z' } as unknown as Request
+    const text = digestText([], noon(), {}, [request])
+    expect(text).toContain('1 Request is in flight:')
+    expect(text).toContain('两个项目')
+    expect(text).toContain('2 Tickets')
+    // An ended Request is history, not something the digest repeats.
+    expect(digestText([], noon(), {}, [{ ...request, ended: { at: '2026-11-01T00:00:00.000Z', by: 'executor', outcome: 'done' } }]))
+      .not.toContain('in flight:')
   })
 
   it('sends once inside the hour, records the day, and reports the next one', async () => {
