@@ -55,6 +55,20 @@ describe('Lead Sessions', () => {
       expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })
       expect(status.tickets.open).toEqual([])
       expect(status.messages).toEqual([])
+      // A Lead remembers, recalls and forgets only inside its own project; installation-wide memories belong to the
+      // Orchestrator, and another project's memories are invisible unless the Lead is given that project.
+      const mine = host.runtime.store.memories.save({ kind: 'fact', project: 'app', text: 'The app keeps its release notes in docs.' })
+      const other = host.runtime.store.memories.save({ kind: 'fact', project: 'lib', text: 'The lib keeps its release notes in CHANGELOG.' })
+      const global = host.runtime.store.memories.save({ kind: 'preference', text: 'The person prefers release notes in Chinese.' })
+      const visible = (await host.runTool('lead-app', 'memory_search', { query: 'release' })) as { memories: { id: string }[] }
+      expect(visible.memories.map(memory => memory.id)).toEqual([mine.id])
+      await expect(host.runTool('lead-app', 'memory_forget', { id: other.id })).rejects.toThrow(/is stored for project app/)
+      await expect(host.runTool('lead-app', 'memory_write', { text: 'x', project: 'lib' })).rejects.toThrow(/can only remember project app/)
+      const written = (await host.runTool('lead-app', 'memory_write', { text: 'App Tickets run under the lead-app Session.' })) as { project: string }
+      expect(written.project).toBe('app')
+      // The Orchestrator's own memory tools still span the whole installation.
+      const everything = (await host.runTool(host.runtime.masterId, 'memory_search', { query: 'release' })) as { memories: { id: string }[] }
+      expect(everything.memories.map(memory => memory.id).sort()).toEqual([mine.id, other.id, global.id].sort())
       // After the Session is gone from the host, the recorded Lead is recreated under its own id.
       host.agents.delete('lead-app')
       const recovered = await host.runtime.sessions.adoptLead('app', join(host.directory, 'app'), 'Project App')

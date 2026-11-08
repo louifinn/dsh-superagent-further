@@ -58,11 +58,24 @@ export class Memories {
    * first, then the newest; `limit` bounds the page.
    */
   search(query: string, options: { project?: string; ticket?: string; limit?: number } = {}): Memory[] {
-    const needle = `%${query.trim().replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
+    const needle = this.pattern(query)
     const filters = ["(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
     const values: (string | number)[] = [needle, needle]
     if (options.ticket !== undefined) { filters.push('(ticket = ? OR ticket = \'\')'); values.push(options.ticket) }
     if (options.project !== undefined) { filters.push('(project = ? OR project = \'\')'); values.push(options.project) }
+    values.push(Math.min(options.limit ?? 20, 100))
+    return this.rows(`SELECT value FROM memory WHERE ${filters.join(' AND ')} ORDER BY json_extract(value, '$.pinned') DESC, at DESC LIMIT ?`, values)
+  }
+
+  /**
+   * Memories of one project matching a keyword, pinned first, then the newest. Unlike `search`, this is strict: another
+   * project's memories and the installation-wide ones are never returned, which is the scope a project Lead may see.
+   */
+  searchFor(project: string, query: string, options: { ticket?: string; limit?: number } = {}): Memory[] {
+    const needle = this.pattern(query)
+    const filters = ["project = ?", "(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
+    const values: (string | number)[] = [project, needle, needle]
+    if (options.ticket !== undefined) { filters.push('ticket = ?'); values.push(options.ticket) }
     values.push(Math.min(options.limit ?? 20, 100))
     return this.rows(`SELECT value FROM memory WHERE ${filters.join(' AND ')} ORDER BY json_extract(value, '$.pinned') DESC, at DESC LIMIT ?`, values)
   }
@@ -78,8 +91,19 @@ export class Memories {
     return Number(result.changes)
   }
 
-  /** The pinned memories and the most recent others that fit the prompt budget, pinned first (docs/010 design). */
-  promptRows(): Memory[] {
+  /**
+   * The pinned memories and the most recent others that fit the prompt budget, pinned first (docs/010 design). With a
+   * `project`, only memories recorded for that project are returned: a project Lead sees its own project's facts, never
+   * another project's or the installation-wide ones, which belong to the Orchestrator.
+   */
+  promptRows(project?: string): Memory[] {
+    if (project !== undefined) {
+      const pinned = this.rows("SELECT value FROM memory WHERE project = ? AND json_extract(value, '$.pinned') = 1 ORDER BY at DESC LIMIT ?",
+        [project, LIMITS.memoryPinned])
+      const rest = this.rows("SELECT value FROM memory WHERE project = ? AND json_extract(value, '$.pinned') = 0 ORDER BY at DESC LIMIT ?",
+        [project, LIMITS.memoryPromptRows])
+      return [...pinned, ...rest]
+    }
     const pinned = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 1 ORDER BY at DESC LIMIT ?", [LIMITS.memoryPinned])
     const rest = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 0 ORDER BY at DESC LIMIT ?", [LIMITS.memoryPromptRows])
     return [...pinned, ...rest]
@@ -88,10 +112,10 @@ export class Memories {
   /**
    * The generated prompt section for this installation's memories, or an empty string when there are none. It is rebuilt for
    * every model request, so a memory stored now is visible to the next turn, and it stays within `memoryPromptChars` so the
-   * section costs bounded attention.
+   * section costs bounded attention. With a `project`, it carries only that project's memories (a project Lead's scope).
    */
-  promptText(): string {
-    const rows = this.promptRows()
+  promptText(project?: string): string {
+    const rows = this.promptRows(project)
     if (!rows.length) return ''
     const lines: string[] = []
     let used = HEADING.length
@@ -105,8 +129,12 @@ export class Memories {
     return lines.length ? `${HEADING}\n${lines.join('\n')}` : ''
   }
 
-  private rows(sql: string, values: (string | number)[]): Memory[] {
-    const limit = Math.min(Number(values.at(-1) ?? MAX_ROWS), MAX_ROWS)
+  /** The LIKE pattern for a keyword: wildcards inside the query are escaped so they match literally. */
+  private pattern(query: string): string {
+    return `%${query.trim().replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
+  }
+
+  private rows(sql: string, values: (string | number)[]): Memory[] {    const limit = Math.min(Number(values.at(-1) ?? MAX_ROWS), MAX_ROWS)
     if (!Number.isFinite(limit) || limit <= 0) return []
     return this.db.prepare(sql).all(...values).map(row => {
       try { return MemorySchema.parse(JSON.parse(String(row.value))) } catch { return undefined }

@@ -289,8 +289,10 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      // Rebuilt for every model request, so a memory stored during the Session is visible to its next turn.
-      const memory = master || project ? host.store.memories.promptText() : ''
+      // Rebuilt for every model request, so a memory stored during the Session is visible to its next turn. A project Lead
+      // sees only its own project's memories; the main Session sees everything.
+      const memory = master ? host.store.memories.promptText()
+        : project ? host.store.memories.promptText(project.id) : ''
       const composed = project ? composeLeadPrompt(version.config, project, undefined, memory || undefined)
         : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined, memory || undefined)
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
@@ -309,7 +311,11 @@ export class Sessions {
     // A Lead gets the preset's native tools (including delegation) plus its read-only project tools; an Executor Session
     // gets the application tools its worker uses.
     const tools = project ? leadTools(host.store, project) : host.tools(agent, ticket)
-    for (const tool of [...tools, ...master || project ? memoryTools(host.store.memories) : []]) {
+    // The main Session remembers across the installation; a project Lead only inside its own project.
+    const scopedMemoryTools = master ? memoryTools(host.store.memories)
+      : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })
+        : []
+    for (const tool of [...tools, ...scopedMemoryTools]) {
       register(tool.name, tool.description, tool.schema, tool.execute)
     }
     if (master) {

@@ -91,4 +91,27 @@ describe('Memories', () => {
       expect(store.memories.promptText().length).toBeLessThanOrEqual(LIMITS.memoryPromptChars)
     } finally { store.db.close() }
   })
+
+  it('shows a project only its own memories, never the installation-wide or another project\'s ones', () => {
+    const { store } = open()
+    try {
+      const app = store.memories.save({ kind: 'fact', project: 'app', text: 'The app builds with pnpm.' }, '2026-01-02T00:00:00.000Z')
+      store.memories.save({ kind: 'fact', project: 'lib', text: 'The lib builds with cargo.' }, '2026-01-03T00:00:00.000Z')
+      store.memories.save({ kind: 'preference', text: 'Keep replies short.', pinned: true }, '2026-01-01T00:00:00.000Z')
+      // A project Lead's prompt section carries only its own project's memories; the installation-wide preference and the
+      // other project's fact stay out, while the Orchestrator's own prompt still spans everything.
+      expect(store.memories.promptText('app')).toContain('The app builds with pnpm.')
+      expect(store.memories.promptText('app')).not.toContain('Keep replies short.')
+      expect(store.memories.promptText('app')).not.toContain('The lib builds with cargo.')
+      expect(store.memories.promptText('lib')).toContain('The lib builds with cargo.')
+      const all = store.memories.promptText()
+      expect(all).toContain('The app builds with pnpm.')
+      expect(all).toContain('The lib builds with cargo.')
+      expect(all).toContain('Keep replies short.')
+      // The Lead's strict search stays inside its project; the Orchestrator's still spans the installation (newest first).
+      expect(store.memories.searchFor('app', 'builds').map(memory => memory.id)).toEqual([app.id])
+      expect(store.memories.searchFor('app', 'short')).toEqual([])
+      expect(store.memories.search('builds').map(memory => memory.project)).toEqual(['lib', 'app'])
+    } finally { store.db.close() }
+  })
 })

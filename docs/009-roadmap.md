@@ -154,7 +154,7 @@ The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approv
 The memory layer answers the real problem found in long Sessions: the conversation is compressed, but what was learned and decided should not have to be rediscovered. It ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine.
 
 - [x] Store: schema 16 `memory` table with scopes (installation, project, ticket), kinds (fact, decision, preference, lesson), tags, source, pinning, expiry and content deduplication; `src/memory.ts` and `src/app/memories.ts`, covered by `tests/memories.spec.ts`.
-- [x] Tools: `memory_write`, `memory_search` (keyword in text or tags, scoped, pinned first) and `memory_forget` for the main Session and each project Lead; `src/app/tools/memory.ts`, covered by `tests/memories.spec.ts`.
+- [x] Tools: `memory_write`, `memory_search` (keyword in text or tags, scoped, pinned first) and `memory_forget` for the main Session (whole installation) and each project Lead (its own project only); `src/app/tools/memory.ts`, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`.
 - [x] Prompt section: a generated `runtime/memory` part with the pinned and most recent memories, rebuilt per model request within a 1,200-character budget; covered by `tests/memories.spec.ts` and `tests/runtime.spec.ts`.
 - [x] Deterministic recall of work: ending a Ticket or a Request stores a memory derived from the record, with no model call; covered by `tests/runtime.spec.ts`.
 - [ ] Panel: a memory page to browse, pin and forget entries (follow-up).
