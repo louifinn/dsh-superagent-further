@@ -2,13 +2,10 @@
 
 Open **Superagent** in the DeepSeek Harness Web sidebar to supervise the agent. The panel prioritizes work that needs a person, then system health and history. This document builds on [000 Philosophy](000-philosophy.md) through [004 Prompts](004-prompts.md).
 
-![The Overview tab: what needs a person, the last day, and the Executor](panel-overview.png)
-
-The same build on the Source tab, where a polling Source shows when it checks next:
-
-![The Source tab: each Source's health and its next check](panel-sources.png)
-
-Both images are the 0.2.0 build served by a real host; the release check in the deployment guide says when to retake them.
+Open **Superagent** for the Overview tab: what needs a person, the last day, and the Executor. The Source tab adds
+each Source's health and, for a polling Source, when it checks next. The release check in the deployment guide says how
+to capture these views for a release; screenshots are deliberately not committed, because a real host shows the
+operator's workspace and account names.
 
 ## Three questions
 

@@ -36,11 +36,6 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
 | State schema | 15 (`10 → 11 → 12 → 13 → 14 → 15` migrate in place; `scripts/verify-install` reports the schema read-only) |
 
-The panel, from a real run:
-
-![Overview](docs/panel-overview.png)
-![Sources](docs/panel-sources.png)
-
 ## What it does
 
 1. **Listens.** A Source reads GitHub (Issue and PR conversations, reviews, mentions, CI results) and, if
@@ -345,8 +340,8 @@ pnpm check        # typecheck + tests + build
 ## Known limits and next steps
 
 - **macOS has CI and a smoke host, but no hand-run of the visible panel.** The release check in 006 keeps that step
-  for a person; [docs/panel-overview.png](docs/panel-overview.png) shows the current build and the release carries
-  the same screenshots.
+  for a person; screenshots are captured at release time and are deliberately not committed, because they show the
+  operator's real workspace and account names.
 - **One host per state directory.** The in-app host and the service script are mutually exclusive; the guard names the
   other host and 006 documents the switch. A second profile (or `scripts/switch-project`) is the current way to have
   two projects hosted separately.

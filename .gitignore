@@ -4,3 +4,6 @@ lib/
 .env
 coverage/
 dist/
+
+# A screenshot of a real host shows the operator's workspace and account.
+docs/panel-*.png
