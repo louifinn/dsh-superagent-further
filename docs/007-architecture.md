@@ -170,7 +170,7 @@ Its interfaces are grouped by purpose:
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13 and 13 to 14).
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15 and 15 to 16).
 
 ### Effects
 
@@ -246,6 +246,8 @@ Validation inherits an omitted base from the saved override, drops removed parts
 `Sessions` (`src/app/sessions.ts`) manages DeepSeek Harness Sessions for both roles. `ensure` creates a Session with its role's model. `install` follows agent events and registers prompts, skills and tools for managed Sessions.
 
 `ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
+
+`Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and the composed prompt gains a generated `runtime/memory` section with the pinned and most recent items, rebuilt for every model request within its character budget. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call.
 
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
@@ -334,10 +336,13 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
-| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, and 14 to 15 ends the Requests of Tickets that had already ended |
+| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, and 15 to 16 adds the `memory` table the Store creates |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
 | `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
+| `src/memory.ts` | The memory schemas: scope, kind, tags, source, pinning, expiry and the content hash that deduplicates a write |
+| `src/app/memories.ts` | `Memories`: the facts, decisions, preferences and lessons that outlive a Session, searched by the memory tools and rendered into the main Session's and each Lead's prompt section |
+| `src/app/tools/memory.ts` | The memory tools, `memory_write`, `memory_search` and `memory_forget`, for the main Session and each project Lead |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
 | `src/app/effects.ts` | Effects |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |
@@ -431,6 +436,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/lead-dispatch.spec.ts` | The activation request of a Lead-hosted executor, and the activations a host holds, settles and disposes |
 | `tests/lead-messages.spec.ts` | Lead message records: one record per recipient and request id, project listings and undelivered messages, delivery and acknowledgement, and surviving a reopen from schema 12 |
 | `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
+| `tests/memories.spec.ts` | Memories: scope and deduplication, listing and search, forget and expiry, the current schema, and the prompt section's budget |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
@@ -515,7 +521,7 @@ Read caches use bounded in-memory `TextCache` instances and are lost on restart.
 
 Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended), and refuses an older one.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates), and refuses an older one.
 
 ## Model-facing interfaces
 

@@ -186,6 +186,32 @@ export class Runtime extends Service implements SourceHost {
             // A worktree past its retention no longer needs to exist; a fresh one is kept so a person can inspect it.
             void runtime.reclaimFinishedWorktrees()
           }
+          // Remember what ended, deterministically and without a model call, so a later Session can recall it with a tool or
+          // see the pinned and most recent items in its prompt instead of replaying the conversation that produced them.
+          try {
+            if (event.type === 'ticket.ended') {
+              const done = store.tickets.get(event.data.ticketId)
+              if (done?.ended) store.memories.save({
+                kind: 'decision',
+                ticket: done.id,
+                ...done.project === undefined || done.project === '' ? {} : { project: done.project },
+                text: `Ticket "${done.title}"${done.project === undefined || done.project === '' ? '' : ` in project ${done.project}`} ended ${done.ended.outcome} at ${done.ended.at}.`,
+                source: { ticket: done.id, ...done.requestId === undefined ? {} : { request: done.requestId } },
+                tags: [done.ended.outcome],
+              }, done.ended.at)
+            }
+            if (event.type === 'request.ended') {
+              const request = store.requests.get(event.data.requestId)
+              if (request?.ended) store.memories.save({
+                kind: 'decision',
+                text: `Request "${request.title.slice(0, 200)}" (${request.ticketIds.length} Ticket${request.ticketIds.length === 1 ? '' : 's'}) ended ${request.ended.outcome} at ${request.ended.at}.`,
+                source: { request: request.id },
+                tags: [request.ended.outcome],
+              }, request.ended.at)
+            }
+          } catch (error) {
+            ctx.logger.warn('dsh-superagent could not remember a finished item: %s', String(error))
+          }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })

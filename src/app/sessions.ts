@@ -17,6 +17,7 @@ import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { leadTools } from './tools/lead.ts'
+import { memoryTools } from './tools/memory.ts'
 import type { Store } from './store.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
@@ -26,7 +27,7 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
   readonly context: Context
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
@@ -288,8 +289,10 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      const composed = project ? composeLeadPrompt(version.config, project)
-        : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
+      // Rebuilt for every model request, so a memory stored during the Session is visible to its next turn.
+      const memory = master || project ? host.store.memories.promptText() : ''
+      const composed = project ? composeLeadPrompt(version.config, project, undefined, memory || undefined)
+        : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined, memory || undefined)
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
@@ -305,7 +308,8 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     // A Lead gets the preset's native tools (including delegation) plus its read-only project tools; an Executor Session
     // gets the application tools its worker uses.
-    for (const tool of project ? leadTools(host.store, project) : host.tools(agent, ticket)) {
+    const tools = project ? leadTools(host.store, project) : host.tools(agent, ticket)
+    for (const tool of [...tools, ...master || project ? memoryTools(host.store.memories) : []]) {
       register(tool.name, tool.description, tool.schema, tool.execute)
     }
     if (master) {

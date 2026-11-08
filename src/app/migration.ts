@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 15
+export const SCHEMA_VERSION = 16
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -159,6 +159,12 @@ export function migrateTo15(store: Store): void {
     step(`request ${request.id}`, () => store.requests.save({ ...request, ended: { at, by, outcome: stopped ? 'stopped' : done ? 'done' : 'partial' } }))
   }
 }
+/**
+ * Schema 16 keeps the Orchestrator's cross-Session memories in the `memory` table, which the Store creates before this runs;
+ * no schema 15 record changes shape here. The step stays in the sequence so a later record rewrite that belongs to this
+ * version has one place to live, and so a schema 15 database still reaches 16 through the same single transaction.
+ */
+export function migrateTo16(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

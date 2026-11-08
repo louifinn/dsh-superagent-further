@@ -10,6 +10,7 @@ This document turns the prototype into something a team can use every day. It re
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
+- A memory layer outlives Sessions: the main Session and each project Lead can write, search and forget memories (`memory_write`, `memory_search`, `memory_forget`), the prompt carries a generated `runtime/memory` section of pinned and recent items, and ended Tickets and Requests are remembered deterministically (schema 16).
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
 
 ## Principles
@@ -148,6 +149,16 @@ The Request bundle is designed in `docs/010-project-orchestrator.md` (P5, approv
 - [x] Dependency dispatch: the Orchestrator dispatches a Ticket to its project's Lead only once the Tickets it waits on have ended; serial and parallel both fall out of `after`; a failed prerequisite stops the Tickets behind it and asks one question. `dispatchRequest` starts ready Tickets from `Tickets.create` and after every `ticket.ended`, and ends the Request `done`/`partial`/`stopped`; `tests/core-engine.spec.ts` covers the split, the serial start and both Request endings.
 - [x] One acknowledgement, one result, one done: the acknowledgement is sent once at acceptance; the Request ends when all its Tickets end (`done`/`partial`/`stopped`) and `src/app/request-notices.ts` sends one result notice per non-GitHub Channel listing every Ticket and its pull request. The overview lists each open Request with its Tickets behind a toggle (a Ticket chip opens it), and the daily digest names each Request in flight with its Ticket count; `tests/panel-overview.spec.tsx`, `tests/views.spec.ts` and `tests/feishu-digest.spec.ts` cover them.
 - [x] Live proof: the operator's GitHub request `90df28d6…` spanned `louifinn/project-check` and `louifinn/Napkid-Derivate` and produced two Tickets (`f1c13ebd…` project-check, `a2b31e18…` derivate), PR #18 and PR #12, both merged at 00:09Z on 2026-11-08, with the Request ended `done` at 00:10:25Z; a Feishu request naming one project still works unchanged.
+## Sprint 7 checklist
+
+The memory layer answers the real problem found in long Sessions: the conversation is compressed, but what was learned and decided should not have to be rediscovered. It ends with tests, `pnpm check`, CI green on all six combinations, and a live run on this machine.
+
+- [x] Store: schema 16 `memory` table with scopes (installation, project, ticket), kinds (fact, decision, preference, lesson), tags, source, pinning, expiry and content deduplication; `src/memory.ts` and `src/app/memories.ts`, covered by `tests/memories.spec.ts`.
+- [x] Tools: `memory_write`, `memory_search` (keyword in text or tags, scoped, pinned first) and `memory_forget` for the main Session and each project Lead; `src/app/tools/memory.ts`, covered by `tests/memories.spec.ts`.
+- [x] Prompt section: a generated `runtime/memory` part with the pinned and most recent memories, rebuilt per model request within a 1,200-character budget; covered by `tests/memories.spec.ts` and `tests/runtime.spec.ts`.
+- [x] Deterministic recall of work: ending a Ticket or a Request stores a memory derived from the record, with no model call; covered by `tests/runtime.spec.ts`.
+- [ ] Panel: a memory page to browse, pin and forget entries (follow-up).
+
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006

@@ -392,6 +392,9 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   await observePull(runtime.context(githubKind), merged)
   const ended = runtime.store.tickets.get(ticket.id)!
   expect(ended).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'merged' }) })
+  // The ending is remembered deterministically, so a later Session can recall it and the prompt can carry it.
+  expect(runtime.store.memories.search(ticket.title).some(memory => memory.kind === 'decision' && memory.ticket === ticket.id)).toBe(true)
+  expect(runtime.store.memories.promptText()).toContain(ticket.title)
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
   // Its worker's last word was its ready report, so its turn is not cancelled: it ends it itself.

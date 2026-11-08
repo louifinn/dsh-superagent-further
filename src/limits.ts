@@ -15,4 +15,12 @@ export const LIMITS = {
   projectRepository: 200,
   projectBranch: 200,
   worktreeKeepDays: { min: 0, max: 365 },
+  memoryText: 4000,
+  memoryTag: 40,
+  memoryTags: 8,
+  memoryRows: 2000,
+  memoryPromptChars: 1200,
+  memoryPromptRows: 12,
+  memoryPinned: 40,
+  memoryKeepDays: { min: 1, max: 3650 },
 } as const

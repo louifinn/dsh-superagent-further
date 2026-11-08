@@ -312,6 +312,16 @@ The `--state-dir` option names the directory directly, `--json` prints a machine
 
 The checkout keeps no runtime data: the state directory, the database, the worker environment and the worktrees live under `stateDir`, and the analysis of a real run (logs, reports) belongs in `.artifacts/`, which is ignored. The service keeps the newest twenty `.artifacts/dsh-superagent-<profile>-*.log` files when it starts; other files there are yours to keep or delete, so `.artifacts/tmp/` is a scratch area, not a backup.
 
+### Memory
+
+The main Session and each project Lead can remember facts that outlive a Session: a decision, a preference, a lesson or a fact worth not rediscovering. `memory_write` stores short text with a `kind` (`fact`, `decision`, `preference` or `lesson`), optional `tags`, an optional `project` or `ticket` scope, `pinned`, and `expires_in_days`; the same content in the same scope is stored once. `memory_search` finds memories by keyword in their text or tags, optionally within one project or ticket, pinned first; `memory_forget` removes one by id.
+
+The composed prompt carries the pinned memories and the most recent others as a generated `runtime/memory` section, rebuilt for every model request within a 1,200-character budget, so a memory stored during a Session is visible to its next turn. The main Session's prompt gets it, and so does a project Lead's.
+
+A Ticket and a Request are also remembered deterministically when they end, with no model call: the Ticket's title, project, outcome and time, and the Request's title, Ticket count and outcome. A later Session can recall what happened without replaying the conversation; the same facts remain readable through `orchestrator_read tickets` and `orchestrator_read decisions`.
+
+Memories live in the same `orchestrator.sqlite` (`memory` table, schema 16). To clean them, call `memory_forget`; expiry handles the rest.
+
 ### Hourly check
 
 Create the hourly check in the DeepSeek Harness profile you normally use, not in `superagent`. It must keep running when the agent service is down. Ask an agent in that profile to create an hourly schedule using this prompt, with the checkout path filled in:
@@ -434,8 +444,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 15 (current)`, or
-   `schema 10 migrates to 15 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 16 (current)`, or
+   `schema 10 migrates to 16 on start` when the next start is the one that upgrades the database.
 
 Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
 **Default updated** after upgrading.
