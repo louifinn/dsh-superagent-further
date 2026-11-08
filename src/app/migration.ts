@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 14
+export const SCHEMA_VERSION = 15
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -140,6 +140,23 @@ export function migrateTo14(store: Store): void {
       store.requests.save(request)
       store.tickets.save({ ...ticket, requestId: request.id })
     })
+  }
+}
+/**
+ * Ends the Requests that schema 14 created for Tickets which had already ended, so a pre-existing Ticket never shows as
+ * work in flight. A Request with any open Ticket keeps its open state and ends when its last Ticket ends.
+ */
+export function migrateTo15(store: Store): void {
+  for (const request of store.requests.list()) {
+    if (request.ended) continue
+    const tickets = request.ticketIds.map(id => store.tickets.get(id)).filter((ticket): ticket is Ticket => ticket !== undefined)
+    if (tickets.length === 0 || !tickets.every(ticket => ticket.ended)) continue
+    const endings = tickets.map(ticket => ticket.ended!)
+    const at = endings.map(ending => ending.at).sort().at(-1)!
+    const stopped = endings.every(ending => ending.outcome === 'stopped')
+    const done = endings.every(ending => ending.outcome === 'merged' || ending.outcome === 'closed' || ending.outcome === 'completed')
+    const by = endings.some(ending => ending.by === 'human') ? 'human' as const : 'executor' as const
+    step(`request ${request.id}`, () => store.requests.save({ ...request, ended: { at, by, outcome: stopped ? 'stopped' : done ? 'done' : 'partial' } }))
   }
 }
 /**

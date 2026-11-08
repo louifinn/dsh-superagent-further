@@ -571,6 +571,31 @@ it('fills in the project of Tickets accepted before projects existed', () => {
   expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
   store.close()
 })
+it('ends the Request of a Ticket that had already ended before Requests existed', () => {
+  const path = join(directory, 'request-ends.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  const at = '2026-01-01T00:00:00.000Z'
+  const mandate = { strength: 'explicit', policyVersion: 'v1', scope: 'repo',
+    basis: { source: 'github', human: true, addressed: true }, actor: { source: 'github', id: 'alice' } }
+  const ticket = (id: string, ended?: { at: string; by: string; outcome: string }) => JSON.stringify({ id, title: `Fix ${id}`,
+    decisionId: `d-${id}`, mandate, channels: [], assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at,
+    origin: { triggerId: 'tr-1', triggerIds: ['tr-1'] }, requestId: id, ...ended ? { ended } : {} })
+  db.prepare('INSERT INTO ticket VALUES (?,?)').run('t-done', ticket('t-done', { at, by: 'executor', outcome: 'completed' }))
+  db.prepare('INSERT INTO ticket VALUES (?,?)').run('t-open', ticket('t-open'))
+  for (const id of ['t-done', 't-open']) {
+    db.prepare('INSERT INTO request VALUES (?,?)').run(id, JSON.stringify({ id, title: `Fix ${id}`, decisionId: `d-${id}`, mandate,
+      channels: [], ticketIds: [id], createdAt: at }))
+  }
+  db.prepare("UPDATE kv SET value='14' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.requests.get('t-done')?.ended).toMatchObject({ at, by: 'executor', outcome: 'done' })
+  expect(store.requests.get('t-open')?.ended).toBeUndefined()
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  store.close()
+})
+
 it('groups a Ticket from before Requests existed under a Request of its own', () => {
   const path = join(directory, 'requests.sqlite')
   new Store(path).close()

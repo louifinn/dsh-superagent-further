@@ -227,7 +227,7 @@ assessment names). Each Ticket keeps today's authority and execution: one projec
 and end. `after` edges order the Tickets; the Orchestrator dispatches a Ticket to its project's Lead
 only when its prerequisites have ended. The Request produces one acknowledgement, one final result
 listing the pull requests (or the failed Ticket and what landed), and one done state; silence
-otherwise. Schema 14 adds the Request records and backfills one Request per existing Ticket. Panel and
+otherwise. Schema 14 adds the Request records and backfills one Request per existing Ticket; schema 15 ends the Requests whose Tickets had already ended, so history never shows as work in flight. Panel and
 digest show one row per waiting Request and expand to its Tickets; Triggers, Threads and Subscriptions
 keep their keys, so idempotence and history are untouched. The Lead keeps its within-project freedom;
 it never creates Tickets.
