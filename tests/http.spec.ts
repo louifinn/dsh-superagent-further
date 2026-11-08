@@ -166,7 +166,7 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
     configured: () => false,
     masterId: 'master',
     health: {},
-    machine: { stateDir: '/srv/dsh-superagent', promptMaxChars: { get: () => 100_000 },
+    machine: { stateDir: '/srv/dsh-superagent-further', promptMaxChars: { get: () => 100_000 },
       admissionContextMaxPages: { get: () => 20 }, admissionContextTimeoutMs: { get: () => 60_000 } },
   }
   const call = serve(base)

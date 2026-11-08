@@ -45,4 +45,4 @@ jobs:
           if-no-files-found: ignore
       - name: Stop the host if the job is cancelled
         if: always()
-        run: node scripts/dsh-superagent stop --profile smoke --url http://127.0.0.1:3099 || true
+        run: node scripts/dsh-superagent-further stop --profile smoke --url http://127.0.0.1:3099 || true

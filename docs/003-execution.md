@@ -26,9 +26,9 @@ Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory 
 
 Executors of a Ticket whose project is registered run as subagents of that project's Lead Session: the Lead is the parent, the Executor stays out of the Session list, its reports settle through the Lead, and new input reaches it through the Lead rather than by prompting a Session it does not own. A request no registered project can own is refused at acceptance and points at **Execution → Projects**; onboarding requires at least one project before the host starts (`SetupError('projectUnset')`), so there is no root-Session execution path. The root arrangement is otherwise the one described in the next paragraphs.
 
-Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
+Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-further-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
 
-The main Session uses `dsh-superagent-router`, with the same 5-second shell and job-wait limits and a smaller tool set for routing. Sessions retain the preset selected at creation. Worker subagents use DeepSeek Harness's `standard` preset.
+The main Session uses `dsh-superagent-further-router`, with the same 5-second shell and job-wait limits and a smaller tool set for routing. Sessions retain the preset selected at creation. Worker subagents use DeepSeek Harness's `standard` preset.
 
 ### Background work and worker slots
 
@@ -154,7 +154,7 @@ Sessions, directories, Subscriptions, pending messages and the stored work below
 A retry or a restart gives the new Assignment again the messages delivered to the Assignment it replaces that its Executor Session did not take, which a cancel or a cut-off step may have dropped; a copy still waiting in the Session, kept by a restart or persisted across a crash, is taken out before the new Assignment's first message, so the new delivery is the only copy.
 ### Stored work
 
-What dsh-superagent does after a decision, such as relaying a candidate, a follow-up or a report to the main Session, launching an Assignment or delivering an Input, is stored first and done afterwards.
+What dsh-superagent-further does after a decision, such as relaying a candidate, a follow-up or a report to the main Session, launching an Assignment or delivering an Input, is stored first and done afterwards.
 
 A relay or a delivery that fails, such as when its Session cannot be reached, is retried after 2 seconds, then after a delay that doubles up to a minute; a launch that fails fails its Ticket, unless the failure was a passing one, as above.
 

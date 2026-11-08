@@ -4,6 +4,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [semantic versioning](https://semver.org/spec/v2.0.0.html). While it is a research prototype, `0.x` versions may change
 the settings schema and the state database; the upgrade steps in `docs/006-deployment.md` say how to migrate.
 
+## [0.3.0] - 2026-11-09
+
+The package and every registration identity are now `dsh-superagent-further`: the npm package and bundle name, the
+bundle's component and preset ids, the two Source component names, the web client bundle id, the skill names and
+directories, the panel's locale namespace and the checked-in scripts. Existing installations follow the migration
+steps in [006](docs/006-deployment.md#migrating-from-dsh-superagent): replace the profile dependency and bundle entry,
+update the profile patch's package rows, rewrite the Session headers that name the old agent preset ids, and keep the
+existing `stateDir`. The state database needs no rename migration: Source kinds, Thread and Ticket ids, the
+`DSH_SUPERAGENT_*` environment variables and the stored delivery/comment markers keep their pre-0.3.0 values so queued
+work, prepared commands and posted comments stay valid. The README status counts, state schema, panel documentation and
+glossary are brought up to date with the current suite.
+
 ## [0.2.0] - 2026-11-07
 
 The first version that runs natively on Windows and is installable into a profile that already exists.

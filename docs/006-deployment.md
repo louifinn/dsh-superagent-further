@@ -1,6 +1,6 @@
 # 006 Deployment
 
-Use this guide to install, configure and operate dsh-superagent. It covers accounts, startup checks, upgrades and troubleshooting, building on [001 Domain model](001-domain.md) through [005 Panel](005-panel.md).
+Use this guide to install, configure and operate dsh-superagent-further. It covers accounts, startup checks, upgrades and troubleshooting, building on [001 Domain model](001-domain.md) through [005 Panel](005-panel.md).
 
 ## What runs
 
@@ -12,9 +12,9 @@ Plugin configuration holds the state directory and machine limits. Use the panel
 
 ### Permissions and isolation
 
-The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-router` for the main Session. They appear in the DeepSeek Harness preset list but are intended only for dsh-superagent. Do not select them for personal Sessions or disable their configuration rows. The application needs them to create and resume its Sessions.
+The bundle defines `dsh-superagent-further-worker` for Executors and `dsh-superagent-further-router` for the main Session. They appear in the DeepSeek Harness preset list but are intended only for dsh-superagent-further. Do not select them for personal Sessions or disable their configuration rows. The application needs them to create and resume its Sessions.
 
-Opening a blank managed Session in the Web UI can select the profile's default preset. dsh-superagent restores its role-specific preset before the first turn.
+Opening a blank managed Session in the Web UI can select the profile's default preset. dsh-superagent-further restores its role-specific preset before the first turn.
 
 Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
 
@@ -22,17 +22,17 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 
 ## Prerequisites
 
-- Node.js 22.19+ or 24+, pnpm and git 2.32+. macOS, Linux and Windows 10/11 are supported: the service script is plain Node, so Python and tmux are no longer needed. On Windows run it as `scripts\dsh-superagent.cmd` (the `.cmd` wrapper runs the same script)
+- Node.js 22.19+ or 24+, pnpm and git 2.32+. macOS, Linux and Windows 10/11 are supported: the service script is plain Node, so Python and tmux are no longer needed. On Windows run it as `scripts\dsh-superagent-further.cmd` (the `.cmd` wrapper runs the same script)
 - GitHub CLI (`gh`) 2.48 or later. Source CLI fields must point to `gh` or `lark-cli` wrappers; the host relies on their subcommands and output formats.
 - A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
-- A model provider configured for DeepSeek Harness. dsh-superagent uses the profile's default model unless the Eval or Execution settings name another.
+- A model provider configured for DeepSeek Harness. dsh-superagent-further uses the profile's default model unless the Eval or Execution settings name another.
 - For Feishu: `lark-cli` (tested with 1.0.90) and a Feishu or Lark app with a bot
 
 ## Accounts
 
 ### Agent GitHub account
 
-1. Create a GitHub user account for the agent and give it write access to the primary repository and every other repository its projects name. A GitHub App cannot be the agent, because dsh-superagent reads the account's notifications.
+1. Create a GitHub user account for the agent and give it write access to the primary repository and every other repository its projects name. A GitHub App cannot be the agent, because dsh-superagent-further reads the account's notifications.
 2. Give it a GitHub CLI that uses only its own credentials:
 
    ```sh
@@ -46,7 +46,7 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
    gh-agent api user --jq .login
    ```
 
-   Sign in as the agent account; the last command prints its login. dsh-superagent reads the login the same way.
+   Sign in as the agent account; the last command prints its login. dsh-superagent-further reads the login the same way.
 
    On Windows, write the same wrapper as a batch file, `%USERPROFILE%\.local\bin\gh-agent.cmd`, and sign it in from `cmd`:
 
@@ -128,7 +128,7 @@ Run this block once, on a machine that has no `superagent` profile yet:
 
 ```sh
 npm install -g @deepseek-ai/dsh@0.2.2-rc.1
-git clone <this repository> dsh-superagent && cd dsh-superagent
+git clone <this repository> dsh-superagent-further && cd dsh-superagent-further
 pnpm install && pnpm build
 dsh superagent --from-default-profile web --dump-config > /dev/null
 dsh plugin --profile superagent add "link:$PWD"
@@ -136,18 +136,18 @@ dsh plugin --profile superagent add "link:$PWD"
 
 The pinned version above is public; other versions must satisfy `engines.dsh` in `package.json`. If DeepSeek Harness is already installed, as with the desktop app, skip the first line and use the `dsh` it puts on `PATH`.
 
-On Windows, run the same commands from PowerShell or `cmd`: create the profile with `dsh superagent --from-default-profile web --dump-config > $null` and install the bundle with the checkout's path, for example `dsh plugin --profile superagent add "link:C:/src/dsh-superagent"`. Only the executable names differ; the profile and patch files are the same.
+On Windows, run the same commands from PowerShell or `cmd`: create the profile with `dsh superagent --from-default-profile web --dump-config > $null` and install the bundle with the checkout's path, for example `dsh plugin --profile superagent add "link:C:/src/dsh-superagent-further"`. Only the executable names differ; the profile and patch files are the same.
 
 The fourth command creates `~/.dsh/profiles/superagent` from the DeepSeek Harness Web template. The fifth installs this bundle. Set `DSH_HOME` to relocate the default `~/.dsh` directory.
 
-A release tarball installs without a checkout: download `dsh-superagent-<version>.tgz` from the project's GitHub releases, then install it by file path instead of `link:`:
+A release tarball installs without a checkout: download `dsh-superagent-further-<version>.tgz` from the project's GitHub releases, then install it by file path instead of `link:`:
 
 ```sh
 dsh superagent --from-default-profile web --dump-config > /dev/null
-dsh plugin --profile superagent add "file:$HOME/Downloads/dsh-superagent-0.2.0.tgz"
+dsh plugin --profile superagent add "file:$HOME/Downloads/dsh-superagent-further-0.3.0.tgz"
 ```
 
-On Windows use the downloaded path in the same form, for example `dsh plugin --profile superagent add "file:C:/Users/me/Downloads/dsh-superagent-0.2.0.tgz"`. `link:` follows your checkout while you develop; a tarball stays at the version it was packed from, which is what a machine that only runs the agent should use. The tarball contains the built `lib`, the prompts, the skills and the locale files, so no build step is needed after installing it.
+On Windows use the downloaded path in the same form, for example `dsh plugin --profile superagent add "file:C:/Users/me/Downloads/dsh-superagent-further-0.3.0.tgz"`. `link:` follows your checkout while you develop; a tarball stays at the version it was packed from, which is what a machine that only runs the agent should use. The tarball contains the built `lib`, the prompts, the skills and the locale files, so no build step is needed after installing it.
 
 Run the profile-creation command only for a new installation. If the profile already exists, that command replaces it and deletes its `cordis.patch.yml`, including machine configuration. Do not use it for upgrades.
 
@@ -156,16 +156,16 @@ Run the profile-creation command only for a new installation. If the profile alr
 The desktop application keeps its plugins in its own profile (`desktop`), so this bundle can be installed there instead of in a separate `superagent` profile. The orchestrator then runs inside the application and its panel appears in that UI:
 
 ```sh
-git clone <this repository> dsh-superagent && cd dsh-superagent
+git clone <this repository> dsh-superagent-further && cd dsh-superagent-further
 pnpm install && pnpm build
 dsh plugin --profile desktop add "link:$PWD"
 ```
 
-Add the machine configuration to that profile's own `cordis.patch.yml` instead of copying the template: an entry `- id: dsh-superagent` with `stateDir`, and `- id: dsh-superagent-feishu` with `disabled: false` when Feishu is used. The application picks the change up on restart, and `dsh --profile desktop --dump-config` does not work because the application manages that profile exclusively.
+Add the machine configuration to that profile's own `cordis.patch.yml` instead of copying the template: an entry `- id: dsh-superagent-further` with `stateDir`, and `- id: dsh-superagent-further-feishu` with `disabled: false` when Feishu is used. The application picks the change up on restart, and `dsh --profile desktop --dump-config` does not work because the application manages that profile exclusively.
 
-A profile has one host at a time. Point the application and `scripts/dsh-superagent` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
+A profile has one host at a time. Point the application and `scripts/dsh-superagent-further` at the same `stateDir` only if you run exactly one of them; two hosts would poll the same Sources and act on the same Tickets twice.
 
-Switching hosts means quitting the current one, not only unloading the plugin: DeepSeek Harness keeps the orchestrator Session's write handle until the host process exits. Quit the application (or run `scripts/dsh-superagent stop`) and then start the other host. The host that is refused names the state directory the other one holds, the orchestrator Session, and both commands that stop it.
+Switching hosts means quitting the current one, not only unloading the plugin: DeepSeek Harness keeps the orchestrator Session's write handle until the host process exits. Quit the application (or run `scripts/dsh-superagent-further stop`) and then start the other host. The host that is refused names the state directory the other one holds, the orchestrator Session, and both commands that stop it.
 
 The orchestrator applies the worker environment to its whole host process: `PATH` gains `worker-bin`, so `gh` and `lark-cli` resolve to the worker's shims, and `GIT_CONFIG_GLOBAL` points at the agent's git configuration. Installing into a profile you also work in therefore applies those settings to your own Sessions in that application, and the commands you run there act as the agent's accounts. When that separation matters, install into a separate `superagent` profile, as this guide's default does, and restart the application after switching hosts.
 
@@ -177,7 +177,7 @@ The desktop application updates itself, and an upgrade can change the Harness AP
 npm install -g --prefix "$HOME/.dsh-superagent/dsh" "@deepseek-ai/dsh@0.2.2-rc.1" \
   --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs
 export DSH_SUPERAGENT_DSH="$HOME/.dsh-superagent/dsh/dsh"    # dsh.cmd on Windows
-scripts/dsh-superagent start
+scripts/dsh-superagent-further start
 scripts/verify-install --dsh "$DSH_SUPERAGENT_DSH"
 ```
 
@@ -208,11 +208,11 @@ CI runs the whole suite on macOS. `.github/workflows/smoke.yml` also starts a re
 
 1. `git pull && pnpm install --frozen-lockfile && pnpm build` and `pnpm check`; both exit 0.
 2. Create a profile, install the bundle with `link:` and set a `webserver` port and a `stateDir` as the [Install](#install) section shows.
-3. `scripts/dsh-superagent start` exits 3 with "No Execution project is registered.", then `status` exits 3; `scripts/dsh-superagent stop` exits 0 and `status` then exits 1.
+3. `scripts/dsh-superagent-further start` exits 3 with "No Execution project is registered.", then `status` exits 3; `scripts/dsh-superagent-further stop` exits 0 and `status` then exits 1.
 4. `scripts/verify-install --profile <name>` exits 2 before setup and 0 after the agent CLI and a project are saved; `--json` prints the schema line.
 5. The panel opens at the printed URL, and the Superagent sidebar entry renders — compare it with the committed screenshots in [005](005-panel.md).
 6. A direct message on Feishu and a comment that mentions the agent both reach the Source, and one of them ends as a merged pull request.
-7. `scripts/dsh-superagent logs` are the same shape as on Windows and Linux, and `stop` leaves no process behind (`pgrep -f dsh-superagent` is empty).
+7. `scripts/dsh-superagent-further logs` are the same shape as on Windows and Linux, and `stop` leaves no process behind (`pgrep -f dsh-superagent-further` is empty).
 
 Record the result in the release notes, with the macOS version and the DSH version.
 
@@ -226,7 +226,7 @@ Before tagging:
 
 ## Machine configuration
 
-Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there. The `webserver` entry sets the panel's port.
+Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-further-feishu` entry there. The `webserver` entry sets the panel's port.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
@@ -238,11 +238,11 @@ After the first start, edit machine limits in **Settings → Deployment** or the
 ## Start and stop
 
 ```sh
-scripts/dsh-superagent start
-scripts/dsh-superagent status
+scripts/dsh-superagent-further start
+scripts/dsh-superagent-further status
 ```
 
-On Windows the same commands are `scripts\dsh-superagent.cmd start` and `scripts\dsh-superagent.cmd status`; the wrapper takes the same arguments and returns the same exit codes.
+On Windows the same commands are `scripts\dsh-superagent-further.cmd start` and `scripts\dsh-superagent-further.cmd status`; the wrapper takes the same arguments and returns the same exit codes.
 
 `start` launches `dsh --profile superagent --no-open` in the background, with its output in the log file named below, and returns when the runtime is ready or reports a setup requirement. No terminal or `tmux` session stays attached, and the process survives closing the terminal. It waits up to one minute, prints the missing setup information on a first run, and refuses duplicate instances, including ones started outside this script.
 
@@ -265,24 +265,18 @@ A Source that is still starting counts as normal operation. So does a Feishu bot
 
 Each profile stores logs and control files under `.artifacts/`:
 
-- Startup logs: `dsh-superagent-<profile>-<date>-<time>-<pid>.log`, where the pid belongs to the script. The newest 20 are kept.
+- Startup logs: `dsh-superagent-further-<profile>-<date>-<time>-<pid>.log`, where the pid belongs to the script. The newest 20 are kept.
 - Control files: `control/profiles/<profile>/`, containing the stop marker, lock and process id.
 
 Open the URL printed in the log, then choose **Superagent** in the sidebar.
 
-### One project per profile
+### Several projects in one profile
 
-One profile serves one project: one state directory, one set of Sources and one panel port. Running two projects from one profile is not supported, because Sources, Tickets, the allowed lists and the state database are per host.
+One profile serves a team, not a repository: register every project under **Execution → Projects**, and the single GitHub Source polls all their repositories while each Ticket runs in its own project's worktree under that project's Lead. Sources, Tickets, the allowed lists and the state database stay per host, so the rule is one host per state directory; it is not one project per profile.
 
-Give each project its own profile, named after the project:
+A separate profile is still useful when projects need different accounts, panel ports or a different host. Give it its own profile, install the bundle there, set a `webserver` port and a `stateDir` in its `cordis.patch.yml` (the same entries the [Install](#install) section shows), and start it with `scripts/dsh-superagent-further start --profile project-a --url http://127.0.0.1:3083`.
 
-```sh
-dsh plugin --profile project-a add "link:$PWD"
-```
-
-Then set a `webserver` port and a `stateDir` in `~/.dsh/profiles/project-a/cordis.patch.yml` (the same entries the [Install](https://github.com/louifinn/dsh-superagent-further/blob/main/docs/006-deployment.md#install) section shows), and start it with `scripts/dsh-superagent start --profile project-a --url http://127.0.0.1:3083`.
-
-Only one of those projects runs as the service at a time. `node scripts/switch-project <profile>` stops the service-hosted projects that are running, starts the one you name, and prints its panel URL with the token. On Windows use `node scripts\switch-project <profile>`. It reads each profile's panel port from the `webserver` entry of its `cordis.patch.yml`, and refuses with an explanation instead of stopping something whose port it cannot know:
+Only one service-hosted profile runs at a time. `node scripts/switch-project <profile>` stops the service-hosted profiles that are running, starts the one you name, and prints its panel URL with the token. On Windows use `node scripts\switch-project <profile>`. It reads each profile's panel port from the `webserver` entry of its `cordis.patch.yml`, and refuses with an explanation instead of stopping something whose port it cannot know:
 
 ```sh
 node scripts/switch-project project-a
@@ -310,7 +304,7 @@ node scripts/clean-worktrees --profile superagent --older-than 7 --apply
 
 The `--state-dir` option names the directory directly, `--json` prints a machine-readable summary, and on Windows use `node scripts\clean-worktrees.cmd …` or `node scripts\clean-worktrees …`.
 
-The checkout keeps no runtime data: the state directory, the database, the worker environment and the worktrees live under `stateDir`, and the analysis of a real run (logs, reports) belongs in `.artifacts/`, which is ignored. The service keeps the newest twenty `.artifacts/dsh-superagent-<profile>-*.log` files when it starts; other files there are yours to keep or delete, so `.artifacts/tmp/` is a scratch area, not a backup.
+The checkout keeps no runtime data: the state directory, the database, the worker environment and the worktrees live under `stateDir`, and the analysis of a real run (logs, reports) belongs in `.artifacts/`, which is ignored. The service keeps the newest twenty `.artifacts/dsh-superagent-further-<profile>-*.log` files when it starts; other files there are yours to keep or delete, so `.artifacts/tmp/` is a scratch area, not a backup.
 
 ### Memory
 
@@ -333,10 +327,10 @@ Memories live in the same `orchestrator.sqlite` (`memory` table, schema 17; the 
 Create the hourly check in the DeepSeek Harness profile you normally use, not in `superagent`. It must keep running when the agent service is down. Ask an agent in that profile to create an hourly schedule using this prompt, with the checkout path filled in:
 
 ```text
-Check dsh-superagent: run `scripts/dsh-superagent --profile superagent status` in <checkout>. Exit 0: do nothing and say nothing. Exit 2: do not restart; tell me each part under `errors` with its detail, unless you already told me about the same ones. Exit 3: do not restart; tell me what `setup` says setup needs, unless you already told me. If it reports manually_stopped: true, leave it stopped. Otherwise (exit 1) run `scripts/dsh-superagent --profile superagent --respect-stop restart`, which exits the same way: 0 means it recovered, so say nothing; 2 and 3 are reported as above; if it exits 1 or fails otherwise, read the newest .artifacts/dsh-superagent-superagent-*.log and the Troubleshooting section of docs/006-deployment.md, fix what you can, and tell me what was wrong and what you did.
+Check dsh-superagent-further: run `scripts/dsh-superagent-further --profile superagent status` in <checkout>. Exit 0: do nothing and say nothing. Exit 2: do not restart; tell me each part under `errors` with its detail, unless you already told me about the same ones. Exit 3: do not restart; tell me what `setup` says setup needs, unless you already told me. If it reports manually_stopped: true, leave it stopped. Otherwise (exit 1) run `scripts/dsh-superagent-further --profile superagent --respect-stop restart`, which exits the same way: 0 means it recovered, so say nothing; 2 and 3 are reported as above; if it exits 1 or fails otherwise, read the newest .artifacts/dsh-superagent-further-superagent-*.log and the Troubleshooting section of docs/006-deployment.md, fix what you can, and tell me what was wrong and what you did.
 ```
 
-`--respect-stop` preserves an intentional stop. Only `stop` writes the marker; `start` clears it. `restart` writes no marker, so the check can recover a restart whose shutdown timed out. On Windows, use `scripts\dsh-superagent.cmd` in the same prompt.
+`--respect-stop` preserves an intentional stop. Only `stop` writes the marker; `start` clears it. `restart` writes no marker, so the check can recover a restart whose shutdown timed out. On Windows, use `scripts\dsh-superagent-further.cmd` in the same prompt.
 
 ## Settings
 
@@ -344,17 +338,17 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
 1. **Sources.** Set the agent CLI, for example `/home/me/.local/bin/gh-agent` on macOS and Linux, or `C:\Users\me\.local\bin\gh-agent.cmd` on Windows. The Source polls every repository a registered project names, so one installation watches all its projects; the deployment's primary repository is the first project under **Execution → Projects**, and setup verifies the agent's push access to it. The Source card lists every watched repository, the primary one marked **主仓库**, and updates it when a project is added, removed or reordered. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. An Issue or PR of another project's repository gets a Thread id qualified with `owner/name#<number>`, so equal numbers in two repositories cannot collide. A project repository the agent account cannot read is reported in the Source's health (for example `project repositories unreadable: owner/name`) instead of failing the poll round, so one repository without a grant does not stop the others. A read position stays ten minutes behind the newest item it read, so an item GitHub indexes a moment after the listing that should have contained it is listed again next round; the deterministic Trigger id drops the overlap, and a slow round over several repositories cannot step past an event. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
 2. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
-3. **Execution.** The projects this installation works on, then the directory root and a prepare command. **Projects** pairs each local workspace with its remote repository: an identifier (lowercase letters, digits and hyphens), a name, the absolute path of the local clone, `owner/name` of the remote repository, and an optional base branch (empty uses the repository's default). The first project in the list also supplies the deployment's primary repository: setup verifies the agent's push access to it, unqualified GitHub Thread ids refer to it, and the Source card marks it as the primary. Reordering the list moves the primary repository, so such a save restarts dsh-superagent, which verifies the new primary repository again. The list is part of the Execution settings block, so only the management panel or the API can change it. The overview can filter the waiting Tickets by project, shows a **Project Leads** section (one row per registered project: its Lead Session's state, running executors and undelivered messages; a row with a Session opens that Session in the main panel), and the Triggers list filters its Threads by the project each one's repository names, showing that project on the row. The Executor gives each Ticket of a project its own checkout automatically: a new branch `agent/<ticket name>` in `stateDir/work/<project>/<ticket name>`, created with `git worktree add` from the project's local clone at the project's base branch as that clone has it. The clone is not fetched for you, so fetch it yourself (or fetch in a prepare command) when the base branch has to be current. The worker environment names the project and its clone (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`), and `DSH_SUPERAGENT_GITHUB_REPOSITORY` is that project's repository. A request from Feishu names no repository: the main Session sees the registered projects on the candidate card and may accept the work for one (the message may name a project id itself); the Executor refuses an unknown project, and for an accepted single delivery a project that differs from a GitHub Trigger's own repository is refused, so a GitHub request stays in its repository's project. A request spanning several deliveries accepts with `deliverables`: one Request is created with one Ticket per delivery unit, each unit in its own registered project (which may differ from the Trigger's repository), and `after` indexes order the units that must wait. The Request sends the acknowledgement once, and when all of its Tickets end it sends one result notice per IM Channel listing every Ticket and its pull request; GitHub timelines already show each pull request. A request no registered project owns is refused with a pointer to **Execution → Projects**. A PR the worker reports is read from the Ticket's project repository, so a Ticket in a project waits for that merge and ends `merged` like one in the deployment's own repository. A prepare command below replaces the automatic checkout; use it when the Ticket's work has to start from something other than the base branch, such as a pull request's head:
+3. **Execution.** The projects this installation works on, then the directory root and a prepare command. **Projects** pairs each local workspace with its remote repository: an identifier (lowercase letters, digits and hyphens), a name, the absolute path of the local clone, `owner/name` of the remote repository, and an optional base branch (empty uses the repository's default). The first project in the list also supplies the deployment's primary repository: setup verifies the agent's push access to it, unqualified GitHub Thread ids refer to it, and the Source card marks it as the primary. Reordering the list moves the primary repository, so such a save restarts dsh-superagent-further, which verifies the new primary repository again. The list is part of the Execution settings block, so only the management panel or the API can change it. The overview can filter the waiting Tickets by project, shows a **Project Leads** section (one row per registered project: its Lead Session's state, running executors and undelivered messages; a row with a Session opens that Session in the main panel), and the Triggers list filters its Threads by the project each one's repository names, showing that project on the row. The Executor gives each Ticket of a project its own checkout automatically: a new branch `agent/<ticket name>` in `stateDir/work/<project>/<ticket name>`, created with `git worktree add` from the project's local clone at the project's base branch as that clone has it. The clone is not fetched for you, so fetch it yourself (or fetch in a prepare command) when the base branch has to be current. The worker environment names the project and its clone (`DSH_SUPERAGENT_PROJECT`, `DSH_SUPERAGENT_PROJECT_WORKSPACE`), and `DSH_SUPERAGENT_GITHUB_REPOSITORY` is that project's repository. A request from Feishu names no repository: the main Session sees the registered projects on the candidate card and may accept the work for one (the message may name a project id itself); the Executor refuses an unknown project, and for an accepted single delivery a project that differs from a GitHub Trigger's own repository is refused, so a GitHub request stays in its repository's project. A request spanning several deliveries accepts with `deliverables`: one Request is created with one Ticket per delivery unit, each unit in its own registered project (which may differ from the Trigger's repository), and `after` indexes order the units that must wait. The Request sends the acknowledgement once, and when all of its Tickets end it sends one result notice per IM Channel listing every Ticket and its pull request; GitHub timelines already show each pull request. A request no registered project owns is refused with a pointer to **Execution → Projects**. A PR the worker reports is read from the Ticket's project repository, so a Ticket in a project waits for that merge and ends `merged` like one in the deployment's own repository. A prepare command below replaces the automatic checkout; use it when the Ticket's work has to start from something other than the base branch, such as a pull request's head:
 
    ```sh
-   git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
-   git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"
+   git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent-further/$DSH_SUPERAGENT_TICKET" &&
+   git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent-further/$DSH_SUPERAGENT_TICKET"
    ```
 
    On Windows the prepare command runs in PowerShell, so write it that way; this is one line because the command is passed as `-Command`:
 
    ```powershell
-   git -C C:\src\widgets fetch --no-tags "https://github.com/$env:DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "$($env:DSH_SUPERAGENT_GITHUB_PR_HEAD ?? 'HEAD'):refs/dsh-superagent/$env:DSH_SUPERAGENT_TICKET"; git -C C:\src\widgets worktree add -b "agent/$env:DSH_SUPERAGENT_NAME" "$env:DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$env:DSH_SUPERAGENT_TICKET"
+   git -C C:\src\widgets fetch --no-tags "https://github.com/$env:DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "$($env:DSH_SUPERAGENT_GITHUB_PR_HEAD ?? 'HEAD'):refs/dsh-superagent-further/$env:DSH_SUPERAGENT_TICKET"; git -C C:\src\widgets worktree add -b "agent/$env:DSH_SUPERAGENT_NAME" "$env:DSH_SUPERAGENT_DIR" "refs/dsh-superagent-further/$env:DSH_SUPERAGENT_TICKET"
    ```
 
    List personal CLIs, such as one signed in to your own account, as blocked commands.
@@ -362,7 +356,7 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
 ### Language
 
-Settings → Language holds one free-text value, the default language for words a person reads (the `language` settings block; panel-only, revisioned, and listed in that tab's history). Any language name works — for example `简体中文`, `繁體中文`, `English` or `日本語`. Every decorated Session carries it in the runtime-context snapshot (`dsh-superagent-language`), so saving a new language applies to the next model request without a restart or a plugin reload.
+Settings → Language holds one free-text value, the default language for words a person reads (the `language` settings block; panel-only, revisioned, and listed in that tab's history). Any language name works — for example `简体中文`, `繁體中文`, `English` or `日本語`. Every decorated Session carries it in the runtime-context snapshot (`dsh-superagent-further-language`), so saving a new language applies to the next model request without a restart or a plugin reload.
 
 The prompts add the boundaries around that default: the Orchestrator, a Lead and a Worker write what a person reads in this language; a Feishu or GitHub reply follows the language of the message it answers; pull request bodies, commit messages, code comments and file contents keep the repository's established language and conventions; structured fields do not change. This is a context constraint only — there is no language detection, no template layer and no post-generation check.
 
@@ -383,7 +377,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
-| `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
+| `POST setup/check` | Runs setup again by restarting dsh-superagent-further: `restarting: true`. Refused when setup has nothing to fix |
 | `POST shutdown` | Stops the runtime and ends the host process, after answering `stopping: true`. The service script uses it for a graceful stop, because Windows cannot deliver a signal to a detached process |
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
@@ -440,7 +434,7 @@ The process environment that setup writes:
 - **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target.
 - **git configuration** in `<stateDir>/worker-gitconfig`: replaces the operator's global and system git configuration. It selects the agent CLI as the github.com credential helper, rewrites GitHub SSH addresses to HTTPS and defines Git LFS filters. Personal git settings such as an HTTP proxy do not apply. No commit identity is set here, git never prompts for credentials, and `GH_TOKEN` and `GITHUB_TOKEN` are removed.
 
-A file in `worker-bin` or `worker-gitconfig` that dsh-superagent did not write stops setup. A Ticket directory inside a git repository whose own configuration adds credentials fails the Ticket.
+A file in `worker-bin` or `worker-gitconfig` that dsh-superagent-further did not write stops setup. A Ticket directory inside a git repository whose own configuration adds credentials fails the Ticket.
 
 ## Try it
 
@@ -455,7 +449,7 @@ and starts a replacement with a recovery note.
 1. Wait until no Executor is in the middle of a turn (`status` shows no running Assignment).
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
-4. Run `scripts/dsh-superagent restart` (`scripts\dsh-superagent.cmd restart` on Windows); an in-application host restarts the application instead.
+4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
 5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 17 (current)`, or
    `schema 10 migrates to 17 on start` when the next start is the one that upgrades the database.
 
@@ -468,19 +462,83 @@ no longer watched. Register it under Execution → Projects and put it first to 
 Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked
 **Default updated** after upgrading.
 
+### Migrating from `dsh-superagent`
+
+Version 0.3.0 renames the package and every registration identity: the npm package and bundle name, the bundle's
+component ids (including both watch components), the agent preset ids, the two skill names and their directories, the
+web client bundle id, the panel's locale namespace and the checked-in scripts. The state schema does not change, and
+no stored Thread, Ticket, Request, Decision or setting is rewritten. An installation older than 0.3.0 needs these
+steps once; a fresh 0.3.0 installation does not.
+
+1. Stop the host: `scripts/dsh-superagent-further stop`, or quit the DeepSeek Harness application for an
+   in-application install. No Session may hold the old preset ids while its log is rewritten.
+2. Back up `<stateDir>` (at least `orchestrator.sqlite` with its `-wal` and `-shm` files) and
+   `$DSH_HOME/profiles/<name>/` (`~/.dsh/profiles/<name>` by default).
+3. Obtain the 0.3.0 source checkout, run `pnpm install --frozen-lockfile && pnpm build` in it, and note its absolute
+   path. The migration script is not part of the built tarball, so a tarball-only installation also downloads the source
+   archive for this step.
+4. From that checkout run the migration script (add `--dry-run` first to see the files it would change):
+
+   ```sh
+   node scripts/migrate-rename.mjs --profile <name>
+   ```
+
+   The script makes these changes:
+   - It renames the profile's `dependencies.dsh-superagent` entry and the `dsh.profile.bundles` entry to
+     `dsh-superagent-further`, keeping the installed spec (`link:` path, `file:` tarball or version) unchanged.
+   - It rewrites the `id:` values of the bundle's rows in the profile's `cordis.patch.yml` (`dsh-superagent`,
+     `dsh-superagent-github`, `dsh-superagent-feishu`) and leaves every other entry, including `stateDir`, untouched.
+   - It rewrites the `agentPreset` stored in each DSH Session log under `$DSH_HOME/sessions` from
+     `dsh-superagent-worker` / `-router` / `-lead` to `dsh-superagent-further-worker` / `-router` / `-lead`, so the
+     orchestrator, Lead and executor Sessions resume instead of failing with `agent-preset/not-found`. Each rewritten
+     file gets a `.pre-0.3.0.bak` copy.
+
+   Options: `--dsh-home <dir>` when the harness home is not `$DSH_HOME` or `~/.dsh`, and `--sessions-dir <dir>` when
+   the sessions live elsewhere. The default is `<dsh-home>/sessions`.
+5. Refresh the profile's installed tree so the new package name resolves:
+
+   ```sh
+   dsh plugin --profile <name> install
+   ```
+
+   For a tarball install, download `dsh-superagent-further-0.3.0.tgz` and install it instead:
+   `dsh plugin --profile <name> add "file:<path to the 0.3.0 tarball>"`. For a `link:` install, the script keeps the
+   checkout path in the spec; the package inside that checkout is now named `dsh-superagent-further`. If the old
+   checkout was a different directory, install the new checkout with
+   `dsh plugin --profile <name> add "link:<new checkout>"`.
+6. Start the host with the new script name (`scripts/dsh-superagent-further start --profile <name>`, or
+   `scripts\dsh-superagent-further.cmd start --profile <name>` on Windows) and run
+   `scripts/verify-install --profile <name>`; require exit 0.
+
+What stays valid: the `stateDir` and its database (schema 17; no rename migration), worktrees, Tickets, Threads,
+Requests, memories, Policy and settings, the `DSH_SUPERAGENT_*` environment variables and prepare commands, the Source
+kinds `github` and `feishu`, and the stored delivery and GitHub-comment markers. Queued acknowledgements, replies and
+comments therefore keep deduplicating across the upgrade, and an old Ticket remains valid and resumable. The worker
+shims under `<stateDir>/worker-bin` and `<stateDir>/worker-gitconfig` carry the old `# Written by dsh-superagent` marker;
+the host recognizes it as its own and rewrites the files on the next start.
+
+The old script filenames (`scripts/dsh-superagent`, `scripts\dsh-superagent.cmd`) no longer exist; use the new names.
+Team prompt text and skill bodies are data, not registration ids, so the script leaves them alone: if custom text names
+a skill, replace `skill dsh-superagent-github` / `-feishu` with the `dsh-superagent-further-` names, and custom skills
+`dsh-superagent-<name>` with `dsh-superagent-further-<name>`, under **Settings → Prompts**. Built-in parts and defaults
+come from the new code, so only overridden text and team sections need review.
+
 ### Rolling back
 
-1. Stop the host (`scripts/dsh-superagent stop`, or quit the DeepSeek Harness application).
+1. Stop the host (`scripts/dsh-superagent-further stop`, or quit the DeepSeek Harness application).
 2. Restore the backed-up database over `<stateDir>/orchestrator.sqlite`, and remove that directory's `-wal` and `-shm` files.
-3. Check out the earlier commit, then `pnpm install --frozen-lockfile && pnpm build`.
-4. Start the host and run `scripts/verify-install` again; the `schema` line must report the version that checkout expects.
+3. Restore the profile files the migration script backed up (`package.json.pre-0.3.0`, `cordis.patch.yml.pre-0.3.0`)
+   and every session log it rewrote (`session.v4.jsonl.zstd.pre-0.3.0.bak`, restored over the log). Sessions recorded
+   under the 0.3.0 preset ids do not load in 0.2.0, so this step is required, not optional.
+4. Check out the earlier commit, then `pnpm install --frozen-lockfile && pnpm build`.
+5. Start the host and run `scripts/verify-install` again; the `schema` line must report the version that checkout expects.
 
 A database migrated by a newer version cannot be opened by an older one, so the backup is the rollback path, not a reverse
 migration. After upgrading DeepSeek Harness itself, restart the running instance so the panel loads matching artifacts.
 
 ### Agent presets
 
-The worker and router presets move shell commands to the background after 5 seconds. A Session cannot load without its preset. Keep the `dsh-superagent-worker` and `dsh-superagent-router` rows in `cordis.patch.yml` while their Sessions are in use; otherwise resume fails with `agent-preset/not-found`.
+The worker and router presets move shell commands to the background after 5 seconds. A Session cannot load without its preset. Keep the `dsh-superagent-further-worker` and `dsh-superagent-further-router` rows in `cordis.patch.yml` while their Sessions are in use; otherwise resume fails with `agent-preset/not-found`.
 
 ## Troubleshooting
 
@@ -494,9 +552,9 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `@… cannot read …` or `@… cannot push to …` | Give the agent account write access to the primary repository, or to the repository the message names |
 | `No Execution project is registered.` | Register a project under Execution → Projects; its repository becomes the primary repository setup checks |
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
-| `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
+| `git does not read the github.com credential configuration dsh-superagent-further writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
-| `… was not written by dsh-superagent` | Move the named file out of `<stateDir>/worker-bin` or `<stateDir>/worker-gitconfig`, or choose another `stateDir` |
+| `… was not written by dsh-superagent-further` | Move the named file out of `<stateDir>/worker-bin` or `<stateDir>/worker-gitconfig`, or choose another `stateDir` |
 | `The bot lark-cli allows user identities` | Point the Feishu Source at a bot-only configuration, as in Feishu bot above |
 | `The bot lark-cli does not work.` or `The bot identity of app … is …` | Check the configuration's app id and secret |
 | `The Feishu bot is not a member of the chat.` | Add the bot to the chat in the chat's settings; the next attempt succeeds |
@@ -504,8 +562,8 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `status` exits 3 | Setup waits: `setup` says what is missing, and the overview links to the setting that fixes it |
 | `status` exits 1 | The service does not run, runs twice, does not answer, or its runtime reports an error; the output and the newest log say which |
 | `… timed out after 90 s`, `… was stopped by …`, `… exited with code …` or `… could not run: …` | A CLI failed without printing why; run the named program by hand as the operator's user to see its own message |
-| The panel says dsh-superagent is not answering | It is restarting, or did not start because of its configuration; the DeepSeek Harness log names the cause |
-| `dsh-superagent configuration has keys it does not use` (log) | Remove the named keys; the message says where each value lives now |
+| The panel says dsh-superagent-further is not answering | It is restarting, or did not start because of its configuration; the DeepSeek Harness log names the cause |
+| `dsh-superagent-further configuration has keys it does not use` (log) | Remove the named keys; the message says where each value lives now |
 | The log says the plugin is incompatible with the running dsh | Install a DeepSeek Harness version within the `engines.dsh` range |
 | The panel shows "Failed to load plugins" after a DeepSeek Harness upgrade | Restart the running instance |
 | Nothing happens after a mention | Check that the author is on the Source's allowed list, the Source is on, and processing is not paused. On GitHub, a mention added by editing an Issue's body is not received; mention the agent in a comment |

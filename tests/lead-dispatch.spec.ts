@@ -18,13 +18,13 @@ function service(start = vi.fn(async (spec: ActivationSpec) => activation((spec 
 describe('the activation request of a Lead-hosted executor', () => {
   it('spawns the worker preset under the Lead, keeping the Ticket worker id', () => {
     const spec = executorActivation({ childId: 'worker-ticket-1', title: 'Add a line', cwd: '/state/work/app/one', text: '{"ticket_id":"t"}',
-      lead, signal, preset: 'dsh-superagent-worker' })
+      lead, signal, preset: 'dsh-superagent-further-worker' })
     expect(spec.provider).toBe(LEAD_PROVIDER)
     expect(spec.childId).toBe('worker-ticket-1')
     expect(spec.label).toBe('Add a line')
     expect(spec.delivery).toBe('parent')
     expect(spec.request.cwd).toBe('/state/work/app/one')
-    expect(spec.request.agentPreset).toBe('dsh-superagent-worker')
+    expect(spec.request.agentPreset).toBe('dsh-superagent-further-worker')
     expect(spec.request.parent).toBe(lead)
     expect(spec.request.maxDepth).toBe(1)
     expect(spec.request.prompt).toEqual([{ type: 'text', text: '{"ticket_id":"t"}' }])

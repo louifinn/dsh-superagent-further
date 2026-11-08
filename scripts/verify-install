@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Verify one local dsh-superagent installation, and print what it found.
+ * Verify one local dsh-superagent-further installation, and print what it found.
  *
  * Run this file with Node 22.19+ (`node scripts/verify-install`, or `scripts\verify-install.cmd` on Windows).
  * It reads the installation, never changes it, and has no dependency beyond the Node standard library.
@@ -10,8 +10,8 @@
  *
  * Checks:
  * - the DSH version the launcher reports;
- * - the profile's `package.json`: the `dsh-superagent` dependency and the bundle in `dsh.profile.bundles`;
- * - the profile's `cordis.patch.yml`: a `dsh-superagent` entry with a `stateDir`;
+ * - the profile's `package.json`: the `dsh-superagent-further` dependency and the bundle in `dsh.profile.bundles`;
+ * - the profile's `cordis.patch.yml`: a `dsh-superagent-further` entry with a `stateDir`;
  * - the management API at `/orchestrator/api/state`, with the orchestrator header;
  * - the state directory lock and the service's PID file;
  * - the schema version of the state database against the one this checkout expects;
@@ -99,11 +99,11 @@ function profile() {
   const path = join(profileDir, 'package.json')
   if (!existsSync(path)) return record(false, 'profile', `${path} does not exist`)
   const manifest = JSON.parse(readFileSync(path, 'utf8'))
-  const dependency = manifest.dependencies?.['dsh-superagent'] ?? manifest.devDependencies?.['dsh-superagent']
-  const bundle = Array.isArray(manifest.dsh?.profile?.bundles) && manifest.dsh.profile.bundles.includes('dsh-superagent')
+  const dependency = manifest.dependencies?.['dsh-superagent-further'] ?? manifest.devDependencies?.['dsh-superagent-further']
+  const bundle = Array.isArray(manifest.dsh?.profile?.bundles) && manifest.dsh.profile.bundles.includes('dsh-superagent-further')
   return record(dependency !== undefined && bundle, 'profile', dependency === undefined
-    ? 'the profile does not depend on dsh-superagent'
-    : !bundle ? 'dsh.profile.bundles does not list dsh-superagent' : `${PROFILE} loads dsh-superagent ${dependency}`)
+    ? 'the profile does not depend on dsh-superagent-further'
+    : !bundle ? 'dsh.profile.bundles does not list dsh-superagent-further' : `${PROFILE} loads dsh-superagent-further ${dependency}`)
 }
 profile()
 
@@ -112,12 +112,12 @@ function patch() {
   const path = join(profileDir, 'cordis.patch.yml')
   if (!existsSync(path)) return record(false, 'patch', `${path} does not exist`)
   const text = readFileSync(path, 'utf8')
-  const entry = /(^|\n)\s*-\s*id:\s*dsh-superagent\b/.test(text)
+  const entry = /(^|\n)\s*-\s*id:\s*dsh-superagent-further\b/.test(text)
   const state = /stateDir:\s*['"]?([^'"\n]+)/.exec(text)?.[1]?.trim()
   patchStateDir = state
   return record(entry && state !== undefined, 'patch', !entry
-    ? 'cordis.patch.yml has no dsh-superagent entry'
-    : state === undefined ? 'the dsh-superagent entry has no stateDir' : `stateDir ${state}`)
+    ? 'cordis.patch.yml has no dsh-superagent-further entry'
+    : state === undefined ? 'the dsh-superagent-further entry has no stateDir' : `stateDir ${state}`)
 }
 patch()
 
@@ -191,7 +191,7 @@ function schema(stateDir) {
 
 async function panel() {
   const files = existsSync(artifacts)
-    ? readdirSync(artifacts).filter(name => name.startsWith(`dsh-superagent-${PROFILE}-`) && name.endsWith('.log'))
+    ? readdirSync(artifacts).filter(name => name.startsWith(`dsh-superagent-further-${PROFILE}-`) && name.endsWith('.log'))
       .map(name => ({ name, at: statSync(join(artifacts, name)).mtimeMs })).sort((a, b) => b.at - a.at)
     : []
   if (TOKEN !== undefined) return record(true, 'panel', `${URL}/?token=${TOKEN}`)
@@ -220,6 +220,6 @@ if (flag('json')) {
   console.log(JSON.stringify({ profile: PROFILE, url: URL, checks }, null, 2))
 } else {
   for (const check of checks) console.log(`${check.ok ? 'ok  ' : 'fail'} ${check.name.padEnd(8)} ${check.detail}`)
-  console.log(failed.length === 0 ? `\ndsh-superagent is ready for ${PROFILE}.` : `\n${failed.length} check(s) failed.`)
+  console.log(failed.length === 0 ? `\ndsh-superagent-further is ready for ${PROFILE}.` : `\n${failed.length} check(s) failed.`)
 }
 process.exitCode = failed.length === 0 ? 0 : answer.problem == null ? 1 : 2

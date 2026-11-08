@@ -43,7 +43,7 @@ export interface Api {
   'POST setup/check': { response: { restarting: true } }
   /** Record that the setup wizard was finished or skipped; `firstRun` reports whether it should open by itself. */
   'PUT wizard': { body: { skipped: boolean }; response: { firstRun: boolean; skipped: boolean } }
-  /** Stop gracefully and end the host process; `scripts/dsh-superagent stop` uses it where a signal cannot be delivered. */
+  /** Stop gracefully and end the host process; `scripts/dsh-superagent-further stop` uses it where a signal cannot be delivered. */
   'POST shutdown': { response: { stopping: true } }
   'GET models': { response: ModelCatalog }
   'GET prompts': { query?: { revision?: number; offset?: number }; response: PromptsView }

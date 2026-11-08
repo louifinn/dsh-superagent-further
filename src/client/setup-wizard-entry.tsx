@@ -4,7 +4,7 @@ import { Button, Icon } from './controls.tsx'
 import { usePanel, usePanelData } from './provider.tsx'
 
 /** Marks that this browser session already opened the wizard by itself; the server's record decides across sessions. */
-const OPENED_KEY = 'dsh-superagent/wizard-opened'
+const OPENED_KEY = 'dsh-superagent-further/wizard-opened'
 export interface SetupWizardState {
   open: boolean
   /** Open the wizard from the header entry. */

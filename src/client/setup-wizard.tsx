@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { LIMITS } from '../limits.ts'
 import type { Project } from '../projects.ts'
 import { Button, Icon, Input, Modal, Switch } from './controls.tsx'
-import type { DshSuperagentKey } from './locales.ts'
+import type { DshSuperagentFurtherKey } from './locales.ts'
 import { usePanel, usePanelData } from './provider.tsx'
 import { settingsRoute } from './route.ts'
 import { Field, SettingsProvider, useSettings } from './settings-kit.tsx'
@@ -15,12 +15,12 @@ import { CheckSetupButton, Hint, LabelValue, SetupMessage } from './widgets.tsx'
 
 const STEPS = ['welcome', 'project', 'account', 'feishu', 'language', 'done'] as const
 type WizardStep = typeof STEPS[number]
-const PRIMARY: Record<WizardStep, DshSuperagentKey> = {
+const PRIMARY: Record<WizardStep, DshSuperagentFurtherKey> = {
   welcome: 'wizardStart', project: 'wizardSave', account: 'wizardNext', feishu: 'wizardSave', language: 'wizardSave',
   done: 'wizardFinish',
 }
 const BLANK: Project = { id: '', name: '', workspace: '', repository: '', branch: '' }
-const stepTitle = (step: WizardStep): DshSuperagentKey => `wizardStep.${step}` as DshSuperagentKey
+const stepTitle = (step: WizardStep): DshSuperagentFurtherKey => `wizardStep.${step}` as DshSuperagentFurtherKey
 
 /** Modal shell for the first-run setup wizard; `onClose` also ends the wizard when a step records a skip. */
 export function SetupWizard({ onClose }: { onClose: () => void }) {

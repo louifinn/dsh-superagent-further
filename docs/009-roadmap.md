@@ -4,9 +4,9 @@ This document turns the prototype into something a team can use every day. It re
 
 ## Where it stands
 
-- The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
+- The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent-further.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1348 passed and 5 skipped (1353) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the localized and expanded proactive rules, the derived primary repository and the setup wizard; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1352 passed and 5 skipped (1357) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the localized and expanded proactive rules, the derived primary repository, the setup wizard and the rename migration test; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
@@ -15,6 +15,7 @@ This document turns the prototype into something a team can use every day. It re
 - The operator's default language is a language settings block (Settings → Language): free text, panel-only, revisioned with the other blocks, and carried to every decorated Session in the runtime-context snapshot, so a save applies to the next model request without a restart; the prompts say a Feishu or GitHub reply follows the message it answers and repository artifacts keep the repository's language.
 - The proactive rules are Chinese named and worded: ten categories cover copy, visual, defect, feature, docs/config/scripts, tests and CI, refactor/performance, research and reports, review, and read-only investigation Q&A. An existing installation keeps its operator edits, while an untouched English `copy`/`visual` pair is localized when the settings are read. A review or read-only request can finish ready with its findings and evidence, without a file change, branch or pull request.
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
+- Every registration identity is `dsh-superagent-further` since 0.3.0: package and bundle name, component and preset ids, skill names and directories, web-client bundle id and locale namespace. `scripts/migrate-rename.mjs` moves an existing profile and its Session headers to the new ids while keeping the `stateDir`, the database, the `DSH_SUPERAGENT_*` variables, the Source kinds and the stored Thread/Ticket ids; 006 records the steps.
 
 ## Principles
 
@@ -166,7 +167,7 @@ The memory layer answers the real problem found in long Sessions: the conversati
 ## Sprint 8 checklist
 
 - [x] Settings block: the `language` block is free text with example hints, panel-only (a tool-originated change is refused), revisioned like the other blocks and listed in the tab's history; covered by `tests/settings.spec.ts` and `tests/panel-settings.spec.tsx`.
-- [x] Runtime context: every decorated Session (Orchestrator, project Lead, worker) registers the `dsh-superagent-language` runtime-context contribution, whose text is rebuilt from the settings for each model request, so a save applies without a restart or a plugin reload; covered by `tests/runtime.spec.ts`.
+- [x] Runtime context: every decorated Session (Orchestrator, project Lead, worker) registers the `dsh-superagent-further-language` runtime-context contribution, whose text is rebuilt from the settings for each model request, so a save applies without a restart or a plugin reload; covered by `tests/runtime.spec.ts`.
 - [x] Prompt rules: the Orchestrator, Lead and worker prompts and the replies guide describe the default language, the reply-follows-the-message rule for Feishu and GitHub, and that pull request bodies, commit messages, code comments and files keep the repository's language; structured fields are unchanged; covered by `tests/prompts.spec.ts`.
 - [x] Live proof: with the default language set to `English (US)` on the running host, the operator wrote a Chinese request (Issue #23 in `louifinn/project-check`); the Orchestrator acknowledgement and the worker's PR-ready reply were both Chinese, while the worker's report summary and the PR body/commit stayed English, and the Ticket ended `merged`; the default was then restored to `简体中文` through the same block (`context_delivery: "injected"`, no restart).
 
@@ -221,4 +222,14 @@ The primary repository is derived instead of configured, so one project list is 
 - [x] Thread ids and polling: the primary repository keeps the plain `github:<n>` Thread id, every other project's ids are qualified `owner/name#<ref>`, and every registered project is polled; covered by `tests/sources.spec.ts`.
 - [x] Panel: the Source card lists the watched repositories and marks the primary one, and has no repository field; covered by `tests/panel-source.spec.tsx`.
 - [x] Docs: [001 Domain model](001-domain.md), [006 Deployment](006-deployment.md) and [007 Architecture](007-architecture.md) describe the derived primary repository, and [005 Panel](005-panel.md) the Source card.
+
+## Sprint 12 checklist
+
+The bundle's registration identities now read `dsh-superagent-further`, and an existing installation can move to them without losing its state. It ends with `pnpm check` green on Windows and the migration exercised on a copy.
+
+- [x] Rename: `package.json` and the bundle name, the main and watch component ids, the worker/router/lead preset ids and their display names, both Source component names, both skill directories and `SKILL.md` names, the web client's module id and locale namespace, the checked-in script names, and every README, SETUP, docs and example reference.
+- [x] Migration: `scripts/migrate-rename.mjs` renames the profile's dependency and `dsh.profile.bundles` entry, rewrites the bundle rows in the profile's `cordis.patch.yml`, and rewrites the `agentPreset` in Session logs with `.pre-0.3.0.bak` copies; [006 Deployment](006-deployment.md) gives the steps, the required backups and the rollback path.
+- [x] Preserved data and operator interfaces: the `stateDir` database and worktrees, `DSH_SUPERAGENT_*` variables and prepare commands, the `github` and `feishu` Source kinds, stored Thread/Ticket/Request ids, the persisted message source kind `dsh-superagent` and the GitHub comment marker, and the old worker-shim marker, which the host accepts and replaces on the next start.
+- [x] No compatibility aliases in code: the old registration ids are not registered alongside the new ones; the only old literals left are stored wire formats, historical changelog entries and the prototype attribution.
+- [x] Tests and docs: the suite's expectations, fixtures, service-script and bundle-patch checks follow the new ids; README counts, state schema and primary-repository wording, the panel's Memory and Language documentation, and the glossary's Gate/Admission split are current.
 

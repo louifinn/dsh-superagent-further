@@ -1,4 +1,4 @@
-# dsh-superagent
+# dsh-superagent-further
 
 [![check](https://github.com/louifinn/dsh-superagent-further/actions/workflows/check.yml/badge.svg)](https://github.com/louifinn/dsh-superagent-further/actions/workflows/check.yml)
 [![smoke](https://github.com/louifinn/dsh-superagent-further/actions/workflows/smoke.yml/badge.svg)](https://github.com/louifinn/dsh-superagent-further/actions/workflows/smoke.yml)
@@ -15,7 +15,7 @@
 > [the philosophy](docs/000-philosophy.md) and [the deployment guide](docs/006-deployment.md) before you leave
 > it running unattended.
 
-dsh-superagent is a proactive coding agent for the repositories your team works in, packaged as a bundle for
+dsh-superagent-further is a proactive coding agent for the repositories your team works in, packaged as a bundle for
 [DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When a
 person the team allowed asks it for work, it opens a Request and the Tickets that deliver it, works each Ticket
 in its own Session and checkout, and answers in the original conversation — usually with a pull request a person
@@ -31,12 +31,12 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 
 | | |
 | --- | --- |
-| Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
+| Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 72 spec files, **1326 passed / 5 skipped (1331)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
-| Release | `0.2.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-0.2.0.tgz`, and publishes it |
+| Checks | `pnpm check`: 74 spec files, **1352 passed / 5 skipped (1357)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
+| Release | `0.3.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.3.0.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
-| State schema | 15 (`10 → 11 → 12 → 13 → 14 → 15` migrate in place; `scripts/verify-install` reports the schema read-only) |
+| State schema | 17 (`10 → 11 → 12 → 13 → 14 → 15 → 16 → 17` migrate in place; `scripts/verify-install` reports the schema read-only) |
 
 ## What it does
 
@@ -61,7 +61,7 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 
 Setup has many steps, so an agent does it with you. Ask your coding agent:
 
-> Read SETUP.md in this repository and set up dsh-superagent with me.
+> Read SETUP.md in this repository and set up dsh-superagent-further with me.
 
 It asks one short question at a time, shows the plan once, and installs and configures everything. The manual
 reference — Accounts, Projects, Execution, Sources, hosting, upgrading and troubleshooting — is
@@ -74,7 +74,7 @@ reference — Accounts, Projects, Execution, Sources, hosting, upgrading and tro
    when you use it.
 3. Register **Projects** in the panel: id, absolute path of a local clone, `owner/name` repository, optional base
    branch. A project is required to start; onboarding refuses without one.
-4. Start the host (`scripts\dsh-superagent.cmd start` on Windows, `scripts/dsh-superagent start` elsewhere),
+4. Start the host (`scripts\dsh-superagent-further.cmd start` on Windows, `scripts/dsh-superagent-further start` elsewhere),
    open the panel URL from the log, and sign in with the token.
 5. Run `scripts/verify-install` (`.cmd` on Windows): it checks the DSH version, the profile, the patch, the API,
    the owner of the state lock and the database schema, and exits `0` only when the installation is ready.
@@ -141,7 +141,7 @@ the local history started from a byte-identical import, so every change below wa
 | Scale | One repository, one host, one state dir | Many projects polled by one Source, per-project checkouts and Leads, per-project concurrency; one host at a time enforced | Teams work in several repositories; a second profile or a second agent would be more concepts and more noise |
 | Execution | Root worker Session per Ticket | Orchestrator → persistent Lead per project → hidden executor subagents, adoption after restart | Cleaner Session list, project context that persists, and a total Orchestrator free of project labour |
 | Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
-| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → 12 → 13 → 14 → 15`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
+| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → 12 → 13 → 14 → 15 → 16 → 17`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
 | Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs | Unattended use needs visible, scriptable operations on every platform |
 | Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest | "Every failure visible" means an operator can see the trend, not only the state |
 | Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
@@ -154,7 +154,7 @@ Every POSIX assumption was replaced with an explicit, tested platform path rathe
 
 - **Paths** — one platform rule (`src/infra/paths.ts`) feeds the schemas; `stateDir` and project workspaces are
   absolute on both families, and the test that used to assume `/` now runs a Windows branch with real `C:\` paths.
-- **The service script** — `scripts/dsh-superagent` is a dependency-free Node program, with a `.cmd` launcher. It
+- **The service script** — `scripts/dsh-superagent-further` is a dependency-free Node program, with a `.cmd` launcher. It
   discovers the host through `Get-CimInstance Win32_Process` on Windows (fallback `ps` on POSIX), starts it detached
   with its output in the log, and stops it through the shutdown route with a `taskkill` tree fallback. It no longer
   needs Python, tmux or `fcntl`; it locks with an exclusive file and a dead-PID takeover.
@@ -180,7 +180,7 @@ The prototype's GitHub Source addressed one `repository` and one worker director
 first-class record on the management surface and derives the Source's work from it. One poll round reads
 notifications once and filters them to the watched set, then reads every project repository's streams and default
 branch CI, then the PRs of open Tickets and subscribed Threads. Thread identity keeps the prototype's numeric form for
-the deployment repository and qualifies other repositories, so stored Threads and Tickets need no rename. A project
+the primary repository and qualifies other repositories, so stored Threads and Tickets need no rename. A project
 repository the agent cannot read is tolerated and reported, rather than failing the round. The panel Source card lists
 every watched repository and updates when projects change — the second defect the operator reported when opening the
 project layer.
@@ -210,9 +210,10 @@ ended `done` at `00:10:25Z`, reporting both pull requests once.
 
 ### Operations, state and recovery
 
-- **Migrations** — schemas 11–15 reshape records, fill Ticket projects, add Lead messages, add Requests and end
-  Requests of already-ended Tickets. Each step runs in the opening transaction; `OLDEST_SCHEMA` and
-  `verify-install` make an out-of-date or too-new database visible instead of mysterious.
+- **Migrations** — schemas 11–17 reshape records, fill Ticket projects, add Lead messages, add Requests, end
+  Requests of already-ended Tickets, add the cross-Session memory table, and remove the retired GitHub `repository`
+  setting. Each step runs in the opening transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
+  too-new database visible instead of mysterious.
 - **One host** — the state lock message names the other host, its state directory and the switch command; an
   orchestrator Session held by a live DeepSeek Harness process is explained instead of retried forever. The in-app
   host applies the worker environment process-wide, which 006 states plainly because it changes who `gh` is in every
@@ -239,19 +240,20 @@ allow list and a test repository, as the responsibility section of the philosoph
 
 ### Engineering and distribution
 
-`pnpm check` is the single check: typecheck, 70 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
+`pnpm check` is the single check: typecheck, 74 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1331 tests; it drives real timers and SQLite, so timeouts are
+bundle and attaches it to a GitHub release. The suite is 1357 tests; it drives real timers and SQLite, so timeouts are
 30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
 fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
-lists every source file and spec. The bundle keeps the prototype's id, config shape and CLI-facing behaviour; additions
-are additive settings and panel rows, with a `CHANGELOG` and semver.
+lists every source file and spec. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package
+and every registration id to `dsh-superagent-further`, so an existing profile follows the migration steps in 006.
+Additions are additive settings and panel rows, with a `CHANGELOG` and semver.
 
 ### What did not change
 
 The domain model and vocabulary (Source, Thread, Trigger, admission, Ticket, Assignment, Report, Attention, Mandate,
 Policy), the Engine as the only writer with effects/relay/notice delivery, prompt composition and the numbered
-documents 000–008, the `dsh-superagent` bundle layout, and the operator-facing promise that the agent acts only when
+documents 000–008, the `dsh-superagent-further` bundle layout, and the operator-facing promise that the agent acts only when
 asked or allowed and speaks only when someone must act. A migration from a prototype installation keeps its Tickets,
 Threads, decisions and ended state; upgrade steps are in 006.
 
@@ -293,7 +295,7 @@ src/
   executor/         DshExecutor: launches, deliveries, slots, Lead dispatch, work/dispatch preparation
   infra/            worker environment, shims, command execution, paths, ACLs, batch-file CLIs
   client/           the web panel (React) with zh/en text
-scripts/            dsh-superagent(.cmd), verify-install(.cmd), switch-project, clean-worktrees(.cmd)
+scripts/            dsh-superagent-further(.cmd), verify-install(.cmd), switch-project, clean-worktrees(.cmd)
 prompts/            the agent prompts, including the Lead's
 docs/               numbered design documents, roadmap, orchestrator, and engineering-skills notes
 ```
@@ -335,7 +337,7 @@ pnpm check        # typecheck + tests + build
   Windows-only paths (batch-file CLIs, ACLs, the service script) run on every push. `.github/workflows/smoke.yml`
   starts a real host on macOS; `.github/workflows/release.yml` runs on a `v*` tag.
 - Linux can be exercised in WSL with Node 22 and pnpm 11.7.0; CI runs it on every push. On Windows, the service
-  script is `scripts\dsh-superagent.cmd` and the panel token is in the newest `.artifacts/dsh-superagent-*.log`.
+  script is `scripts\dsh-superagent-further.cmd` and the panel token is in the newest `.artifacts/dsh-superagent-further-*.log`.
 - Adding a Source is documented in [008](docs/008-cookbook.md); a new source file and spec must be added to the tables
   in 007, because `tests/docs.spec.ts` enforces it.
 

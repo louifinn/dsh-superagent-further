@@ -9,7 +9,7 @@ import { restrictToOwner } from '../src/infra/acl.ts'
 const windows = process.platform === 'win32'
 const directories: string[] = []
 const temporary = (): string => {
-  const directory = mkdtempSync(join(tmpdir(), 'dsh-superagent-acl-'))
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-superagent-further-acl-'))
   directories.push(directory)
   return directory
 }

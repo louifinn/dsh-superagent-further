@@ -119,7 +119,7 @@ function wizardView(runtime: HttpHost) {
   const done = runtime.store.get(WizardRecord)
   return { firstRun: runtime.store.settings().executor.projects.length === 0 && done === undefined, skipped: done?.skipped ?? false }
 }
-/** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */
+/** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent-further status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {
   const settings = runtime.store.settings()
   return { setup: setupView(runtime), load: { ...executorLoad(runtime.store, runtime.executor.activeCount()),
@@ -232,7 +232,7 @@ function routes(runtime: HttpHost): Routes {
       return wizardView(runtime)
     },
     // Acknowledge before stopping: the acknowledgement must be written to the socket before the process ends, which is how
-    // `scripts/dsh-superagent stop` ends a detached service on Windows where no graceful signal can be delivered.
+    // `scripts/dsh-superagent-further stop` ends a detached service on Windows where no graceful signal can be delivered.
     'POST shutdown': () => { setTimeout(() => { runtime.requestShutdown() }, 0); return { stopping: true } },
     'GET models': () => runtime.models(),
     'GET memories': ({ query }) => { const { q, project, sort, offset, limit } = MemoriesQuery.parse(query);

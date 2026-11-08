@@ -6,7 +6,7 @@ import { packagePath } from '../infra/paths.ts'
  * Reads a packaged text file with normalized Unix line endings.
  * A caller may pass an already absolute path, which is read as it is instead of being joined under the package root
  * (on Windows a path on another drive cannot be made relative to the package, so callers receive an absolute one).
- * @throws Naming the file when it is missing or whitespace-only, because `dsh-superagent` cannot load without it.
+ * @throws Naming the file when it is missing or whitespace-only, because `dsh-superagent-further` cannot load without it.
  */
 function packaged(...parts: string[]): { path: string; text: string } {
   const absolute = parts.findIndex(part => isAbsolute(part))
@@ -20,7 +20,7 @@ function packaged(...parts: string[]): { path: string; text: string } {
   return { path, text }
 }
 function load(name: string) {
-  const { path, text } = packaged('skills', `dsh-superagent-${name}`, 'SKILL.md')
+  const { path, text } = packaged('skills', `dsh-superagent-further-${name}`, 'SKILL.md')
   const match = /^---\nname: ([^\n]+)\ndescription: ([^\n]+)\n---\n\n([\s\S]*)$/.exec(text)
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
