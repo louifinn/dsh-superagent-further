@@ -161,6 +161,13 @@ The memory layer answers the real problem found in long Sessions: the conversati
 - [x] Panel: a Memory page with the master switch, the injection and automatic-write switches (saving on click, effective on the next model request without a restart), the snapshot limits and retention, and the stored memories as expandable cards: a keyword box searches text and tags, the order combo box switches newest/oldest/kind/project with pinned rows first, a project combo box filters the list, the rows are paged twenty at a time with the visible range under them, each card pins or unpins and forgets on the spot, and expanding shows the whole text, tags, source, expiry and id. The behavior is the `memory` settings block, so every change is revisioned and appears in the tab's history; covered by `tests/memories.spec.ts`, `tests/settings.spec.ts`, `tests/http.spec.ts` and `tests/panel-memory.spec.tsx`.
 - [x] Scope: a project Lead's memory tools and snapshot are limited to its project; the installation-wide scope, including an ended Request's summary, is Orchestrator-only (decided 2026-11-08, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`).
 
+## Sprint 8 checklist
+
+- [x] Settings block: the `language` block is free text with example hints, panel-only (a tool-originated change is refused), revisioned like the other blocks and listed in the tab's history; covered by `tests/settings.spec.ts` and `tests/panel-settings.spec.tsx`.
+- [x] Runtime context: every decorated Session (Orchestrator, project Lead, worker) registers the `dsh-superagent-language` runtime-context contribution, whose text is rebuilt from the settings for each model request, so a save applies without a restart or a plugin reload; covered by `tests/runtime.spec.ts`.
+- [x] Prompt rules: the Orchestrator, Lead and worker prompts and the replies guide describe the default language, the reply-follows-the-message rule for Feishu and GitHub, and that pull request bodies, commit messages, code comments and files keep the repository's language; structured fields are unchanged; covered by `tests/prompts.spec.ts`.
+- [x] Live proof: with the default language set to `English (US)` on the running host, the operator wrote a Chinese request (Issue #23 in `louifinn/project-check`); the Orchestrator acknowledgement and the worker's PR-ready reply were both Chinese, while the worker's report summary and the PR body/commit stayed English, and the Ticket ended `merged`; the default was then restored to `简体中文` through the same block (`context_delivery: "injected"`, no restart).
+
 ## Sprint 1 checklist
 
 - [x] Credentials stay as the operator decided on 2026-11-07 (classic `louibot` token, current Feishu app secret); 006
