@@ -13,6 +13,8 @@ import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
 import { HOME, TABS, initialLocation, lastSettingsGroup, remember, routeLabel, settingsRoute, type Location, type Route,
   type Tab } from './route.ts'
 import { SettingsPage } from './settings.tsx'
+import { SetupWizard } from './setup-wizard.tsx'
+import { SetupWizardButton, useSetupWizard } from './setup-wizard-entry.tsx'
 import { SourceStatus } from './source.tsx'
 import { actorName, errorText, reasonLabel, valueLabel, type T, readableMarkers } from './text.ts'
 import { ThreadPage } from './thread.tsx'
@@ -99,7 +101,7 @@ function SearchResults({ result, query, onClose }: { result: SearchView; query: 
   </div>
 }
 
-function Header({ masterId }: { masterId: string | undefined }) {
+function Header({ masterId, onWizard }: { masterId: string | undefined; onWizard: () => void }) {
   const { t, call, openSession, notify } = usePanel()
   const [glossary, setGlossary] = useState(false)
   const [query, setQuery] = useState('')
@@ -132,6 +134,7 @@ function Header({ masterId }: { masterId: string | undefined }) {
       </form>
       <Button variant="ghost" size="sm" icon={<Icon name="question" />} aria-label={t('glossary')} title={t('glossary')} aria-haspopup="dialog"
         onClick={() => setGlossary(true)} />
+      <SetupWizardButton onClick={onWizard} />
       <Button variant="outline" size="sm" icon={<Icon name="session" size={14} />} disabled={!masterId}
         onClick={() => { if (masterId) openSession(masterId).catch(failure => notify(errorText(failure))) }}>{t('openMaster')}</Button>
     </div>
@@ -142,6 +145,7 @@ function Header({ masterId }: { masterId: string | undefined }) {
 function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab: Tab) => void; deploymentForm: DeploymentForm }) {
   const { t } = usePanel()
   const { state, error, reload } = usePanelData()
+  const wizard = useSetupWizard()
   // Keep the active tab scrolled into view on narrow screens when routes change via links.
   useEffect(() => { document.getElementById(`dt-tab-${route.page}`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) }, [route.page])
   const waiting = error ? <p className="dt-error" role="alert">{error.message}</p> : <p className="dt-hint">{t('loading')}</p>
@@ -162,12 +166,13 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
   })()
   return <div className="dt-page">
     <div className="dt-column">
-      <Header masterId={state?.masterId} />
+      <Header masterId={state?.masterId} onWizard={wizard.show} />
       {error && state && <p className="dt-error" role="status">{error.message}</p>}
       <SegmentedTabs className="dt-tabs" label={t('pagesLabel')} value={route.page} onChange={openTab}
         items={TABS.map(value => ({ value, label: t(`tab.${value}`), id: `dt-tab-${value}`, panelId: 'dt-page' }))} />
       <main id="dt-page" role="tabpanel" aria-labelledby={`dt-tab-${route.page}`} className="dt-main">{page}</main>
     </div>
+    {wizard.open && <SetupWizard onClose={wizard.close} />}
   </div>
 }
 

@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1335 passed and 5 skipped (1340) on Windows after the Language setting (search, project filter, order, paging) and the localized, expanded proactive rules; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1348 passed and 5 skipped (1353) on Windows after the Language setting (search, project filter, order, paging), the localized and expanded proactive rules, the derived primary repository and the setup wizard; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
@@ -201,4 +201,13 @@ Localized proactive rules, so the operator, the admission decisions and the pane
 - Forges other than GitHub, and chat products other than Feishu.
 - Running the service as a Windows service or a system daemon.
 - A visual redesign of the panel.
+
+## Sprint 10 checklist
+
+The setup wizard is how a fresh install reaches its first Ticket without editing settings files. It ends with `pnpm check` green.
+
+- [x] First-run state: `GET state` carries `wizard` `{firstRun, skipped}`, where `firstRun` holds while no project is registered and no `setup-wizard` record exists, and `PUT wizard` stores `{at, skipped}` in the Store's key-value area; covered by `tests/http.spec.ts`.
+- [x] Wizard dialog: welcome, the first project with the Execution fields, the GitHub account check, the optional Feishu Source, the default language and a summary; every step can be skipped or revisited, each save writes its settings block with the current revision, and a restart says so; covered by `tests/panel-setup-wizard.spec.tsx`.
+- [x] Entry and memory: the wizard opens by itself on a first run once per browser session, the header **Setup wizard** reopens it afterwards, and the server's record — not the browser — decides across sessions; covered by `tests/panel-setup-wizard.spec.tsx`.
+- [x] Docs: [005 Panel](005-panel.md) describes the dialog, [006 Deployment](006-deployment.md) the first start, and [007 Architecture](007-architecture.md) lists both modules and the panel test.
 

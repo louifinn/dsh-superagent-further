@@ -152,3 +152,37 @@ it('answers 404 for a memory that is not stored', async () => {
   expect(await call('POST', 'memory/pin', { id: 'gone', pinned: true }))
     .toEqual({ status: 404, body: { error: 'Memory not found' } })
 })
+
+it('opens the setup wizard on a first run and records the answer in the key-value store', async () => {
+  let saved: { at: string; skipped: boolean } | undefined
+  const base = {
+    store: {
+      settings: () => SettingsSchema.parse({}),
+      tickets: { open: () => [] },
+      get: () => saved,
+      set: (_key: string, value: { at: string; skipped: boolean }) => { saved = value },
+    },
+    executor: { activeCount: () => 0 },
+    configured: () => false,
+    masterId: 'master',
+    health: {},
+    machine: { stateDir: '/srv/dsh-superagent', promptMaxChars: { get: () => 100_000 },
+      admissionContextMaxPages: { get: () => 20 }, admissionContextTimeoutMs: { get: () => 60_000 } },
+  }
+  const call = serve(base)
+  expect(await call('GET', 'state')).toMatchObject({ status: 200, body: { wizard: { firstRun: true, skipped: false } } })
+  expect(await call('PUT', 'wizard', { skipped: true })).toEqual({ status: 200, body: { firstRun: false, skipped: true } })
+  expect(saved?.skipped).toBe(true)
+  expect(Number.isNaN(Date.parse(saved!.at))).toBe(false)
+  // Once answered, the wizard stays closed even though no project is registered.
+  expect(await call('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: true } } })
+  // Registering a project also ends the first run before any answer is recorded.
+  const registered = serve({ ...base, store: { ...base.store, get: () => undefined,
+    settings: () => SettingsSchema.parse({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/srv/app',
+      repository: 'acme/app' }] } }) } })
+  expect(await registered('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: false } } })
+  // The answer must be a boolean; a malformed body is refused before it reaches the store.
+  const kept = saved
+  expect(await call('PUT', 'wizard', { skipped: 'yes' })).toMatchObject({ status: 400 })
+  expect(saved).toBe(kept)
+})

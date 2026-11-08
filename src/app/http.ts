@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
+import { record } from '../kv.ts'
 import { MEMORY_SORTS } from '../memory.ts'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
 import { sourceSkills } from './context.ts'
@@ -108,11 +109,22 @@ function setupView(runtime: HttpHost) {
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }
+/**
+ * KV record of the setup wizard: when the operator last finished or skipped it, and which of the two it was.
+ * A missing record is what makes a first run open the wizard, so it survives panel reloads without touching Settings.
+ */
+const WizardRecord = record<{ at: string; skipped: boolean }>('setup-wizard')
+/** First-run state of the setup wizard: it opens while no project is registered and was never finished or skipped. */
+function wizardView(runtime: HttpHost) {
+  const done = runtime.store.get(WizardRecord)
+  return { firstRun: runtime.store.settings().executor.projects.length === 0 && done === undefined, skipped: done?.skipped ?? false }
+}
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {
   const settings = runtime.store.settings()
   return { setup: setupView(runtime), load: { ...executorLoad(runtime.store, runtime.executor.activeCount()),
     maxWorkers: settings.executor.maxWorkers },
+    wizard: wizardView(runtime),
     masterId: runtime.masterId, paused: settings.paused, health: runtime.health }
 }
 const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources: runtime.sources, links: runtime.links() })
@@ -212,6 +224,13 @@ function routes(runtime: HttpHost): Routes {
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
     'POST policy-sync/:id': async ({ params }) => ({ policy: await runtime.settings.sync(params.id) }),
     'POST setup/check': () => { runtime.checkSetup(); return { restarting: true } },
+    // The wizard is answered once: `firstRun` stays false afterwards even while no project exists, because the operator
+    // may have skipped it deliberately and can reopen it from the panel header.
+    'PUT wizard': async ({ body }) => {
+      const { skipped } = z.object({ skipped: z.boolean() }).parse(await body())
+      store.set(WizardRecord, { at: new Date().toISOString(), skipped })
+      return wizardView(runtime)
+    },
     // Acknowledge before stopping: the acknowledgement must be written to the socket before the process ends, which is how
     // `scripts/dsh-superagent stop` ends a detached service on Windows where no graceful signal can be delivered.
     'POST shutdown': () => { setTimeout(() => { runtime.requestShutdown() }, 0); return { stopping: true } },

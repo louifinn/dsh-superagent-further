@@ -61,3 +61,13 @@ Search also finds Threads by references such as `#12` or a GitHub URL, and Ticke
 5. **Honest state.** A count equals the length of the list it links to, and no state contradicts another fact.
 6. **Quiet by default.** Healthy states take no extra space. Problems must be actionable; a one-off network error is not enough. Rows needing a person offer their action directly. Keep page explanations to one sentence and put further detail in the (?) tooltip. Destructive actions require confirmation.
 7. **Consistent controls.** Use DeepSeek Harness design tokens and control behavior. The same information should look the same throughout the panel. Each settings block has one save bar, visible only while changes exist, a save runs or a save fails.
+
+## Setup wizard
+
+A first run — no project registered and no recorded answer — opens the setup wizard by itself when the panel loads. It opens once per browser session: closing it does not mark it answered, and a reload does not open it again. **Setup wizard** (设置向导) in the header reopens it at any time, before and after the first run ends.
+
+The wizard walks through welcome, the first project, the GitHub agent account check, the optional Feishu Source, the default language and a summary. **Skip this step** moves on without saving, **Skip the wizard** ends the whole flow, and **Back** returns to the previous step; saved steps apply immediately. A save that restarts dsh-superagent says **Restarting…** and the panel reconnects on its own. A refused save leaves its error on the step that raised it.
+
+The project and language steps write the same settings blocks as Settings → Execution and Settings → Language, with the block's current revision, so the two surfaces never disagree. Skipping or finishing writes a marker to the Store's key-value area; that marker is what ends the first run. The browser session only keeps the closed wizard from reopening while the panel stays open. Registering a project also ends the first run without an answer, and the header entry stays available.
+
+The wizard is a dialog over the current page, so the page behind it keeps polling; closing the dialog leaves the rest of the panel usable.

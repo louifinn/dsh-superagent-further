@@ -510,3 +510,25 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | The panel shows "Failed to load plugins" after a DeepSeek Harness upgrade | Restart the running instance |
 | Nothing happens after a mention | Check that the author is on the Source's allowed list, the Source is on, and processing is not paused. On GitHub, a mention added by editing an Issue's body is not received; mention the agent in a comment |
 
+## First start
+
+A fresh install has no project registered and no completed setup wizard, so the panel opens the
+setup wizard by itself the first time it loads. It walks through welcome, the first project (id,
+name, clone path, repository and branch), the GitHub agent account check, the optional Feishu
+Source and the default language; every step can be skipped, and **Back** returns to an earlier
+one. Each step writes the same setting as its Settings page; [005 Panel](005-panel.md#setup-wizard)
+describes the dialog.
+
+The wizard is a dialog over the panel: close it to use the rest of the panel, and reopen it from
+**Setup wizard** (设置向导) in the header. It opens by itself once per browser session; a later
+reload does not open it again.
+
+Finishing or skipping writes `{ "at": …, "skipped": … }` to the `setup-wizard` record of the
+Store, which ends the first run. The management API exposes the same state as `wizard` on
+`GET /orchestrator/api/state` and records it with `PUT /orchestrator/api/wizard`. Registering a
+project also ends the first run, even without an answer, so a deployment configured through the
+settings files does not open the wizard.
+
+If the wizard is not enough, the symptoms under Troubleshooting above still apply: the overview
+names what blocks the first Ticket, and `status` reports the same problem.
+
