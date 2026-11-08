@@ -38,7 +38,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['A stop goes through orchestrator_route, not through an assessment', 'admission', [], ['decision=stop']],
   // A follow-up has one decider, the worker of the ticket it reached; the main Session only stops the work on a person's request.
   ['A person\'s follow-up is its ticket\'s worker\'s to decide; the main Session only stops the work on request', 'orchestrator',
-    ['goes straight to its workers and resumes an ended ticket a person did not stop', 'that ticket\'s worker decides it'],
+    ['goes to its workers; a person\'s message also resumes an ended ticket a person did not stop', 'that ticket\'s worker decides it'],
     ['arrive to you as candidates too', 'dispatch says when it needs a tool call']],
   ['A person\'s follow-up is its ticket\'s worker\'s to decide; the main Session only stops the work on request', 'dispatch',
     ['A follow_up notice reports a person\'s message that already reached the workers it lists', 'do not forward it a second time',
@@ -56,7 +56,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
       'never drop a request silently', 'leave ordinary discussion unanswered']],
   ['A person\'s message resumes an ended ticket without a decision', 'subscriptions', ['a human\'s message there resumes the ticket under the same mandate']],
   ['A thread can have several tickets, and its messages reach all of them', 'orchestrator',
-    ['Messages on a subscribed thread go directly to the workers of its tickets.'], ['go directly to their worker']],
+    ['Any message on a thread a ticket follows goes to its workers'], ['go directly to their worker']],
   ['The gate admits a candidate through the admission table in the Source\'s part of the Policy', 'subscriptions',
     ['(an allowed sender\'s mention, the admission table in the Source\'s part of the Policy, or a thread that already has tickets)']],
   ['A question goes back where the person who raised it wrote', 'replies',
