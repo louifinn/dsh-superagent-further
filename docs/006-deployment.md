@@ -320,7 +320,11 @@ Memories travel in the runtime-context snapshot rather than the system prompt: D
 
 A Ticket and a Request are also remembered deterministically when they end, with no model call: the Ticket's title, project, outcome and time, and the Request's title, Ticket count and outcome. The Request's memory is installation-wide, so it belongs to the Orchestrator: a project Lead sees only its own project's Ticket memories, never the Request summary or another project's facts. That division is deliberate (decided 2026-11-08): the Orchestrator is the only role that sees across projects, and one summary avoids duplicating it into every project. A later Session can recall what happened without replaying the conversation; the same facts remain readable through `orchestrator_read tickets` and `orchestrator_read decisions`.
 
-Memories live in the same `orchestrator.sqlite` (`memory` table, schema 16). To clean them, call `memory_forget`; expiry handles the rest.
+The **Memory** tab controls all of this. **Memory enabled** is the master switch: off silences the snapshot, makes `memory_write` and `memory_search` refuse, and stops the automatic recording of finished work, while keeping the stored rows. **Inject memory** controls only the snapshot, so a model can still ask with `memory_search` when it is off. **Remember finished work** controls the automatic deterministic writes. The switches save as soon as they are clicked; the limits (pinned and recent counts, the snapshot's character budget, and how many days an automatic record is kept) save with **Save**. Every change is read on the next model request, so it takes effect without restarting the host or reloading the plugin, and each save appears in the tab's history. The page lists the stored memories newest first, with their kind, scope and time, and **Forget** removes one immediately.
+
+Retention ages out only the automatic records of finished work after **Retention (days)** (default 30); a memory a person or agent wrote on purpose stays until it expires, is forgotten, or is unpinned and removed by hand. Pinned memories are never aged out.
+
+Memories live in the same `orchestrator.sqlite` (`memory` table, schema 16; the behavior lives in the `memory` settings block).
 
 ### Hourly check
 

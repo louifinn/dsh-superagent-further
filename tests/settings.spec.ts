@@ -124,3 +124,19 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   expect(saved.saved).toBe(true)
   expect(store.settings().executor.projects).toEqual(projects)
 })
+
+it('saves Memory behavior from the panel only, and the change applies without a restart', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const memory = store.settings().memory
+  const revision = store.blockRevision('memory')
+  await expect(settings.save('memory', { ...memory, inject: false }, revision, 'tool')).rejects.toThrow(/management panel/)
+  expect(store.settings().memory.inject).toBe(true)
+  const saved = await settings.save('memory', { ...memory, inject: false, pinnedLimit: 2 }, revision, 'panel')
+  expect(saved.saved).toBe(true)
+  expect(store.settings().memory).toMatchObject({ inject: false, pinnedLimit: 2 })
+  // The block read used by the panel page carries the saved value, and the new behavior applies to the next snapshot.
+  expect(settings.block('memory').value).toMatchObject({ inject: false, pinnedLimit: 2 })
+  store.memories.save({ kind: 'fact', text: 'Stored but not injected.' })
+  expect(store.memories.promptText()).toBe('')
+})

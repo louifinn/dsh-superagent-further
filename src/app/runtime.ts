@@ -189,7 +189,10 @@ export class Runtime extends Service implements SourceHost {
           // Remember what ended, deterministically and without a model call, so a later Session can recall it with a tool or
           // see the pinned and most recent items in its prompt instead of replaying the conversation that produced them.
           try {
-            if (event.type === 'ticket.ended') {
+            // The Memory page's switches decide whether anything is remembered at all and whether it is automatic; both
+            // are read on every event so a panel change applies immediately.
+            const memory = store.settings().memory
+            if (memory.enabled && memory.autoWrite && event.type === 'ticket.ended') {
               const done = store.tickets.get(event.data.ticketId)
               if (done?.ended) store.memories.save({
                 kind: 'decision',
@@ -200,7 +203,7 @@ export class Runtime extends Service implements SourceHost {
                 tags: [done.ended.outcome],
               }, done.ended.at)
             }
-            if (event.type === 'request.ended') {
+            if (memory.enabled && memory.autoWrite && event.type === 'request.ended') {
               const request = store.requests.get(event.data.requestId)
               if (request?.ended) store.memories.save({
                 kind: 'decision',
@@ -294,6 +297,8 @@ export class Runtime extends Service implements SourceHost {
   private async cleanupLoop(): Promise<void> {
     while (!this.stopped.signal.aborted) {
       await this.reclaimFinishedWorktrees()
+      // Memory retention runs on the same schedule, so a changed retention applies without a restart.
+      try { this.store.memories.prune() } catch (error) { this.ctx.logger.warn('dsh-superagent: memory cleanup failed: %s', String(error)) }
       try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
     }
   }

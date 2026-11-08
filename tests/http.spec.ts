@@ -4,7 +4,7 @@ import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
-import { SettingsSchema } from '../src/policy.ts'
+import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
@@ -108,4 +108,21 @@ it('acknowledges a shutdown before stopping the runtime, since the process ends 
   expect(stops).toEqual([])
   await new Promise(resolve => setTimeout(resolve, 0))
   expect(stops).toEqual(['shutdown'])
+})
+
+it('lists stored memories and forgets one for the Memory page', async () => {
+  const forgotten: string[] = []
+  const rows = [{ id: 'm1', scope: 'global' as const, project: '', ticket: '', kind: 'fact' as const, text: 'A stored fact.',
+    tags: [], pinned: false, at: '2026-01-01T00:00:00.000Z' }]
+  const call = serve({ store: {
+    settings: () => ({ memory: MemoryConfigSchema.parse({}) }),
+    memories: { list: () => rows, total: () => 1, pinnedTotal: () => 0, forget: (id: string) => { forgotten.push(id); return true } },
+  } })
+  const listed = await call('GET', 'memories')
+  expect(listed.status).toBe(200)
+  expect(listed.body).toMatchObject({ total: 1, pinned: 0, config: { enabled: true, inject: true }, items: [{ id: 'm1', text: 'A stored fact.' }] })
+  expect(await call('POST', 'memory/forget', { id: 'm1' })).toEqual({ status: 200, body: { forgotten: true } })
+  expect(forgotten).toEqual(['m1'])
+  // An empty id is rejected before reaching the store.
+  expect((await call('POST', 'memory/forget', { id: '' })).status).toBe(400)
 })

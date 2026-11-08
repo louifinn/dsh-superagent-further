@@ -106,15 +106,35 @@ export const ExecutorConfigSchema = z.object({
   worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
+/**
+ * Memory behavior, edited on the management panel's Memory page. `enabled` is the master switch (no injection, no tools,
+ * no automatic writes); `inject` carries pinned and recent memories in the runtime-context snapshot; `autoWrite` records a
+ * finished Ticket or Request without a model call. The limits bound that snapshot and the retention of old rows.
+ */
+export const MemoryConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  inject: z.boolean().default(true),
+  autoWrite: z.boolean().default(true),
+  /// Pinned memories always carried, up to this many.
+  pinnedLimit: z.number().int().min(0).max(LIMITS.memoryPinned).default(LIMITS.memoryPinned),
+  /// The most recent unpinned memories carried after the pinned ones.
+  recentLimit: z.number().int().min(0).max(LIMITS.memoryPromptRows).default(LIMITS.memoryPromptRows),
+  /// The snapshot's character budget; the configurable maximum keeps one snapshot from dominating attention.
+  promptChars: z.number().int().min(0).max(LIMITS.memoryPromptCharsMax).default(LIMITS.memoryPromptChars),
+  /// Automatic memories drop after this many days; memories can also carry their own expiry.
+  retentionDays: z.number().int().min(LIMITS.memoryKeepDays.min).max(LIMITS.memoryKeepDays.max).default(30),
+}).strict()
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
   sources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).default({}),
   policy: PolicyConfigSchema.default(() => PolicyConfigSchema.parse({})),
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
+  memory: MemoryConfigSchema.default(() => MemoryConfigSchema.parse({})),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | `source:${string}`
+export type MemoryConfig = Settings['memory']
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 

@@ -114,4 +114,50 @@ describe('Memories', () => {
       expect(store.memories.search('builds').map(memory => memory.project)).toEqual(['lib', 'app'])
     } finally { store.db.close() }
   })
+
+  it('honors the panel switches for injection, searching and writing', () => {
+    const { store } = open()
+    try {
+      store.memories.save({ kind: 'fact', text: 'A stored fact.' }, '2026-01-01T00:00:00.000Z')
+      const configure = (patch: { enabled?: boolean; inject?: boolean }) => {
+        const settings = store.settings()
+        store.saveSettings({ ...settings, memory: { ...settings.memory, ...patch } })
+      }
+      // Injection off silences only the snapshot: a model can still ask with memory_search.
+      configure({ inject: false })
+      expect(store.memories.promptText()).toBe('')
+      expect(store.memories.search('stored')).toHaveLength(1)
+      // The master switch also refuses writes and searches, and keeps the stored rows.
+      configure({ enabled: false })
+      expect(store.memories.promptText()).toBe('')
+      expect(() => store.memories.save({ kind: 'fact', text: 'Another fact.' })).toThrow(/turned off/)
+      expect(() => store.memories.search('stored')).toThrow(/turned off/)
+      expect(store.memories.list()).toHaveLength(1)
+      // Turning it back on restores injection without a restart.
+      configure({ enabled: true, inject: true })
+      expect(store.memories.promptText()).toContain('A stored fact.')
+    } finally { store.db.close() }
+  })
+
+  it('applies the configured snapshot limits and ages out only automatic records', () => {
+    const { store } = open()
+    try {
+      const manual = store.memories.save({ kind: 'fact', text: 'A hand-written fact.' }, '2020-01-01T00:00:00.000Z')
+      const pinned = store.memories.save({ kind: 'preference', text: 'Stay short.', pinned: true }, '2020-01-02T00:00:00.000Z')
+      const automatic = store.memories.save({ kind: 'decision', ticket: 't1', text: 'Automatic record.',
+        source: { ticket: 't1' } }, new Date().toISOString())
+      const settings = store.settings()
+      store.saveSettings({ ...settings, memory: { ...settings.memory, pinnedLimit: 1, recentLimit: 0, promptChars: 1200 } })
+      const limited = store.memories.promptText()
+      expect(limited).toContain('Stay short.')
+      expect(limited).not.toContain('A hand-written fact.')
+      // Retention removes the automatic record, but a memory a person wrote on purpose stays until it expires.
+      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, retentionDays: 7 } })
+      const later = new Date(Date.now() + 40 * 86_400_000)
+      expect(store.memories.prune(later)).toBe(1)
+      expect(store.memories.get(automatic.id)).toBeUndefined()
+      expect(store.memories.get(manual.id)).toBeDefined()
+      expect(store.memories.get(pinned.id)).toBeDefined()
+    } finally { store.db.close() }
+  })
 })

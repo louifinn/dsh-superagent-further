@@ -66,7 +66,7 @@ export class Store implements Repositories {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     this.leads = new LeadMessages(this.db)
-    this.memories = new Memories(this.db)
+    this.memories = new Memories(this.db, () => this.settings().memory)
     this.read = storeReads(this.db)
     // Windows ignores the directory mode above, so the directory and the database are given an owner-only ACL; on Unix this is
     // the 0700 directory and 0600 file mode the rest of the code expects.

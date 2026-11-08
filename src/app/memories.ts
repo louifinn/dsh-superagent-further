@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { LIMITS } from '../limits.ts'
+import { MemoryConfigSchema, type MemoryConfig } from '../policy.ts'
 import {
   MemoryInputSchema, MemorySchema, memoryHash, memoryId, memoryScope,
   type Memory, type MemoryInput,
@@ -15,10 +15,25 @@ const MAX_ROWS = 2000
  * Content is deduplicated by scope and text: writing the same memory again returns the stored row.
  */
 export class Memories {
-  constructor(private readonly db: DatabaseSync) {}
+  /**
+   * @param config - Reads the current memory settings on every use, so a panel save takes effect on the next write,
+   * search or snapshot without restarting the host.
+   */
+  constructor(private readonly db: DatabaseSync, private readonly config: () => MemoryConfig = () => MemoryConfigSchema.parse({})) {}
+
+  /** The current memory settings; every method reads them fresh so panel changes apply immediately. */
+  private settings(): MemoryConfig {
+    return this.config()
+  }
+
+  /** Whether remembering is enabled at all; writes, searches and injection are off when it is not. */
+  get enabled(): boolean {
+    return this.settings().enabled
+  }
 
   /** Stores a memory, or returns the one already stored for the same scope, kind and text. */
   save(input: MemoryInput, at = new Date().toISOString()): Memory {
+    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
     const parsed = MemoryInputSchema.parse(input)
     const hash = memoryHash(parsed)
     const existing = this.db.prepare('SELECT value FROM memory WHERE hash = ?').get(hash)?.value
@@ -58,6 +73,7 @@ export class Memories {
    * first, then the newest; `limit` bounds the page.
    */
   search(query: string, options: { project?: string; ticket?: string; limit?: number } = {}): Memory[] {
+    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
     const needle = this.pattern(query)
     const filters = ["(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
     const values: (string | number)[] = [needle, needle]
@@ -72,6 +88,7 @@ export class Memories {
    * project's memories and the installation-wide ones are never returned, which is the scope a project Lead may see.
    */
   searchFor(project: string, query: string, options: { ticket?: string; limit?: number } = {}): Memory[] {
+    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
     const needle = this.pattern(query)
     const filters = ["project = ?", "(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
     const values: (string | number)[] = [project, needle, needle]
@@ -85,10 +102,26 @@ export class Memories {
     return this.db.prepare('DELETE FROM memory WHERE id = ?').run(id).changes > 0
   }
 
-  /** Removes memories whose `expiresAt` has passed; returns how many were removed. */
+  /** Removes memories whose `expiresAt` has passed or automatic ones older than the configured retention; returns how many. */
   prune(now = new Date()): number {
-    const result = this.db.prepare("DELETE FROM memory WHERE expires <> '' AND expires <= ?").run(now.toISOString())
-    return Number(result.changes)
+    const settings = this.settings()
+    const cutoff = new Date(now.getTime() - settings.retentionDays * 86_400_000).toISOString()
+    // Retention ages out only the deterministic records of finished work (they carry a Ticket or Request source); a memory
+    // a person or agent wrote on purpose stays until it expires, is forgotten, or is unpinned by them.
+    const aged = this.db.prepare("DELETE FROM memory WHERE json_extract(value, '$.pinned') = 0 AND at <= ?"
+      + " AND (json_extract(value, '$.source.ticket') IS NOT NULL OR json_extract(value, '$.source.request') IS NOT NULL)").run(cutoff)
+    const expired = this.db.prepare("DELETE FROM memory WHERE expires <> '' AND expires <= ?").run(now.toISOString())
+    return Number(aged.changes) + Number(expired.changes)
+  }
+
+  /** How many memories are stored, pinned ones included. */
+  total(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM memory').get() as { n: number }).n)
+  }
+
+  /** How many stored memories are pinned. */
+  pinnedTotal(): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM memory WHERE json_extract(value, '$.pinned') = 1").get() as { n: number }).n)
   }
 
   /**
@@ -97,15 +130,19 @@ export class Memories {
    * another project's or the installation-wide ones, which belong to the Orchestrator.
    */
   promptRows(project?: string): Memory[] {
+    const settings = this.settings()
+    // The panel's master switch and its injection switch both silence the snapshot, without deleting anything.
+    if (!settings.enabled || !settings.inject) return []
+    const pinnedLimit = settings.pinnedLimit, recentLimit = settings.recentLimit
     if (project !== undefined) {
       const pinned = this.rows("SELECT value FROM memory WHERE project = ? AND json_extract(value, '$.pinned') = 1 ORDER BY at DESC LIMIT ?",
-        [project, LIMITS.memoryPinned])
+        [project, pinnedLimit])
       const rest = this.rows("SELECT value FROM memory WHERE project = ? AND json_extract(value, '$.pinned') = 0 ORDER BY at DESC LIMIT ?",
-        [project, LIMITS.memoryPromptRows])
+        [project, recentLimit])
       return [...pinned, ...rest]
     }
-    const pinned = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 1 ORDER BY at DESC LIMIT ?", [LIMITS.memoryPinned])
-    const rest = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 0 ORDER BY at DESC LIMIT ?", [LIMITS.memoryPromptRows])
+    const pinned = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 1 ORDER BY at DESC LIMIT ?", [pinnedLimit])
+    const rest = this.rows("SELECT value FROM memory WHERE json_extract(value, '$.pinned') = 0 ORDER BY at DESC LIMIT ?", [recentLimit])
     return [...pinned, ...rest]
   }
 
@@ -117,12 +154,13 @@ export class Memories {
   promptText(project?: string): string {
     const rows = this.promptRows(project)
     if (!rows.length) return ''
+    const budget = this.settings().promptChars
     const lines: string[] = []
     let used = HEADING.length
     for (const row of rows) {
       const where = [row.kind, ...row.project ? [row.project] : [], ...row.ticket ? [`ticket ${row.ticket}`] : []].join(' · ')
       const line = `- (${where}) ${row.text}`
-      if (used + line.length + 1 > LIMITS.memoryPromptChars) break
+      if (used + line.length + 1 > budget) break
       lines.push(line)
       used += line.length + 1
     }

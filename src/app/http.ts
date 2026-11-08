@@ -24,6 +24,7 @@ import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
 import { policyHistory } from './settings-history.ts'
 import { overview } from './views/overview.ts'
+import { memoriesView } from './views/memories.ts'
 import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
@@ -150,7 +151,7 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
-const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor']), SourceBlock])
+const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
 
 function routes(runtime: HttpHost): Routes {
@@ -212,6 +213,11 @@ function routes(runtime: HttpHost): Routes {
     // `scripts/dsh-superagent stop` ends a detached service on Windows where no graceful signal can be delivered.
     'POST shutdown': () => { setTimeout(() => { runtime.requestShutdown() }, 0); return { stopping: true } },
     'GET models': () => runtime.models(),
+    'GET memories': () => memoriesView(store),
+    'POST memory/forget': async ({ body }) => {
+      const { id } = z.object({ id: z.string().min(1) }).parse(await body())
+      return { forgotten: store.memories.forget(id) }
+    },
     'GET prompts': ({ query }) => { const { revision, offset } = PromptsQuery.parse(query); return promptsView(runtime, revision, offset) },
     'PUT prompts': async input => {
       const request = z.object({ config: z.unknown(), baseRevision: z.number().int().nonnegative() }).parse(await promptBody(input))

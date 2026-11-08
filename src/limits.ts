@@ -20,6 +20,7 @@ export const LIMITS = {
   memoryTags: 8,
   memoryRows: 2000,
   memoryPromptChars: 1200,
+  memoryPromptCharsMax: 4000,
   memoryPromptRows: 12,
   memoryPinned: 40,
   memoryKeepDays: { min: 1, max: 3650 },
