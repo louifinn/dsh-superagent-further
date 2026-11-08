@@ -47,6 +47,8 @@ it('answers each kind of failure with its own status', async () => {
   expect(await call('PUT', 'settings/pause', { value: {}, revision: 0 })).toMatchObject({ status: 400 })
   expect(await call('PUT', 'settings/source:feishu', { value: {}, revision: 0 })).toEqual({ status: 404, body: { error: 'Source not found' } })
   expect(saves).toHaveLength(4)
+  // The management API saves with the panel's permissions, never the tool origin the tier refusals apply to.
+  expect(saves.map(args => (args as unknown[])[3])).toEqual(['panel', 'panel', 'panel', 'panel'])
   expect(await call('POST', 'tickets/t9/retry')).toEqual({ status: 404, body: { error: 'Ticket not found' } })
   expect(await call('GET', 'nothing/here')).toEqual({ status: 404, body: { error: 'Unknown operation' } })
   expect(await call('POST', 'executor/pause', 'not json')).toEqual({ status: 400, body: { error: 'The request body is not JSON' } })

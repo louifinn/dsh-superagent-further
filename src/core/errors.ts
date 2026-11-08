@@ -38,6 +38,8 @@ export const USER_ERRORS = {
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
   panelOnlyMemory: ['refused', 'Memory behavior can only be changed in the management panel'],
   panelOnlyLanguage: ['refused', 'The default language can only be changed in the management panel'],
+  approvalRequired: ['refused', 'Changing {fields} needs the operator\'s confirmation in the management panel; ask them to save it there'],
+  reasonRequired: ['refused', 'A settings save from a tool must give the reason the person asked for the change'],
   setupComplete: ['refused', 'Setup is complete'],
   modelUnavailable: ['refused', 'The {block} model is not available: {error}'],
   promptTooLong: ['refused', 'Prompt configuration exceeds {limit} characters'],

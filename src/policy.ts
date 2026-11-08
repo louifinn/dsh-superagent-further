@@ -193,6 +193,46 @@ export type LanguageConfig = Settings['language']
 export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
+/**
+ * Who may change one settings field: `A` saves directly from the main Session's tool, `B` changes who is heard, what is
+ * accepted, cost, memory, or language and needs the operator's confirmation, and `C` defines the execution environment
+ * or credentials and stays panel-only (docs/011 Part A).
+ */
+export type FieldTier = 'A' | 'B' | 'C'
+/** Tier-A Source config fields: they change how much or how often the Source works, never what it accepts. */
+const SOURCE_TIER_A = new Set(['pollSeconds', 'failuresBeforeError', 'observeIssues', 'observePulls', 'observeComments', 'observeCi',
+  'readPageSize', 'linkTimeoutMs', 'digestHour'])
+/** Tier-B Source config fields: who the Source listens to and what it does on the operator's behalf. */
+const SOURCE_TIER_B = new Set(['chats', 'directMessages', 'otherChats', 'digestChat'])
+/**
+ * The tier of one changed field, named as `changedPaths` reports it (`eval.mode`, `sources.github.config.pollSeconds`).
+ * Unknown fields are panel-only, so adding a setting without a tier cannot widen what a tool may save.
+ */
+export function fieldTier(block: SettingsSave, path: string): FieldTier {
+  if (block === 'pause') return 'A'
+  if (block === 'policy') return 'B'
+  if (block.startsWith('source:')) {
+    const prefix = `sources.${block.slice('source:'.length)}.`
+    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : path
+    if (rest === 'enabled') return 'B'
+    if (rest.startsWith('config.')) {
+      const field = rest.slice('config.'.length).split('.')[0] ?? ''
+      if (SOURCE_TIER_A.has(field)) return 'A'
+      if (SOURCE_TIER_B.has(field)) return 'B'
+    }
+    return 'C'
+  }
+  if (block === 'eval') return path === 'eval.timeoutSeconds' ? 'A' : 'B'
+  if (block === 'executor') {
+    if (path === 'executor.worktreeKeepDays') return 'A'
+    if (path === 'executor.directory' || path === 'executor.prepare' || path.startsWith('executor.blockedCommands')
+      || path.startsWith('executor.projects')) return 'C'
+    return 'B'
+  }
+  // Memory and language are operator preferences. Anything else is a block with no assigned tier, so panel-only.
+  if (block === 'memory' || block === 'language') return 'B'
+  return 'C'
+}
 
 export const POLICY_REVISION = 'mandate-v3'
 /**

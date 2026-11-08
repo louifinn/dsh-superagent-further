@@ -263,15 +263,30 @@ it('checks an acknowledgement against the IM word limit, not a character count',
   expect(await accept(words(IM_WORDS))).toMatchObject({ decision: 'accept', ticket: { title: 'Fix' } })
 })
 
-it('saves a settings block by name, a Source\'s block with the Source\'s id', async () => {
+it('saves a tier-A settings block by name and a Source\'s block with the Source\'s id, requiring the person\'s reason', async () => {
   const save = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_settings_save', args)
-  const github = { config: h.runtime.store.settings().sources.github!.config, revision: h.runtime.store.blockRevision('source:github') }
-  const off = { enabled: false, config: github.config }
-  await expect(save({ block: 'source', value: off, revision: github.revision })).rejects.toThrow('source names the Source')
-  await expect(save({ block: 'source:github', value: off, revision: github.revision })).rejects.toThrow()
-  expect(await save({ block: 'source', source: 'github', value: off, revision: github.revision })).toMatchObject({ saved: true })
-  expect(h.runtime.store.settings().sources.github?.enabled).toBe(false)
-  expect(await save({ block: 'pause', value: { paused: true }, revision: 0 })).toEqual({ paused: true })
+  const tool = h.tools.get(h.runtime.masterId)!.get('orchestrator_settings_save') as unknown as
+    { description: string; parameters: { features?: unknown; required?: string[]; properties?: Record<string, unknown> } }
+  expect(tool.description).toContain('tier-A')
+  expect(tool.parameters.required).toContain('reason')
+  expect(tool.parameters.properties).toHaveProperty('reason')
+  const github = { value: h.runtime.settings.block('source:github').value as { enabled: boolean; config: Record<string, unknown> },
+    revision: h.runtime.settings.block('source:github').revision }
+  const reason = 'The person asked to change the GitHub settings'
+  await expect(save({ block: 'source', value: github.value, revision: github.revision, reason })).rejects.toThrow('source names the Source')
+  await expect(save({ block: 'source:github', value: github.value, revision: github.revision, reason })).rejects.toThrow()
+  // Who a Source listens to needs the operator; a polling limit saves directly and is recorded with its reason.
+  await expect(save({ block: 'source', source: 'github', value: { enabled: false, config: github.value.config }, revision: github.revision, reason }))
+    .rejects.toMatchObject({ code: 'approvalRequired' })
+  expect(h.runtime.store.settings().sources.github?.enabled).toBe(true)
+  expect(await save({ block: 'source', source: 'github', value: { ...github.value, config: { ...github.value.config, pollSeconds: 120 } },
+    revision: github.revision, reason: 'The person asked to poll every two minutes' })).toMatchObject({ saved: true })
+  expect(h.runtime.store.settings().sources.github?.config.pollSeconds).toBe(120)
+  expect(h.runtime.store.settingsHistory(1)[0]).toMatchObject({ source: 'tool', actor: h.runtime.masterId, reason: 'The person asked to poll every two minutes' })
+  expect(await save({ block: 'pause', value: { paused: true }, revision: 0, reason: 'The person asked to pause while reviewing' })).toEqual({ paused: true })
+  expect(h.runtime.store.settingsHistory(1)[0]).toMatchObject({ block: 'pause', source: 'tool', actor: h.runtime.masterId,
+    reason: 'The person asked to pause while reviewing' })
+  expect(await save({ block: 'pause', value: { paused: false }, revision: 0, reason: 'The person asked to keep working' })).toEqual({ paused: false })
 })
 
 it('previews a prompt configuration without saving it, and saves one only against the revision it edits', async () => {
@@ -420,11 +435,14 @@ it('relays a worker\'s report with its ticket card and the start of its summary,
 it('tells the main Session of the settings, prompts, requeues and unsubscriptions others made, never of its own', async () => {
   const save = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_settings_save', args)
   const evaluation = h.runtime.store.settings().eval
-  await h.runtime.settings.save('eval', { ...evaluation, mode: 'observe' }, h.runtime.store.blockRevision('eval'), 'panel')
+  await h.runtime.settings.save('eval', { ...evaluation, timeoutSeconds: evaluation.timeoutSeconds + 1 },
+    h.runtime.store.blockRevision('eval'), 'panel')
   await h.runtime.idle()
-  expect(notices().at(-1)).toEqual({ settings_saved: 'eval', changed: ['eval.mode'], read: 'settings/eval' })
+  expect(notices().at(-1)).toEqual({ settings_saved: 'eval', changed: ['eval.timeoutSeconds'], read: 'settings/eval' })
   const before = notices().length
-  expect(await save({ block: 'eval', value: { ...evaluation, mode: 'auto' }, revision: h.runtime.store.blockRevision('eval') })).not.toHaveProperty('context_delivery')
+  const timeoutSeconds = h.runtime.store.settings().eval.timeoutSeconds + 1
+  expect(await save({ block: 'eval', value: { ...h.runtime.store.settings().eval, timeoutSeconds },
+    revision: h.runtime.store.blockRevision('eval'), reason: 'The person asked for a longer evaluation timeout' })).not.toHaveProperty('context_delivery')
   const config = { ...h.runtime.prompts.current().config, scope: 'Finish what was asked.' }
   expect(await h.runTool(h.runtime.masterId, 'orchestrator_prompts_save', { config, baseRevision: 0 })).not.toHaveProperty('context_delivery')
   await h.acceptedTicket(feishu('1', '@bot 修一下回归'))

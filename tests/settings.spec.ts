@@ -5,6 +5,8 @@ import { Commands } from '../src/infra/commands.ts'
 import { Setup } from '../src/app/setup.ts'
 import { SetupError } from '../src/setup.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
+import { policyHistory } from '../src/app/settings-history.ts'
+import { policyVersion, type Settings, type SettingsBlock } from '../src/policy.ts'
 import { startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host | undefined
@@ -129,7 +131,8 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   const revision = store.blockRevision('executor')
   const workspace = process.platform === 'win32' ? 'C:/src/app' : '/src/app'
   const projects = [{ id: 'app', name: 'App', workspace, repository: 'owner/app', branch: '' }]
-  await expect(settings.save('executor', { ...executor, projects }, revision, 'tool')).rejects.toThrow(UserError)
+  await expect(settings.save('executor', { ...executor, projects }, revision, 'tool', { reason: 'The person asked for another project' }))
+    .rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
   expect(store.settings().executor.projects).toEqual(executor.projects)
   const saved = await settings.save('executor', { ...executor, projects }, revision, 'panel')
   expect(saved.saved).toBe(true)
@@ -156,7 +159,8 @@ it('saves the default language from the panel only, and the block reads it back'
   h = await startRuntime()
   const { settings, store } = h.runtime
   const revision = store.blockRevision('language')
-  await expect(settings.save('language', { default: 'English (US)' }, revision, 'tool')).rejects.toThrow(/management panel/)
+  await expect(settings.save('language', { default: 'English (US)' }, revision, 'tool', { reason: 'The person wants English' }))
+    .rejects.toMatchObject({ code: 'approvalRequired' })
   expect(store.settings().language).toEqual({ default: '简体中文' })
   const saved = await settings.save('language', { default: 'English (US)' }, revision, 'panel')
   expect(saved.saved).toBe(true)
@@ -169,7 +173,8 @@ it('saves Memory behavior from the panel only, and the change applies without a 
   const { settings, store } = h.runtime
   const memory = store.settings().memory
   const revision = store.blockRevision('memory')
-  await expect(settings.save('memory', { ...memory, inject: false }, revision, 'tool')).rejects.toThrow(/management panel/)
+  await expect(settings.save('memory', { ...memory, inject: false }, revision, 'tool', { reason: 'The person wants less injection' }))
+    .rejects.toMatchObject({ code: 'approvalRequired' })
   expect(store.settings().memory.inject).toBe(true)
   const saved = await settings.save('memory', { ...memory, inject: false, pinnedLimit: 2 }, revision, 'panel')
   expect(saved.saved).toBe(true)
@@ -178,4 +183,131 @@ it('saves Memory behavior from the panel only, and the change applies without a 
   expect(settings.block('memory').value).toMatchObject({ inject: false, pinnedLimit: 2 })
   store.memories.save({ kind: 'fact', text: 'Stored but not injected.' })
   expect(store.memories.promptText()).toBe('')
+})
+
+it('requires the person\'s reason for a tool-origin save or pause, and writes nothing without one', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const revision = store.blockRevision('eval')
+  const evaluation = settings.block('eval').value as Settings['eval']
+  const value = { ...evaluation, timeoutSeconds: 240 }
+  await expect(settings.save('eval', value, revision, 'tool')).rejects.toMatchObject({ code: 'reasonRequired' })
+  await expect(settings.save('eval', value, revision, 'tool', { reason: '   ' })).rejects.toMatchObject({ code: 'reasonRequired' })
+  await expect(settings.pause(true, 'tool')).rejects.toMatchObject({ code: 'reasonRequired' })
+  expect(store.blockRevision('eval')).toBe(revision)
+  expect(store.settings().eval.timeoutSeconds).toBe(evaluation.timeoutSeconds)
+  expect(store.settings().paused).toBe(false)
+})
+
+it('saves tier-A fields from a tool with the person\'s reason, records actor and reason for the panel history, and applies them hot', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const reason = 'The person asked for these limits in the panel'
+  const evaluation = settings.block('eval')
+  const savedEvaluation = await settings.save('eval', { ...(evaluation.value as object), timeoutSeconds: 240 }, evaluation.revision,
+    'tool', { actor: 'master-session', reason })
+  expect(savedEvaluation).toMatchObject({ saved: true, restarting: false, policy_changed: false })
+  expect(store.settings().eval.timeoutSeconds).toBe(240)
+  expect(store.settingsHistory(1)[0]).toMatchObject({ source: 'tool', block: 'eval', actor: 'master-session', reason })
+  const executor = settings.block('executor')
+  const savedExecutor = await settings.save('executor', { ...(executor.value as object), worktreeKeepDays: 14 }, executor.revision,
+    'tool', { actor: 'master-session', reason })
+  expect(savedExecutor).toMatchObject({ saved: true, restarting: false })
+  expect(store.settings().executor.worktreeKeepDays).toBe(14)
+  const github = settings.block('source:github')
+  const value = github.value as { enabled: boolean; config: Record<string, unknown> }
+  const savedSource = await settings.save('source:github', { ...value, config: { ...value.config, pollSeconds: 120 } }, github.revision,
+    'tool', { actor: 'master-session', reason })
+  expect(savedSource).toMatchObject({ saved: true, restarting: false })
+  expect(store.settings().sources.github?.config.pollSeconds).toBe(120)
+  const latest = store.settingsHistory(1)[0]!
+  expect(latest).toMatchObject({ source: 'tool', block: 'source:github', actor: 'master-session', reason })
+  // The panel history view carries the audit fields too.
+  const history = policyHistory(store, h.runtime.sources, policyVersion(store.settings()))
+  expect(history.items.find(item => item.revision === latest.revision)).toMatchObject({ actor: 'master-session', reason })
+})
+
+it('refuses every tier-B field from a tool with approvalRequired and every tier-C field with its panel-only code, writing nothing', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const reason = 'The person asked for this change in the panel'
+  const policy = settings.block('policy').value as Settings['policy']
+  const evaluation = settings.block('eval').value as Settings['eval']
+  const executor = settings.block('executor').value as Settings['executor']
+  const memory = settings.block('memory').value as Settings['memory']
+  const github = settings.block('source:github').value as { enabled: boolean; config: Record<string, unknown> }
+  const feishu = settings.block('source:feishu').value as { enabled: boolean; config: Record<string, unknown> }
+  const workspace = process.platform === 'win32' ? 'C:/src/other' : '/src/other'
+  const mode = evaluation.mode === 'auto' ? 'observe' : 'auto'
+  const otherChats = feishu.config.otherChats === 'mentions' ? 'none' : 'mentions'
+  const cases: { block: SettingsBlock; value: unknown; code: string }[] = [
+    { block: 'eval', value: { ...evaluation, mode }, code: 'approvalRequired' },
+    { block: 'eval', value: { ...evaluation, model }, code: 'approvalRequired' },
+    { block: 'executor', value: { ...executor, model }, code: 'approvalRequired' },
+    { block: 'executor', value: { ...executor, maxWorkers: executor.maxWorkers + 1 }, code: 'approvalRequired' },
+    { block: 'executor', value: { ...executor, projectWorkers: executor.projectWorkers + 1 }, code: 'approvalRequired' },
+    { block: 'policy', value: { ...policy, rules: policy.rules.map((rule, index) => index === 0 ? { ...rule, enabled: !rule.enabled } : rule) },
+      code: 'approvalRequired' },
+    { block: 'policy', value: { ...policy, sources: { ...policy.sources, github: { ...(policy.sources.github ?? { admission: {} }),
+      allowed: [...(policy.sources.github?.allowed ?? []), { id: 'tier-b-test' }] } } }, code: 'approvalRequired' },
+    { block: 'memory', value: { ...memory, inject: false }, code: 'approvalRequired' },
+    { block: 'language', value: { default: 'English (US)' }, code: 'approvalRequired' },
+    { block: 'source:github', value: { ...github, enabled: false }, code: 'approvalRequired' },
+    { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, chats: [...((feishu.config.chats as unknown[] | undefined) ?? []),
+      { chatId: 'oc_new', listen: 'all' }] } }, code: 'approvalRequired' },
+    { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, directMessages: false } }, code: 'approvalRequired' },
+    { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, otherChats } }, code: 'approvalRequired' },
+    { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, digestChat: 'oc_digest' } }, code: 'approvalRequired' },
+    { block: 'executor', value: { ...executor, directory: workspace }, code: 'panelOnlyEnvironment' },
+    { block: 'executor', value: { ...executor, prepare: 'echo prepared' }, code: 'panelOnlyEnvironment' },
+    { block: 'executor', value: { ...executor, blockedCommands: ['rm'] }, code: 'panelOnlyEnvironment' },
+    { block: 'executor', value: { ...executor, projects: [...executor.projects, { id: 'other', name: 'Other', workspace,
+      repository: 'owner/other', branch: '' }] }, code: 'panelOnlyEnvironment' },
+    { block: 'source:github', value: { ...github, config: { ...github.config, cli: '/opt/gh-other' } }, code: 'panelOnlyAccounts' },
+    { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, cli: '/opt/lark-other' } }, code: 'panelOnlyAccounts' },
+  ]
+  for (const item of cases) {
+    const revision = store.blockRevision(item.block)
+    const before = JSON.stringify(store.settings())
+    const failure = await settings.save(item.block, item.value, revision, 'tool', { actor: 'master', reason })
+      .then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(UserError)
+    expect(failure).toMatchObject({ code: item.code })
+    expect((failure as UserError).message).toContain('management panel')
+    expect(store.blockRevision(item.block)).toBe(revision)
+    expect(JSON.stringify(store.settings())).toBe(before)
+  }
+})
+
+it('still rejects an invalid or unknown tier-A payload from a tool, writing nothing', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const reason = 'The person asked for this change'
+  const revision = store.blockRevision('eval')
+  const evaluation = settings.block('eval').value as Settings['eval']
+  const before = JSON.stringify(store.settings())
+  await expect(settings.save('eval', { ...evaluation, timeoutSeconds: 1 }, revision, 'tool', { reason })).rejects.toThrow()
+  await expect(settings.save('eval', { ...evaluation, timeoutSeconds: 240, extra: true }, revision, 'tool', { reason })).rejects.toThrow()
+  const github = settings.block('source:github')
+  const value = github.value as { enabled: boolean; config: Record<string, unknown> }
+  await expect(settings.save('source:github', { ...value, config: { ...value.config, pollSeconds: 5 } }, github.revision, 'tool',
+    { reason })).rejects.toThrow()
+  expect(JSON.stringify(store.settings())).toBe(before)
+  expect(store.blockRevision('eval')).toBe(revision)
+  await expect(settings.save('missing' as unknown as SettingsBlock, {}, 0, 'tool', { reason }))
+    .rejects.toMatchObject({ code: 'unknownBlock' })
+})
+
+it('keeps the panel path able to save a tier-B field and change the Policy version, without an audit reason', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const evaluation = settings.block('eval')
+  const mode = (evaluation.value as Settings['eval']).mode === 'auto' ? 'observe' : 'auto'
+  const saved = await settings.save('eval', { ...(evaluation.value as object), mode }, evaluation.revision, 'panel')
+  expect(saved).toMatchObject({ saved: true, policy_changed: true })
+  expect(store.settings().eval.mode).toBe(mode)
+  const version = store.settingsHistory(1)[0]!
+  expect(version).toMatchObject({ source: 'panel', block: 'eval' })
+  expect(version.actor).toBeUndefined()
+  expect(version.reason).toBeUndefined()
 })

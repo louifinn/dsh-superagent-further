@@ -149,6 +149,8 @@ export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; v
             item.source) })}</div>
           <div className="dt-event-foot">{when(item.savedAt, t('lang'))}{item.policyChanged && <> · {t('historyPolicyChanged',
             { version: item.policyVersion.slice(0, 8) })}</>}</div>
+          {item.reason && <Hint>{t('historyReason', { reason: item.reason })}</Hint>}
+          {item.actor && <Hint>{t('historyActor', { actor: item.actor })}</Hint>}
           {item.changes === null ? <Hint>{t('historyNoBaseline')}</Hint> : item.changes.length
             ? <ul className="dt-changes">{item.changes.map((change, index) => <li key={index}>{changeText(t, change, sources)}</li>)}</ul>
               : <Hint>{t('historyNoChanges')}</Hint>}

@@ -25,6 +25,10 @@ export type Dropped = Receipt & { dropped: { at: string; reason: DropReason } }
 export interface SettingsVersion {
   revision: number; savedAt: string; source: SettingsOrigin | 'internal'; block?: SettingsSave
   policyVersion: string; policyChanged: boolean; notified: string[]; settings: Settings
+  /** Session that requested the save, when a tool made it (docs/011 A5.3). */
+  actor?: string
+  /** The operator's words that asked for the save (docs/011 A5.3). */
+  reason?: string
 }
 /**
  * Generated columns and partial indexes defining active working sets so passes scan only active rows.
