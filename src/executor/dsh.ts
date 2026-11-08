@@ -238,6 +238,8 @@ export class DshExecutor implements Executor {
   private readonly transient = new Map<string, number>()
   /** Assignment IDs currently waiting on a transient-failure backoff timer before resuming their worker turn. */
   private readonly resuming = new Set<string>()
+  /** Assignments whose launch is queued or running, so a message arriving meanwhile cannot start a second one. */
+  private readonly launching = new Set<string>()
   /**
    * The looks at background work of workers that went idle, by ticket, which hold their slots; a look ends when its worker
    * runs again or its Assignment ends.
@@ -323,6 +325,10 @@ export class DshExecutor implements Executor {
   }
   /** Enqueues a `launch` effect for an accepted or resumed assignment; launches start in queue order as worker slots free up. */
   start(ticket: Ticket, assignment: Assignment): void {
+    // An Input can arrive while the launch runs; a second launch would collide with the child the first creates.
+    // `assignmentStarted` delivers the waiting Inputs to the child once the first launch is done.
+    if (this.launching.has(assignment.id)) return
+    this.launching.add(assignment.id)
     this.host.effects.enqueue('launch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
   }
   /** Enqueues a `delivery` effect to steer pending inputs into `ticket`'s running worker session. */
@@ -342,7 +348,7 @@ export class DshExecutor implements Executor {
       if (this.host.closing() || error instanceof Later) throw error
       if (!(error instanceof PrepareFailed) && this.retries(`launch:${assignmentId}`, error)) throw error
       this.launchFailed(ticketId, assignmentId, error)
-    } finally { this.slots.free(ticketId) }
+    } finally { this.launching.delete(assignmentId); this.slots.free(ticketId) }
   }
   /**
    * Delivers queued inputs to a running assignment one by one, re-reading ticket state before each delivery so delivery

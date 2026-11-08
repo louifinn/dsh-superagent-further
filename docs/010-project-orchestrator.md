@@ -234,12 +234,12 @@ the route tool, the assessor, `Executor.prepare` and `DshExecutor.deliverInput` 
 Feishu/GitHub run confirms both entry points still end merged. Step (5) belongs with the operator-facing
 onboarding change; the first four are pure tests/fixture work.
 
-A race found while attempting the migration, to fix inside P4b: a message that arrives while a
-launch is still in flight makes `Tickets.addInput` call `Executor.start` again, so a second activation
-runs for the same Assignment; the second one collides with the child (`subagent "…" already exists`)
-and falls back to a wake send, recording the assignment text twice. Either mark the Assignment started
-before the launch's first await, or make `start` idempotent per Assignment and deliver what arrived
-during the launch once the child exists (with a test for both).
+A race found while attempting the migration, and fixed ahead of it: a message that arrives while a
+launch is still in flight used to make `Tickets.addInput` call `Executor.start` again, so a second
+activation ran for the same Assignment and its child-id collision fell back to a wake send, recording
+the assignment text twice. `DshExecutor.start` now keeps the Assignment's id in a `launching` set while
+its launch is queued or running and ignores a second start; the waiting Input is delivered when
+`assignmentStarted` queues the ticket's undelivered Inputs for the running Assignment.
 
 **P5 — Request bundle.** One acceptance becomes one Request plus 1..N Tickets, one per delivery unit
 (the Orchestrator splits, using the registered projects and, for a Feishu message, the projects the
