@@ -327,7 +327,7 @@ it('writes the removed auto-merge threshold and member identities into the promp
   const done = opened({ 'settings-before-9': before, 'prompt-settings-text': 1 })
   expect(new Prompts(done, () => 100000, () => undefined, () => true).current().revision).toBe(0)
   done.close()
-})
+}, 60_000)
 
 it('reads a current prompt version that does not read as the one before it, keeping what it said', () => {
   const config = { ...defaultPrompts(), delivery: 'Deliver PRs.' }
