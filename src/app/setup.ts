@@ -1,7 +1,7 @@
-/** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
+/** Probes account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
+import { resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import type { Settings, SettingsBlock } from '../policy.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
@@ -13,9 +13,25 @@ export interface SetupHost {
   restart(): void
 }
 
-const setupFields = (settings: Settings) =>
-  JSON.stringify(Object.entries(SETUP_FIELDS).map(([id, keys]) => keys.map(key => settings.sources[id]?.config[key] ?? '')))
+// The values setup derives the deployment from: the Source CLIs it probes, and the first project, whose repository is the
+// primary repository setup verifies and names Threads by. The retired GitHub `repository` setting is not compared: the
+// schema drops it from a parsed Source, so a save that only removes it must not look like an account change.
+const setupFields = (settings: Settings) => JSON.stringify([
+  settings.sources.github?.config.cli ?? '',
+  settings.executor.projects[0]?.repository ?? '',
+  settings.sources.feishu?.config.cli ?? '',
+])
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
+
+/**
+ * The deployment's primary repository: the first registered project's, in the order Execution → Projects lists them.
+ * A `repository` still present in a raw settings record written outside the Source schema is honored first; the schema 17
+ * migration removes that retired setting from stored settings, so the projects decide from then on.
+ */
+export const primaryRepository = (settings: Settings): string => {
+  const configured = settings.sources.github?.config.repository
+  return typeof configured === 'string' ? configured : settings.executor.projects[0]?.repository ?? ''
+}
 
 /**
  * Resolves the target repository, GitHub account, and optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
@@ -59,14 +75,17 @@ export class Setup {
   restart(): void { setTimeout(this.host.restart, 0) }
   /**
    * Verify account CLIs for a modified source block before saving, ignoring setup errors belonging to other blocks.
-   * A GitHub Source saved without a repository is accepted instead: setup reports the requirement again, so an
-   * installation can unbind its accounts and return to its first-run state.
+   * A GitHub Source saved without a CLI, or before any project exists (so no primary repository), is accepted instead:
+   * setup reports the requirement again, so an installation can unbind its accounts and return to its first-run state.
    */
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
-    if (block === 'source:github' && !settings.sources.github?.config.repository) return
+    // Only the Source blocks carry accounts to verify; a project save restarts setup, which checks the primary repository then.
+    if (block !== 'source:github' && block !== 'source:feishu') return
+    const repository = primaryRepository(settings)
+    if (block === 'source:github' && (!settings.sources.github?.config.cli || !repository)) return
     const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
-      : resolveDeployment(machine, settings.sources.github?.config, this.probe())
+      : resolveDeployment(machine, { ...settings.sources.github?.config, repository }, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
   }
   async blockCommands(blocked: readonly string[]): Promise<void> {
@@ -81,9 +100,10 @@ export class Setup {
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
     const probe = this.probe()
-    const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
-    // Every Ticket runs as a subagent of its project's Lead, so the host needs at least one registered project before it serves work.
+    // Every Ticket runs as a subagent of its project's Lead, so the host needs at least one registered project before it
+    // serves work; that first project's repository is also the deployment's primary repository.
     if (settings.executor.projects.length === 0) throw new SetupError('projectUnset')
+    const deployment = await resolveDeployment(machine, { ...settings.sources.github?.config, repository: primaryRepository(settings) }, probe)
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem

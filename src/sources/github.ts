@@ -22,10 +22,20 @@ const NotificationSchema = z.looseObject({
   repository: z.looseObject({ full_name: z.string() }), subject: z.looseObject({ url: z.string().nullish() }),
 })
 
-const GithubConfigSchema = GithubAccountsSchema.extend({ pollSeconds: z.number().int().min(60).max(3600).default(60),
+/** The GitHub Source's settings; its repository is the deployment's primary repository, derived from the first registered project. */
+const GithubConfigFields = GithubAccountsSchema.omit({ repository: true }).extend({ pollSeconds: z.number().int().min(60).max(3600).default(60),
   failuresBeforeError: z.number().int().min(1).max(20).default(3),
   observeIssues: z.boolean().default(false), observePulls: z.boolean().default(false), observeComments: z.boolean().default(false),
-  observeCi: z.boolean().default(false) }).strict()
+  observeCi: z.boolean().default(false) })
+/**
+ * Drop the retired `repository` setting before the strict parse: stored settings keep unknown Source config keys, so a
+ * record from before schema 17 still carries it until the migration strips it or a panel save rewrites the Source.
+ */
+const GithubConfigSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const { repository: _repository, ...config } = value as Record<string, unknown>
+  return config
+}, GithubConfigFields.strict())
 export type GithubConfig = z.infer<typeof GithubConfigSchema>
 const OBSERVED = { issues: 'observeIssues', pulls: 'observePulls', comments: 'observeComments', ci: 'observeCi' } as const
 type Scope = keyof typeof OBSERVED
@@ -38,13 +48,11 @@ function scopeOf(meta: Record<string, unknown>): Scope | undefined {
 export const githubKind: SourceKind<GithubConfig> = {
   kind: SOURCE,
   title: { zh: 'GitHub', en: 'GitHub' },
-  description: { zh: '智能体的 GitHub 账号；接收仓库里发给它的通知、已订阅 Issue 与 PR 的讨论、CI 状态变化和 PR 合并关闭。', en: 'The agent\'s GitHub accounts; receives notifications to it in the repository, discussion on subscribed Issues and PRs, CI changes, and PR merge or close.' },
+  description: { zh: '智能体的 GitHub 账号；接收主仓库（「执行 → 项目」里的第一个项目）与其余每个项目仓库里发给它的通知、已订阅 Issue 与 PR 的讨论、CI 状态变化和 PR 合并关闭。', en: 'The agent\'s GitHub accounts; receives notifications to it, discussion on subscribed Issues and PRs, CI changes, and PR merge or close in the primary repository (the first project under Execution → Projects) and every other project\'s repository.' },
   schema: GithubConfigSchema,
   fields: [
-    { key: 'repository', type: 'text', pattern: '[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+', label: { zh: '部署仓库', en: 'Deployment repository' },
-      hint: { zh: '写作 owner/name。它是工单的默认仓库，这个来源也监听「执行 → 项目」里每个项目的仓库（卡片下方列出全部监听范围）；保存时检查智能体账号能否推送到它，然后重启 dsh-superagent。', en: 'Written owner/name. It is the default repository for Tickets, and this Source also watches every repository registered under Execution → Projects (the card lists them all below); saving checks that the agent account can push to it, then restarts dsh-superagent.' } },
     { key: 'cli', type: 'text', label: { zh: '智能体的 GitHub CLI', en: 'Agent GitHub CLI' },
-      hint: { zh: '命令名或绝对路径，通常是用 GH_CONFIG_DIR 登录智能体账号的 gh 包装脚本。智能体以它登录的账号行事，执行器以 gh 调用它。保存时检查它登录的账号能否推送到仓库，然后重启 dsh-superagent。', en: 'A command name or absolute path, usually a gh wrapper signed in to the agent account through GH_CONFIG_DIR. The agent acts as the account it is signed in to, and the Executor calls it as gh. Saving checks that this account can push to the repository, then restarts dsh-superagent.' } },
+      hint: { zh: '命令名或绝对路径，通常是用 GH_CONFIG_DIR 登录智能体账号的 gh 包装脚本。智能体以它登录的账号行事，执行器以 gh 调用它。保存时检查它登录的账号能否推送到主仓库（第一个登记项目的仓库），然后重启 dsh-superagent。', en: 'A command name or absolute path, usually a gh wrapper signed in to the agent account through GH_CONFIG_DIR. The agent acts as the account it is signed in to, and the Executor calls it as gh. Saving checks that this account can push to the primary repository (the first registered project\'s), then restarts dsh-superagent.' } },
     { key: 'pollSeconds', type: 'number', advanced: true, min: 60, max: 3600, label: { zh: '轮询间隔 / 秒', en: 'Polling interval / seconds' }, hint: { zh: 'GitHub 要求更长间隔时以 GitHub 为准。', en: 'A longer interval requested by GitHub wins.' } },
     { key: 'failuresBeforeError', type: 'number', advanced: true, min: 1, max: 20, label: { zh: '连续失败几次后报告异常', en: 'Failed polls before reporting an error' }, hint: { zh: '单次网络中断会在下一次轮询时自动重试，不必报告。', en: 'A single network interruption is retried on the next poll and need not be reported.' } },
     { key: 'observeIssues', type: 'switch', label: { zh: '接收仓库里的新 Issue', en: 'Receive new Issues in the repository' },
@@ -55,7 +63,7 @@ export const githubKind: SourceKind<GithubConfig> = {
       hint: { zh: '打开后，Issue 和 PR 上没有 @ 智能体的评论和代码评论也会收到，由策略的接收表决定是否成为候选。', en: 'Comments and review comments on Issues and PRs that do not mention the agent are received too, and the Policy\'s admission table decides whether they become candidates.' } },
     { key: 'observeCi', type: 'switch', label: { zh: '接收默认分支的 CI', en: 'Receive the default branch\'s CI' },
       hint: { zh: '打开后，默认分支的 CI 失败和恢复会收到，由策略的接收表决定是否成为候选。', en: 'Failures of the default branch\'s CI, and its recovery, are received, and the Policy\'s admission table decides whether they become candidates.' } }],
-  // What the Source observes across the repository it receives in full; elsewhere, only what addresses the agent.
+  // What the Source observes across every watched repository; elsewhere, only what addresses the agent.
   scope: ({ meta }, config) => {
     const row = scopeOf(meta)
     return { listened: true, observed: row !== undefined && config[OBSERVED[row]], ...row ? { row } : {} }
@@ -78,7 +86,7 @@ export const githubKind: SourceKind<GithubConfig> = {
       columns: [{ key: 'id', type: 'text', label: { zh: '账号', en: 'Account' }, pattern: '[A-Za-z0-9\\-]+(\\[bot\\])?' }] }],
     explicit: { zh: '名单里的账号在 Issue 或评论里 @ 智能体的账号。', en: 'An account on the list mentions the agent\'s account in an Issue or a comment.' },
     rows(stored) {
-      const config = GithubConfigSchema.partial().parse(stored)
+      const config = GithubConfigFields.partial().parse(stored)
       const note = (observed: boolean | undefined) => observed ? { zh: '全部', en: 'All' } : { zh: '仅 @', en: '@ only' }
       const row = (id: Scope, label: { zh: string; en: string }) => ({ id, label, note: note(config[OBSERVED[id]]),
         cells: { listedUnaddressed: !!config[OBSERVED[id]], unlistedAddressed: true, unlistedUnaddressed: !!config[OBSERVED[id]] } })
@@ -91,7 +99,7 @@ export const githubKind: SourceKind<GithubConfig> = {
   },
   environment: {
     variables: [
-      { key: 'DSH_SUPERAGENT_GITHUB_REPOSITORY', description: { zh: '这个来源监听的仓库，owner/name。智能体在这里开的 PR，分支最后一段是 DSH_SUPERAGENT_NAME 时（例如 agent/$DSH_SUPERAGENT_NAME）会关联到工单', en: 'The repository this Source watches, as owner/name. A PR the agent opens here from a branch whose last path segment is DSH_SUPERAGENT_NAME (for example agent/$DSH_SUPERAGENT_NAME) binds to the ticket' } },
+      { key: 'DSH_SUPERAGENT_GITHUB_REPOSITORY', description: { zh: '主仓库（「执行 → 项目」里第一个项目的仓库），owner/name。智能体在这里开的 PR，分支最后一段是 DSH_SUPERAGENT_NAME 时（例如 agent/$DSH_SUPERAGENT_NAME）会关联到工单', en: 'The primary repository (the first project under Execution → Projects), as owner/name. A PR the agent opens here from a branch whose last path segment is DSH_SUPERAGENT_NAME (for example agent/$DSH_SUPERAGENT_NAME) binds to the ticket' } },
       { key: 'DSH_SUPERAGENT_GITHUB_ACCOUNT', description: { zh: '智能体的 GitHub 账号；gh 以它登录，除自动合并外的 GitHub 操作都用 gh，不用其他账号或凭据', en: 'The agent\'s GitHub account. gh is signed in to it; use gh for every GitHub operation except auto-merge, and never another account or credential' } },
       { key: 'DSH_SUPERAGENT_GITHUB_COMMIT_EMAIL', description: { zh: '智能体账号的提交邮箱。这里的 git 没有身份：按提示词写明的作者提交，没有写明时用智能体账号和这个邮箱', en: 'Commit email of the agent\'s account. git has no identity here: commit as the author these instructions name, or as the agent\'s account with this email when they name none' } },
       { key: 'DSH_SUPERAGENT_GITHUB_NUMBER', description: { zh: '接下工单的 Issue 或 PR 编号；工单不是从 GitHub 来的时为空', en: 'Number of the Issue or PR that started the ticket; empty when the ticket did not start on GitHub' } },
@@ -149,7 +157,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   }
 }
 interface GithubRepository { repository: string; primary: boolean }
-/** The deployment's repository first, then every registered project's repository, each once (names compared case-insensitively). */
+/** The primary repository (the first registered project's) first, then every other registered project's repository, each once (names compared case-insensitively). */
 export function repositories(ctx: SourceContext): GithubRepository[] {
   const out: GithubRepository[] = [{ repository: ctx.deployment.repository, primary: true }]
   for (const project of ctx.projects ?? []) {
@@ -169,7 +177,7 @@ const streamOf = (repo: GithubRepository, id: string) => repo.primary ? KV.githu
 const cursorOf = (repo: GithubRepository, number: number) => repo.primary ? KV.github.cursor(number) : KV.github.cursorIn(repo.repository, number)
 const branchCiOf = (repo: GithubRepository) => repo.primary ? KV.github.branchCi : KV.github.branchCiIn(repo.repository)
 const ciOf = (repo: GithubRepository, number: number) => repo.primary ? KV.github.ci(number) : KV.github.ciIn(repo.repository, number)
-/** The Thread id of a reference in this repository: bare for the deployment's repository, `owner/name#ref` for a project's. */
+/** The Thread id of a reference in this repository: bare for the primary repository, `owner/name#ref` for another project's. */
 const threadOf = (ctx: SourceContext, repo: GithubRepository, ref: string): string => githubThread(repo.repository, ctx.deployment.repository, ref)
 /** How a Thread reads in a round failure: `#12`, or `owner/name#12` for another project's repository. */
 const display = (thread: string): string => { const { repository, ref } = githubThreadRef(thread) ?? { ref: thread }; return repository ? `${repository}#${ref}` : `#${ref}` }

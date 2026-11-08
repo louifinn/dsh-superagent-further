@@ -22,13 +22,15 @@ function SourceCard({ source }: { source: SourceView }) {
   const value = draft.value
   const { problem, value: saved } = source
   const { settings } = useSettings()
-  // The GitHub Source watches its deployment repository and every registered project's repository, so the card lists them all.
+  // The GitHub Source watches every registered project's repository; the first project's is the deployment's primary repository.
   const projects = source.id === 'github' ? settings.blocks.executor.value.projects : []
-  const primary = String(saved.config.repository ?? '')
   const watched = source.id === 'github'
-    ? [{ repository: primary, label: t('sourceWatchedPrimary') },
-      ...projects.filter(project => project.repository && project.repository.toLowerCase() !== primary.toLowerCase())
-        .map(project => ({ repository: project.repository, label: project.name }))].filter(item => item.repository)
+    ? projects.reduce<{ repository: string; label: string }[]>((rows, project) => {
+      if (project.repository && !rows.some(row => row.repository.toLowerCase() === project.repository.toLowerCase())) {
+        rows.push({ repository: project.repository, label: rows.length === 0 ? t('sourceWatchedPrimary') : project.name })
+      }
+      return rows
+    }, [])
     : []
   const changed = (key: string) => String(value.config[key] ?? '') !== String(saved.config[key] ?? '')
   // Saving a modified setup-sensitive field restarts dsh-superagent, interrupting running Assignments.

@@ -108,7 +108,7 @@ it('shows save and discard only while a settings block has edits, at the end of 
   expect(github.lastElementChild!.textContent).toContain('2 个进行中的派工会中断')
 })
 
-it('lists every repository the GitHub Source watches, from the deployment and the projects', async () => {
+it('lists every repository the GitHub Source watches, with the first project as the primary', async () => {
   server.settings = { ...server.settings, executor: { ...server.settings.executor, projects: [
     { id: 'app', name: 'App', workspace: '/w/app', repository: 'owner/app', branch: '' },
     { id: 'lib', name: 'Lib', workspace: '/w/lib', repository: 'acme/widgets', branch: '' },
@@ -118,9 +118,9 @@ it('lists every repository the GitHub Source watches, from the deployment and th
   await click(tab(zh['tab.settings']))
   await click(find(zh['term.source'], '.dt-settings-link'))
   const github = all('.dt-card').find(card => card.querySelector('.dt-card-title')?.textContent === 'GitHub')!
-  expect([...github.querySelectorAll('.dt-mono')].map(node => node.textContent)).toEqual(['acme/widgets', 'owner/app'])
+  expect([...github.querySelectorAll('.dt-mono')].map(node => node.textContent)).toEqual(['owner/app', 'acme/widgets'])
   expect(github.textContent).toContain(zh['sourceWatchedPrimary'])
-  expect(github.textContent).toContain('App')
+  expect(github.textContent).toContain('Lib')
 })
 
 it('gives the focus back to the field that had it once a block\'s save ends', async () => {

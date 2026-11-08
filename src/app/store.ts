@@ -7,7 +7,7 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
   type Request, type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, tooOld } from './migration.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { Versions } from './versions.ts'
@@ -105,7 +105,7 @@ export class Store implements Repositories {
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {

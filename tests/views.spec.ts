@@ -349,10 +349,10 @@ it('reports the reply queue in the overview and the next check of a polling Sour
 
 it('names the project of a GitHub Thread from its repository, and none for the deployment repository alone', () => {
   store.saveSettings({ ...store.settings(), sources: { ...store.settings().sources,
-    github: { enabled: true, config: { repository: 'acme/widgets', cli: 'gh' } } },
+    github: { enabled: true, config: { cli: 'gh' } } },
     executor: { ...store.settings().executor, projects: [
-      { id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' },
-      { id: 'primary', name: 'Primary', workspace: '/w/widgets', repository: 'acme/widgets', branch: 'main' }] } })
+      { id: 'primary', name: 'Primary', workspace: '/w/widgets', repository: 'acme/widgets', branch: 'main' },
+      { id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' }] } })
   for (const [key, id] of [['github:acme/app#1', 'acme/app#1'], ['github:7', '7']] as const) {
     store.threads.save({ key, ref: { source: 'github', id }, createdAt: '2026-09-01T00:00:00Z', subscriptions: [], correlated: [], pending: [], meta: {} })
   }

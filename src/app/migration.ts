@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -11,7 +11,7 @@ import { isoTime, said, type AcceptMode, type AdmissionCell, type ChannelRef, ty
 import { projectByRepository } from '../projects.ts'
 import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
-import { SettingsSchema, policyVersion, type SettingsOrigin } from '../policy.ts'
+import { SettingsSchema, policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
 import { autoMergeThreshold, teamDefaults } from './context.ts'
 import { PromptConfigSchema, type PromptConfig, type PromptVersion } from './prompts.ts'
 import type { EffectKind, EffectPayloads } from './effects.ts'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 16
+export const SCHEMA_VERSION = 17
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -165,6 +165,34 @@ export function migrateTo15(store: Store): void {
  * version has one place to live, and so a schema 15 database still reaches 16 through the same single transaction.
  */
 export function migrateTo16(_store: Store): void {}
+/** Remove the GitHub Source's retired `repository` setting from saved settings; returns `undefined` when there is none. */
+function withoutRepositorySetting(settings: Settings): Settings | undefined {
+  if (!isObject(settings) || !isObject(settings.sources)) return undefined
+  const github = settings.sources.github
+  if (!isObject(github) || !isObject(github.config) || !('repository' in github.config)) return undefined
+  const { repository: _repository, ...config } = github.config
+  return { ...settings, sources: { ...settings.sources, github: { ...github, config } } }
+}
+/**
+ * Schema 17 removes the GitHub Source's own `repository` setting: the deployment's primary repository is the first
+ * registered project's. The migration to schema 12 still reads the setting to fill in old Tickets' projects, so this step
+ * runs after it and strips the setting from the current settings revision and every stored settings revision.
+ */
+export function migrateTo17(store: Store): void {
+  const current = withoutRepositorySetting(store.settings())
+  if (current) {
+    step('the current settings', () => {
+      const versions = new Versions<SettingsVersion>(store, KV.settings.revision, KV.settings.version)
+      const version = versions.current()
+      if (version) store.set(KV.settings.version(version.revision), { ...version, settings: current })
+    })
+  }
+  for (const name of store.keys('settings-version:')) {
+    const version = store.get<SettingsVersion>(name)
+    const next = version && withoutRepositorySetting(version.settings)
+    if (next) step(name, () => { store.set(name, { ...version!, settings: next }) })
+  }
+}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).
