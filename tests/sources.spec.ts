@@ -1298,7 +1298,8 @@ else {
     await vi.advanceTimersByTimeAsync(45_000)
     await vi.waitFor(() => expect(health.feishu).toMatchObject({ state: 'error',
       detail: expect.stringContaining('did not become ready within 45 seconds') }), until)
-    expect(alive(pid)).toBe(false)
+    // Killing a batch CLI's tree on Windows is asynchronous (taskkill), so the process may outlive the report by a moment.
+    await vi.waitFor(() => expect(alive(pid)).toBe(false), until)
     controller.abort(); await running; store.close()
   }, 20_000)
   it('reports a warning the consumer prints as an error', async () => {
@@ -1316,7 +1317,8 @@ else {
     turnOff()
     await vi.advanceTimersByTimeAsync(5000)
     await vi.waitFor(() => expect(health.feishu).toMatchObject({ state: 'paused', code: 'sourceOff' }), until)
-    expect(alive(pid)).toBe(false)
+    // Killing a batch CLI's tree on Windows is asynchronous (taskkill), so the process may outlive the report by a moment.
+    await vi.waitFor(() => expect(alive(pid)).toBe(false), until)
     controller.abort(); await running; store.close()
   }, 20_000)
   it('starts the consumer again after it exits, and is ready once the next run listens', async () => {
