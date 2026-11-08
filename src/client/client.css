@@ -395,3 +395,9 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-memory-fact { display: contents; }
 .dt-memory-fact dt { color: var(--dsw-alias-label-caption); }
 .dt-memory-fact dd { margin: 0; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+
+/* The Memory page's filter row and page controls: combo boxes keep their own width, pages sit under the list. */
+.dt-memory-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.dt-memory-select { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dt-memory-select .dt-select { width: auto; max-width: 200px; }
+.dt-memory-pages { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

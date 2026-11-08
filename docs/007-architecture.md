@@ -438,8 +438,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/lead-dispatch.spec.ts` | The activation request of a Lead-hosted executor, and the activations a host holds, settles and disposes |
 | `tests/lead-messages.spec.ts` | Lead message records: one record per recipient and request id, project listings and undelivered messages, delivery and acknowledgement, and surviving a reopen from schema 12 |
 | `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
-| `tests/memories.spec.ts` | Memories: scope and deduplication, browsing by keyword and order with pinned rows first, pinning, search, forget and expiry, the current schema, the snapshot's budget, the panel switches and limits, and retention that ages out only automatic records |
-| `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword and order controls, pinning, expanding a card to all its fields, and forgetting a stored memory |
+| `tests/memories.spec.ts` | Memories: scope and deduplication, browsing by keyword, project and order with pinned rows first and limited windows for paging, pinning, search, forget and expiry, the current schema, the snapshot's budget, the panel switches and limits, and retention that ages out only automatic records |
+| `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword, project-filter and order combo boxes, paging through the list, pinning, expanding a card to all its fields, and forgetting a stored memory |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |

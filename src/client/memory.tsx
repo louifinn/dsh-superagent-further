@@ -1,10 +1,10 @@
 /** Memory page: the master switch, injection and automatic-write switches, the snapshot limits, and the searchable stored memories. */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import type { MemorySort } from '../memory.ts'
 import { usePoll } from './api.ts'
-import { Button, DisclosureRow, InfoTip, Input, SegmentedControl, Switch, Tag } from './controls.tsx'
+import { Button, DisclosureRow, InfoTip, Input, Switch, Tag } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { useAction, usePanel } from './provider.tsx'
 import { ConfigHistory, Field, Fields, numberOf, SettingsProvider, useBlockDraft, useSettings } from './settings-kit.tsx'
@@ -13,6 +13,8 @@ import { Hint, LabelValue, LoadState, Section } from './widgets.tsx'
 
 type MemoryView = ApiResponse<'GET memories'>['items'][number]
 type SwitchKey = 'enabled' | 'inject' | 'autoWrite'
+type ProjectOption = { id: string; name: string }
+const PAGE = 20
 
 /** One labelled switch in the page's behavior block. */
 function Toggle({ label, hint, checked, disabled, onChange }: {
@@ -22,6 +24,16 @@ function Toggle({ label, hint, checked, disabled, onChange }: {
     <div className="dt-field-head">{label}<InfoTip text={hint} /></div>
     <Switch checked={checked} onChange={disabled ? () => {} : onChange} label={label} />
   </div>
+}
+
+/** One labelled combo box: the panel's select styling, used for the list's order and project filter. */
+function Combo({ label, value, onChange, children }: {
+  label: string, value: string, onChange: (next: string) => void, children: ReactNode
+}) {
+  return <label className="dt-memory-select">
+    <span className="dt-hint">{label}</span>
+    <select className="dt-select" aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{children}</select>
+  </label>
 }
 
 /** The first line of a memory, which the card shows while collapsed; the full text is behind the disclosure. */
@@ -69,10 +81,11 @@ function MemoryCard({ row, open, onToggle, onPin, onForget, busy }: {
   </DisclosureRow>
 }
 
-/** The stored memories: a keyword box and an order, then one expandable card each; the totals come from the same response. */
-function StoredMemories({ data, error, reload, query, sort, onQuery, onSort }: {
+/** The stored memories: a keyword box and two combo boxes, one page of expandable cards, and the page's controls. */
+function StoredMemories({ data, error, reload, query, sort, project, offset, projects, onQuery, onSort, onProject, onOffset }: {
   data: ApiResponse<'GET memories'> | undefined, error: Error | undefined, reload: () => Promise<void>,
-  query: string, sort: MemorySort, onQuery: (next: string) => void, onSort: (next: MemorySort) => void,
+  query: string, sort: MemorySort, project: string, offset: number, projects: ProjectOption[],
+  onQuery: (next: string) => void, onSort: (next: MemorySort) => void, onProject: (next: string) => void, onOffset: (next: number) => void,
 }) {
   const { t, call, notify } = usePanel()
   const [open, setOpen] = useState<string[]>([])
@@ -81,22 +94,34 @@ function StoredMemories({ data, error, reload, query, sort, onQuery, onSort }: {
     await reload()
   })
   const forget = useAction(async (id: string) => { await call('POST memory/forget', { body: { id } }); await reload() })
-  const hint = data ? (query.trim()
+  const hint = data ? (query.trim() || project
     ? t('memorySearchHint', { matched: String(data.matched), total: String(data.total) })
     : t('memoryStoredHint', { total: String(data.total), pinned: String(data.pinned) }))
     : t('memoryStoredLoading')
+  const pageSize = data?.limit ?? PAGE
+  const page = Math.floor((data?.offset ?? 0) / pageSize) + 1
+  const pages = Math.max(Math.ceil((data?.matched ?? 0) / pageSize), 1)
+  const from = data?.items.length ? (data?.offset ?? 0) + 1 : 0
+  const to = (data?.offset ?? 0) + (data?.items.length ?? 0)
   return <Section title={t('memoryStored')}>
     <div className="dt-memory-toolbar">
       <Input type="search" value={query} placeholder={t('memorySearchPlaceholder')} aria-label={t('memorySearchLabel')}
         onChange={event => onQuery(event.target.value)} />
-      <SegmentedControl label={t('memorySortLabel')} value={sort} onChange={onSort} options={[
-        { value: 'newest', label: t('memorySortNewest') },
-        { value: 'oldest', label: t('memorySortOldest') },
-        { value: 'kind', label: t('memorySortKind') },
-        { value: 'project', label: t('memorySortProject') },
-      ]} />
     </div>
-    <p className='dt-hint'>{hint}</p>
+    <div className="dt-memory-filters">
+      <Combo label={t('memorySortLabel')} value={sort} onChange={value => onSort(value as MemorySort)}>
+        <option value="newest">{t('memorySortNewest')}</option>
+        <option value="oldest">{t('memorySortOldest')}</option>
+        <option value="kind">{t('memorySortKind')}</option>
+        <option value="project">{t('memorySortProject')}</option>
+      </Combo>
+      <Combo label={t('memoryProjectFilterLabel')} value={project} onChange={onProject}>
+        <option value="">{t('memoryProjectFilterAll')}</option>
+        {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        <option value="-">{t('memoryProjectFilterNone')}</option>
+      </Combo>
+    </div>
+    <p className="dt-hint">{hint}</p>
     <LoadState error={error} loading={!data} />
     {data && (data.items.length ? <ul className="dt-list">
       {data.items.map(row => <li key={row.id} className="dt-row" data-memory={row.id}>
@@ -105,7 +130,15 @@ function StoredMemories({ data, error, reload, query, sort, onQuery, onSort }: {
           onPin={() => { void pin.run(row).then(ok => { if (ok) notify(row.pinned ? t('memoryUnpinned') : t('memoryPinned')) }) }}
           onForget={() => { void forget.run(row.id).then(ok => { if (ok) notify(t('memoryForgot')) }) }} />
       </li>)}
-    </ul> : <Hint>{query.trim() ? t('memoryNoMatch') : t('memoryEmpty')}</Hint>)}
+    </ul> : <Hint>{query.trim() || project ? t('memoryNoMatch') : t('memoryEmpty')}</Hint>)}
+    {data && data.matched > 0 && <div className="dt-memory-pages">
+      <Button size="sm" variant="outline" disabled={(data.offset) <= 0}
+        onClick={() => onOffset(Math.max(data.offset - pageSize, 0))}>{t('memoryPagePrev')}</Button>
+      <span className="dt-hint">{t('memoryPageRange', { from: String(from), to: String(to), matched: String(data.matched),
+        page: String(page), pages: String(pages) })}</span>
+      <Button size="sm" variant="outline" disabled={to >= data.matched}
+        onClick={() => onOffset(data.offset + pageSize)}>{t('memoryPageNext')}</Button>
+    </div>}
   </Section>
 }
 /** Behavior switches save on the spot; the numeric limits save through the draft's Save button. Both apply immediately. */
@@ -122,7 +155,11 @@ function MemorySettings() {
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<MemorySort>('newest')
-  const list = usePoll(() => call('GET memories', { query: { q: query, sort, limit: 100 } }), [query, sort])
+  const [project, setProject] = useState('')
+  const [offset, setOffset] = useState(0)
+  const list = usePoll(() => call('GET memories', { query: { q: query, project, sort, limit: PAGE, offset } }), [query, project, sort, offset])
+  // A new keyword, order or project filter starts at the first page; only the page buttons move the offset.
+  const narrow = (apply: () => void) => { apply(); setOffset(0) }
   const flip = async (key: SwitchKey, next: boolean) => {
     if (busy) return
     setBusy(true)
@@ -168,8 +205,10 @@ function MemorySettings() {
       </Fields>
       <SaveBar {...draft} onDiscard={draft.discard} />
     </form>
-    <StoredMemories data={list.data} error={list.error} reload={list.reload} query={query} sort={sort}
-      onQuery={setQuery} onSort={setSort} />
+    <StoredMemories data={list.data} error={list.error} reload={list.reload} query={query} sort={sort} project={project} offset={offset}
+      projects={settings.blocks.executor.value.projects.map(({ id, name }) => ({ id, name }))}
+      onQuery={next => narrow(() => setQuery(next))} onSort={next => narrow(() => setSort(next))}
+      onProject={next => narrow(() => setProject(next))} onOffset={setOffset} />
     <ConfigHistory blocks={['memory']} />
     <div className="dt-row-meta"><LabelValue label={t('memoryScopeLabel')} value={t('memoryScopeHint')} /></div>
   </div>

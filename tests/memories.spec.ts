@@ -73,6 +73,15 @@ describe('Memories', () => {
       expect(store.memories.browse({ query: 'migration' }).map(memory => memory.id)).toEqual([app.id])
       expect(store.memories.countMatching('vendor')).toBe(2)
       expect(store.memories.countMatching('')).toBe(3)
+      // A project filter narrows to that project, or to the rows that belong to no project with the `-` sentinel.
+      expect(store.memories.browse({ project: 'app' }).map(memory => memory.id)).toEqual([app.id])
+      expect(store.memories.browse({ project: 'lib' }).map(memory => memory.id)).toEqual([lib.id])
+      expect(store.memories.browse({ project: '-' }).map(memory => memory.id)).toEqual([global.id])
+      expect(store.memories.countMatching('vendor', 'app')).toBe(1)
+      expect(store.memories.countMatching('vendor', '-')).toBe(0)
+      // The page is a window over the filtered, ordered rows.
+      expect(store.memories.browse({ limit: 1, offset: 1 }).map(memory => memory.id)).toEqual([global.id])
+      expect(store.memories.browse({ limit: 2, offset: 2 }).map(memory => memory.id)).toEqual([app.id])
       expect(store.memories.setPinned(app.id, false)).toMatchObject({ id: app.id, pinned: false })
       expect(store.memories.setPinned('missing', true)).toBeUndefined()
     } finally { store.db.close() }

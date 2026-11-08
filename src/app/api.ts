@@ -48,7 +48,7 @@ export interface Api {
   'PUT prompts': { body: { config: PromptConfig; baseRevision: number }; response: { revision: number; context_delivery: Delivery } }
   'POST prompts/preview': { body: PromptConfig; response: ReturnType<Prompts['preview']> }
   /** The Memory page: stored memories with their totals and the config the page edits. */
-  'GET memories': { query?: { q?: string; sort?: MemorySort; limit?: number }; response: MemoriesView }
+  'GET memories': { query?: { q?: string; project?: string; sort?: MemorySort; offset?: number; limit?: number }; response: MemoriesView }
   'POST memory/forget': { body: { id: string }; response: { forgotten: boolean } }
   'POST memory/pin': { body: { id: string; pinned: boolean }; response: { pinned: boolean } }
 }

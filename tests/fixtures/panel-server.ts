@@ -314,19 +314,23 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'GET sources': { answer: sourceStatuses },
   'GET settings': { answer: settingsView },
-  'GET memories': { query: ['q', 'sort', 'limit'], answer: ({ query }) => {
+  'GET memories': { query: ['q', 'project', 'sort', 'offset', 'limit'], answer: ({ query }) => {
     const needle = (query.q ?? '').toLowerCase()
-    const rows = server.memories.filter(memory => !needle
+    const project = query.project ?? ''
+    const rows = server.memories.filter(memory => (!needle
       || memory.text.toLowerCase().includes(needle) || memory.tags.some(tag => tag.toLowerCase().includes(needle)))
+      && (!project || (project === '-' ? memory.project === '' : memory.project === project)))
     const pinnedFirst = (a: typeof rows[number], b: typeof rows[number]) => Number(b.pinned) - Number(a.pinned)
     const sort = query.sort ?? 'newest'
     const order = sort === 'oldest' ? (a: typeof rows[number], b: typeof rows[number]) => a.at.localeCompare(b.at)
       : sort === 'kind' ? (a: typeof rows[number], b: typeof rows[number]) => a.kind.localeCompare(b.kind) || b.at.localeCompare(a.at)
         : sort === 'project' ? (a: typeof rows[number], b: typeof rows[number]) => a.project.localeCompare(b.project) || b.at.localeCompare(a.at)
           : (a: typeof rows[number], b: typeof rows[number]) => b.at.localeCompare(a.at)
-    return { items: [...rows].sort((a, b) => pinnedFirst(a, b) || order(a, b)).slice(0, Number(query.limit ?? 50)),
+    const offset = Number(query.offset ?? 0)
+    const limit = Number(query.limit ?? 20)
+    return { items: [...rows].sort((a, b) => pinnedFirst(a, b) || order(a, b)).slice(offset, offset + limit),
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
-      config: server.settings.memory }
+      offset, limit, config: server.settings.memory }
   } },
   'POST memory/forget': { body: true, answer: ({ body }) => {
     const before = server.memories.length

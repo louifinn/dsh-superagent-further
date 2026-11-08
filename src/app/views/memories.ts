@@ -22,29 +22,38 @@ export interface MemoriesView {
   items: MemoryView[]
   /** How many memories are stored in total. */
   total: number
-  /** How many of the stored memories match the page's keyword. */
+  /** How many of the stored memories match the page's keyword and project filter. */
   matched: number
   pinned: number
+  /** The first row's position and the page size, so the page can draw its pages. */
+  offset: number
+  limit: number
   config: MemoryConfig
 }
 
-/** How the page reads its list: a keyword, an order and a page size. */
+/** How the page reads its list: a keyword, a project, an order and a page. */
 export interface MemoriesOptions {
   query?: string
+  project?: string
   sort?: MemorySort
   limit?: number
+  offset?: number
 }
 
 /** Build the Memory page view: the page's rows, the totals, and the settings the page's controls edit. */
 export function memoriesView(store: Store, options: MemoriesOptions = {}): MemoriesView {
-  const items = store.memories.browse(options).map(({ id, scope, project, ticket, kind, text, tags, source, pinned, at, expiresAt }) => ({
+  const limit = options.limit ?? 20
+  const offset = Math.max(options.offset ?? 0, 0)
+  const items = store.memories.browse({ ...options, limit, offset }).map(({ id, scope, project, ticket, kind, text, tags, source, pinned, at, expiresAt }) => ({
     id, scope, project, ticket, kind, text, tags, source, pinned, at, ...expiresAt === undefined ? {} : { expiresAt },
   }))
   return {
     items,
     total: store.memories.total(),
-    matched: store.memories.countMatching(options.query ?? ''),
+    matched: store.memories.countMatching(options.query ?? '', options.project ?? ''),
     pinned: store.memories.pinnedTotal(),
+    offset,
+    limit,
     config: store.settings().memory,
   }
 }

@@ -69,32 +69,48 @@ export class Memories {
   }
 
   /**
-   * The Memory page's rows: an optional keyword in the text or tags, ordered by `sort` within the pinned ones (which always
-   * come first, because pinning is how a person keeps a fact visible). `limit` bounds the page.
+   * The Memory page's rows: an optional keyword in the text or tags, an optional project (the sentinel `-` means the rows
+   * that belong to no project), ordered by `sort` within the pinned ones (which always come first, because pinning is how a
+   * person keeps a fact visible). `limit` and `offset` page through the result.
    */
-  browse(options: { query?: string; sort?: MemorySort; limit?: number } = {}): Memory[] {
+  browse(options: { query?: string; project?: string; sort?: MemorySort; limit?: number; offset?: number } = {}): Memory[] {
     const query = options.query?.trim() ?? ''
     const needle = this.pattern(query)
-    const where = query
-      ? " WHERE (json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"
-      : ''
-    const values: (string | number)[] = query ? [needle, needle] : []
+    const filters: string[] = []
+    const values: (string | number)[] = []
+    if (query) {
+      filters.push("(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')")
+      values.push(needle, needle)
+    }
+    const project = options.project ?? ''
+    if (project === '-') filters.push("project = ''")
+    else if (project) { filters.push('project = ?'); values.push(project) }
+    const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : ''
     const ordering = {
       newest: 'at DESC', oldest: 'at ASC',
       kind: "json_extract(value, '$.kind') ASC, at DESC",
       project: "json_extract(value, '$.project') ASC, at DESC",
     }[options.sort ?? 'newest']
-    values.push(Math.min(options.limit ?? 50, MAX_ROWS))
-    return this.rows(`SELECT value FROM memory${where} ORDER BY json_extract(value, '$.pinned') DESC, ${ordering} LIMIT ?`, values)
+    const limit = Math.min(options.limit ?? 20, MAX_ROWS)
+    values.push(limit, Math.max(options.offset ?? 0, 0))
+    return this.rows(`SELECT value FROM memory${where} ORDER BY json_extract(value, '$.pinned') DESC, ${ordering} LIMIT ? OFFSET ?`,
+      values, limit)
   }
 
-  /** How many memories match a keyword in their text or tags; everything when the keyword is empty. */
-  countMatching(query = ''): number {
+  /** How many memories match a keyword in their text or tags and a project filter; everything when both are empty. */
+  countMatching(query = '', project = ''): number {
     const trimmed = query.trim()
-    if (!trimmed) return this.total()
-    const needle = this.pattern(trimmed)
-    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM memory WHERE (json_extract(value, '$.text') LIKE ? ESCAPE '\\'"
-      + " OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')").get(needle, needle) as { n: number }).n)
+    const filters: string[] = []
+    const values: string[] = []
+    if (trimmed) {
+      const needle = this.pattern(trimmed)
+      filters.push("(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')")
+      values.push(needle, needle)
+    }
+    if (project === '-') filters.push("project = ''")
+    else if (project) { filters.push('project = ?'); values.push(project) }
+    const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : ''
+    return Number((this.db.prepare(`SELECT COUNT(*) AS n FROM memory${where}`).get(...values) as { n: number }).n)
   }
 
   /** Pins or unpins one memory; returns the stored row, or undefined when no such memory exists. */
@@ -210,8 +226,8 @@ export class Memories {
     return `%${query.trim().replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
   }
 
-  private rows(sql: string, values: (string | number)[]): Memory[] {    const limit = Math.min(Number(values.at(-1) ?? MAX_ROWS), MAX_ROWS)
-    if (!Number.isFinite(limit) || limit <= 0) return []
+  private rows(sql: string, values: (string | number)[], limit = Number(values.at(-1) ?? MAX_ROWS)): Memory[] {    const bound = Math.min(limit, MAX_ROWS)
+    if (!Number.isFinite(bound) || bound <= 0) return []
     return this.db.prepare(sql).all(...values).map(row => {
       try { return MemorySchema.parse(JSON.parse(String(row.value))) } catch { return undefined }
     }).filter((row): row is Memory => row !== undefined)

@@ -125,15 +125,16 @@ it('searches, orders, pins and forgets stored memories for the Memory page', asy
       setPinned: (id: string, next: boolean) => { pinned.push(next); return { ...rows[0], id, pinned: next } },
     },
   } })
-  // The page's keyword, order and page size reach the store; the response carries both counts the hint names.
-  const listed = await call('GET', 'memories?q=fact&sort=oldest&limit=25')
+  // The page's keyword, project, order and page reach the store; the response carries both counts the hint names.
+  const listed = await call('GET', 'memories?q=fact&project=app&sort=oldest&offset=20&limit=25')
   expect(listed.status).toBe(200)
-  expect(listed.body).toMatchObject({ total: 3, matched: 2, pinned: 1, config: { enabled: true, inject: true }, items: [{ id: 'm1' }] })
-  expect(browsed).toEqual([{ query: 'fact', sort: 'oldest', limit: 25 }])
-  // An unknown order falls back to the newest; an omitted keyword is the empty string.
+  expect(listed.body).toMatchObject({ total: 3, matched: 2, pinned: 1, offset: 20, limit: 25,
+    config: { enabled: true, inject: true }, items: [{ id: 'm1' }] })
+  expect(browsed).toEqual([{ query: 'fact', project: 'app', sort: 'oldest', offset: 20, limit: 25 }])
+  // An unknown order falls back to the newest; omitted filters are empty and paging starts at the first page.
   expect((await call('GET', 'memories?sort=nonsense')).status).toBe(200)
   expect(browsed).toHaveLength(2)
-  expect(browsed[1]).toMatchObject({ query: '', sort: 'newest', limit: 50 })
+  expect(browsed[1]).toMatchObject({ query: '', project: '', sort: 'newest', offset: 0, limit: 20 })
   expect(await call('POST', 'memory/pin', { id: 'm1', pinned: true })).toEqual({ status: 200, body: { pinned: true } })
   expect(pinned).toEqual([true])
   expect(await call('POST', 'memory/forget', { id: 'm1' })).toEqual({ status: 200, body: { forgotten: true } })

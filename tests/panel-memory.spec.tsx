@@ -46,8 +46,8 @@ it('searches, orders, pins and expands the stored memories', async () => {
   expect(titles()).toEqual(['First line'])
   expect(text()).toContain(zh.memorySearchHint.replace('{matched}', '1').replace('{total}', '3'))
   await type(field<HTMLInputElement>(zh.memorySearchLabel), '')
-  // The order buttons refetch with the chosen order; the pinned memory stays first.
-  await click(tab(zh.memorySortOldest))
+  // The order is a combo box; changing it refetches, and the pinned memory stays first.
+  await type(field<HTMLSelectElement>(zh.memorySortLabel), 'oldest')
   expect(server.requests.some(request => request.path.includes('sort=oldest'))).toBe(true)
   expect(titles()).toEqual(['A preference about linting', 'Oldest note', 'First line'])
   // Expanding shows everything stored, including the full text, tags, source and id.
@@ -61,6 +61,38 @@ it('searches, orders, pins and expands the stored memories', async () => {
   expect(server.memories.find(item => item.id === 'm1')!.pinned).toBe(true)
   await click(find(zh.memoryForget))
   expect(server.memories.map(item => item.id)).toEqual(['m3', 'm2'])
+})
+
+it('filters by project, and pages through the list', async () => {
+  const start = Date.parse('2026-01-01T00:00:00.000Z')
+  server.memories = Array.from({ length: 25 }, (_, index) => memory(`p${index + 1}`, {
+    project: index % 5 === 0 ? 'app' : '',
+    text: `Note ${index + 1}`,
+    at: new Date(start + index * 86_400_000).toISOString(),
+  }))
+  // The project filter lists the registered projects, so the fixture needs one before the page mounts.
+  server.settings = { ...server.settings, executor: { ...server.settings.executor,
+    projects: [{ id: 'app', name: 'App', workspace: '/srv/app', repository: 'acme/app', branch: '' }] } }
+  await mount()
+  await click(tab(zh['tab.memory']))
+  // One page holds 20 rows; the range names the window and the page.
+  expect(cards()).toHaveLength(20)
+  expect(titles()[0]).toBe('Note 25')
+  expect(text()).toContain('第 1–20 条，共 25 条（第 1/2 页）')
+  await click(find(zh.memoryPageNext))
+  expect(cards()).toHaveLength(5)
+  expect(titles()[0]).toBe('Note 5')
+  expect(text()).toContain('第 21–25 条，共 25 条（第 2/2 页）')
+  expect(server.requests.some(request => request.path.includes('offset=20'))).toBe(true)
+  // The project combo box narrows the rows on the host and starts again at the first page.
+  await type(field<HTMLSelectElement>(zh.memoryProjectFilterLabel), 'app')
+  expect(server.requests.some(request => request.path.includes('project=app') && request.path.includes('offset=0'))).toBe(true)
+  expect(cards()).toHaveLength(5)
+  expect(titles()[0]).toBe('Note 21')
+  await type(field<HTMLSelectElement>(zh.memoryProjectFilterLabel), '-')
+  expect(cards()).toHaveLength(20)
+  expect(titles()[0]).toBe('Note 25')
+  expect(text()).toContain('第 1–20 条，共 20 条（第 1/1 页）')
 })
 
 it('saves the snapshot limits and forgets a stored memory', async () => {
