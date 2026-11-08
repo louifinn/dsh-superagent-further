@@ -55,6 +55,10 @@ it('assembles every role from fixed sections around the team sections, whatever 
   }
   expect(composePrompt(config, 'orchestrator')).toContain(mainAdmissionPolicy)
   expect(composePrompt(config, 'worker')).not.toContain(mainAdmissionPolicy)
+  // Memory is volatile, so it travels in the runtime-context snapshot; the fixed prompts say so and never carry a section.
+  expect(composePrompt(config, 'orchestrator')).toContain('runtime-context snapshot')
+  expect(composePrompt(config, 'worker')).not.toContain('runtime-context snapshot')
+  expect(composePrompt(config, 'orchestrator')).not.toContain('## Memory')
 })
 
 it('reads a prompt file whatever its line ends and blank lines, and names a missing or empty one', () => {

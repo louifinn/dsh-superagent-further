@@ -100,6 +100,7 @@ async function start() {
   const agents = new Map<string, Record<string, any>>()
   const tools = new Map<string, Map<string, Tool>>()
   const sections = new Map<string, Section>()
+  const contexts = new Map<string, { name: string; order: number; text: string | ((context: unknown) => string) }>()
   const skills = new Map<string, Skill[]>()
   const inputs: { sessionId: string; text: string }[] = []
   const create = async ({ sessionId }: { sessionId: string }) => {
@@ -111,7 +112,12 @@ async function start() {
     agentCtx.reflect.provide('tools', { register, get: () => undefined, restrict: () => () => {}, guard: () => () => {} })
     agentCtx.reflect.provide('skills', { register: (skill: Skill) => { registered.push(skill); return () => {} } })
     const section = (spec: { text: Section }) => { sections.set(sessionId, spec.text); return () => {} }
-    agentCtx.reflect.provide('systemPrompt', { section })
+    // Memory registers as a runtime context, which DSH renders into an appended snapshot rather than the prompt.
+    const context = (spec: { name: string; order: number; text: string | ((context: unknown) => string) }) => {
+      contexts.set(sessionId, spec)
+      return () => { contexts.delete(sessionId) }
+    }
+    agentCtx.reflect.provide('systemPrompt', { section, context })
     const inbox = { nextTurn: [] as UserMessage[], nextStep: [] as UserMessage[],
       // A pending message taken out, as DSH's inbox does by its id.
       remove: (id: string) => [inbox.nextTurn, inbox.nextStep].some(list => {

@@ -10,7 +10,7 @@ This document turns the prototype into something a team can use every day. It re
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
-- A memory layer outlives Sessions: the main Session and each project Lead can write, search and forget memories (`memory_write`, `memory_search`, `memory_forget`), the prompt carries a generated `runtime/memory` section of pinned and recent items, and ended Tickets and Requests are remembered deterministically (schema 16).
+- A memory layer outlives Sessions: the main Session and each project Lead can write, search and forget memories (`memory_write`, `memory_search`, `memory_forget`), a runtime-context snapshot carries pinned and recent memories (appended after the cached history, so a write does not rewrite the system prompt), and ended Tickets and Requests are remembered deterministically (schema 16).
 - Accounts, Policy, the worker environment and the state database are provisioned: repository `louifinn/Napkid-Derivate`, agent `louibot`, Feishu bot `DSH`. Credentials are broader than they should be, and one Feishu permission was missing until the operator granted it.
 
 ## Principles
@@ -155,10 +155,10 @@ The memory layer answers the real problem found in long Sessions: the conversati
 
 - [x] Store: schema 16 `memory` table with scopes (installation, project, ticket), kinds (fact, decision, preference, lesson), tags, source, pinning, expiry and content deduplication; `src/memory.ts` and `src/app/memories.ts`, covered by `tests/memories.spec.ts`.
 - [x] Tools: `memory_write`, `memory_search` (keyword in text or tags, scoped, pinned first) and `memory_forget` for the main Session (whole installation) and each project Lead (its own project only); `src/app/tools/memory.ts`, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`.
-- [x] Prompt section: a generated `runtime/memory` part with the pinned and most recent memories, rebuilt per model request within a 1,200-character budget; covered by `tests/memories.spec.ts` and `tests/runtime.spec.ts`.
+- [x] Snapshot: the pinned and most recent memories travel in the runtime-context snapshot (rebuilt per model request within a 1,200-character budget) instead of the system prompt, so a write does not rewrite the prompt; covered by `tests/memories.spec.ts` and `tests/runtime.spec.ts`.
 - [x] Deterministic recall of work: ending a Ticket or a Request stores a memory derived from the record, with no model call; covered by `tests/runtime.spec.ts`.
 - [ ] Panel: a memory page to browse, pin and forget entries (follow-up).
-- [x] Scope: a project Lead's memory tools and prompt section are limited to its project; the installation-wide scope, including an ended Request's summary, is Orchestrator-only (decided 2026-11-08, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`).
+- [x] Scope: a project Lead's memory tools and snapshot are limited to its project; the installation-wide scope, including an ended Request's summary, is Orchestrator-only (decided 2026-11-08, covered by `tests/memories.spec.ts` and `tests/leads.spec.ts`).
 
 ## Sprint 1 checklist
 

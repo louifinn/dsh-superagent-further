@@ -75,7 +75,7 @@ describe('Memories', () => {
     } finally { again.db.close() }
   })
 
-  it('renders a prompt section of pinned and recent memories within its character budget', () => {
+  it('renders the runtime-context snapshot of pinned and recent memories within its character budget', () => {
     const { store } = open()
     try {
       expect(store.memories.promptText()).toBe('')
@@ -86,7 +86,7 @@ describe('Memories', () => {
       expect(text).toContain('Answer in Chinese')
       expect(text).toContain('ticket ticket-1')
       expect(text).toContain('the lead-app Session')
-      // The section never exceeds its budget: a long memory is left out rather than blowing the prompt up.
+      // The snapshot never exceeds its budget: a long memory is left out rather than blowing the prompt up.
       store.memories.save({ kind: 'fact', text: 'x'.repeat(LIMITS.memoryText) })
       expect(store.memories.promptText().length).toBeLessThanOrEqual(LIMITS.memoryPromptChars)
     } finally { store.db.close() }
@@ -98,8 +98,8 @@ describe('Memories', () => {
       const app = store.memories.save({ kind: 'fact', project: 'app', text: 'The app builds with pnpm.' }, '2026-01-02T00:00:00.000Z')
       store.memories.save({ kind: 'fact', project: 'lib', text: 'The lib builds with cargo.' }, '2026-01-03T00:00:00.000Z')
       store.memories.save({ kind: 'preference', text: 'Keep replies short.', pinned: true }, '2026-01-01T00:00:00.000Z')
-      // A project Lead's prompt section carries only its own project's memories; the installation-wide preference and the
-      // other project's fact stay out, while the Orchestrator's own prompt still spans everything.
+      // A project Lead's snapshot carries only its own project's memories; the installation-wide preference and the
+      // other project's fact stay out, while the Orchestrator's own snapshot still spans everything.
       expect(store.memories.promptText('app')).toContain('The app builds with pnpm.')
       expect(store.memories.promptText('app')).not.toContain('Keep replies short.')
       expect(store.memories.promptText('app')).not.toContain('The lib builds with cargo.')

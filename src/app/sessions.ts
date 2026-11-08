@@ -49,6 +49,11 @@ interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: 
 
 /** The agent presets Executor Sessions, the main Session and project Lead Sessions are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router', LEAD_PRESET = 'dsh-superagent-lead'
+
+/** The runtime-context contribution that carries memories: volatile, so it must not live in the system prompt. */
+export const MEMORY_CONTEXT = 'dsh-superagent-memory'
+/** After the harness's own runtime contexts, whose orders reach 210 (dsh-system-prompt `CONTEXT_ORDERS`). */
+export const MEMORY_CONTEXT_ORDER = 300
 /** The Session id of a project's Lead: one persistent Session per registered project (docs/010-project-orchestrator.md). */
 export const leadSessionId = (projectId: string): string => `lead-${projectId}`
 /** The project a Session id names as its Lead, if it is a Lead Session's id. */
@@ -289,14 +294,20 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      // Rebuilt for every model request, so a memory stored during the Session is visible to its next turn. A project Lead
-      // sees only its own project's memories; the main Session sees everything.
-      const memory = master ? host.store.memories.promptText()
-        : project ? host.store.memories.promptText(project.id) : ''
-      const composed = project ? composeLeadPrompt(version.config, project, undefined, memory || undefined)
-        : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined, memory || undefined)
+      const composed = project ? composeLeadPrompt(version.config, project)
+        : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
+    // Memory is volatile: a write or an ended Ticket changes it. It travels in the runtime-context snapshot, which DSH
+    // appends as a small user message after the cached history when it changes, instead of the system prompt, whose change
+    // would append or replace the whole prompt and cost far more (docs/006 "Memory").
+    if (master || project) {
+      binding.disposers.push(agent.ctx.systemPrompt.context({
+        name: MEMORY_CONTEXT,
+        order: MEMORY_CONTEXT_ORDER,
+        text: () => master ? host.store.memories.promptText() : project ? host.store.memories.promptText(project.id) : '',
+      }))
+    }
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
       binding.scope = scope

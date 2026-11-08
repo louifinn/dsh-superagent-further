@@ -24,6 +24,9 @@ describe('Lead Sessions', () => {
     expect(prompt).toContain('Local clone /src/app; repository acme/app; base branch main.')
     expect(prompt).toContain('## subscriptions')
     expect(prompt).toContain('Execution environment')
+  // A Lead's memories arrive in the runtime-context snapshot too, scoped to its project.
+  expect(prompt).toContain('runtime-context snapshot')
+  expect(prompt).not.toContain('## Memory')
     // The Orchestrator's admission and Policy sections and the worker's work guide do not apply to a Lead.
     expect(prompt).not.toContain('## admission')
     expect(prompt).not.toContain('## Policy')

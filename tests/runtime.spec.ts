@@ -44,6 +44,8 @@ type RegisteredTool = { name: string; output: { render: (args: unknown, result: 
 let tools: Map<string, Map<string, RegisteredTool>>
 type Section = { name: string; text: (context: { signal?: AbortSignal }) => string; interpolate?: boolean }
 let sections: Map<string, Section>
+/** The runtime-context contributions (memory) each Session registered, keyed by session id. */
+let contexts: Map<string, { name: string; order: number; text: string | ((context: unknown) => string) }>
 type Guard = (execution?: { name: string; arguments: unknown }) => string | undefined
 let guards: Map<string, Guard>
 let restricts: Map<string, unknown[]>
@@ -178,6 +180,7 @@ beforeEach(async () => {
   agents = new Map()
   tools = new Map()
   sections = new Map()
+  contexts = new Map()
   guards = new Map()
   restricts = new Map()
   deliveries = vi.fn()
@@ -203,7 +206,14 @@ beforeEach(async () => {
         }),
         guard: vi.fn((check: Guard) => { guards.set(sessionId, check); return () => {} }) })
       agentCtx.reflect.provide('skills', { register: () => () => {} })
-      agentCtx.reflect.provide('systemPrompt', { section: (spec: Section) => { sections.set(sessionId, spec); return () => {} } })
+      agentCtx.reflect.provide('systemPrompt', {
+        section: (spec: Section) => { sections.set(sessionId, spec); return () => {} },
+        // Memory registers as a runtime context, which DSH renders into a small appended snapshot instead of the prompt.
+        context: (spec: { name: string; order: number; text: string | ((context: unknown) => string) }) => {
+          contexts.set(sessionId, spec)
+          return () => { contexts.delete(sessionId) }
+        },
+      })
       const inbox = { nextTurn: [] as UserMessage[], nextStep: [] as UserMessage[],
         // A pending message taken out, as DSH's inbox does by its id.
         remove: (id: string) => [inbox.nextTurn, inbox.nextStep].some(list => {
@@ -395,6 +405,12 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   // The ending is remembered deterministically, so a later Session can recall it and the prompt can carry it.
   expect(runtime.store.memories.search(ticket.title).some(memory => memory.kind === 'decision' && memory.ticket === ticket.id)).toBe(true)
   expect(runtime.store.memories.promptText()).toContain(ticket.title)
+  // Memory travels in the runtime-context snapshot, not the system prompt: a change appends a small snapshot instead of
+  // rewriting (and re-caching) the whole prompt.
+  const memoryContext = contexts.get(runtime.masterId)
+  expect(memoryContext?.name).toBe('dsh-superagent-memory')
+  expect(typeof memoryContext?.text === 'function' ? memoryContext.text({}) : memoryContext?.text).toContain(ticket.title)
+  expect(sections.get(runtime.masterId)?.text({})).not.toContain('## Memory')
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
   // Its worker's last word was its ready report, so its turn is not cancelled: it ends it itself.

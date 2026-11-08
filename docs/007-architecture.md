@@ -247,7 +247,7 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
 
-`Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and the composed prompt gains a generated `runtime/memory` section with the pinned and most recent items, rebuilt for every model request within its character budget; the main Session sees the whole installation while a project Lead's tools and prompt section are scoped to its own project. An ended Request is remembered installation-wide, so it is Orchestrator-only by the same rule. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call.
+`Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and that text travels in the runtime-context snapshot (pinned plus the most recent items, rebuilt for every model request within its character budget, appended after the cached history when it changes rather than rewriting the system prompt); the main Session sees the whole installation while a project Lead's tools and snapshot are scoped to its own project. An ended Request is remembered installation-wide, so it is Orchestrator-only by the same rule. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call.
 
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
@@ -341,7 +341,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
 | `src/memory.ts` | The memory schemas: scope, kind, tags, source, pinning, expiry and the content hash that deduplicates a write |
-| `src/app/memories.ts` | `Memories`: the facts, decisions, preferences and lessons that outlive a Session, searched by the memory tools and rendered into the main Session's and each Lead's prompt section |
+| `src/app/memories.ts` | `Memories`: the facts, decisions, preferences and lessons that outlive a Session, searched by the memory tools and rendered into the main Session's and each Lead's runtime-context snapshot |
 | `src/app/tools/memory.ts` | The memory tools, `memory_write`, `memory_search` and `memory_forget`, for the main Session and each project Lead |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
 | `src/app/effects.ts` | Effects |
@@ -436,7 +436,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/lead-dispatch.spec.ts` | The activation request of a Lead-hosted executor, and the activations a host holds, settles and disposes |
 | `tests/lead-messages.spec.ts` | Lead message records: one record per recipient and request id, project listings and undelivered messages, delivery and acknowledgement, and surviving a reopen from schema 12 |
 | `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
-| `tests/memories.spec.ts` | Memories: scope and deduplication, listing and search, forget and expiry, the current schema, and the prompt section's budget |
+| `tests/memories.spec.ts` | Memories: scope and deduplication, listing and search, forget and expiry, the current schema, and the snapshot's budget |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |

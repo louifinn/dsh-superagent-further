@@ -110,9 +110,9 @@ export class Memories {
   }
 
   /**
-   * The generated prompt section for this installation's memories, or an empty string when there are none. It is rebuilt for
-   * every model request, so a memory stored now is visible to the next turn, and it stays within `memoryPromptChars` so the
-   * section costs bounded attention. With a `project`, it carries only that project's memories (a project Lead's scope).
+   * The runtime-context snapshot text for this installation's memories, or an empty string when there are none. It is rebuilt
+   * for every model request, so a memory stored now is visible to the next turn, and it stays within `memoryPromptChars` so the
+   * snapshot costs bounded attention. With a `project`, it carries only that project's memories (a project Lead's scope).
    */
   promptText(project?: string): string {
     const rows = this.promptRows(project)

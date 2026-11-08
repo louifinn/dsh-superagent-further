@@ -205,7 +205,15 @@ export async function startRuntime(seed?: (store: Store) => void) {
       const register = (tool: RegisteredTool) => { sessionTools.set(tool.name, tool); return () => sessionTools.delete(tool.name) }
       agentCtx.reflect.provide('tools', { register, get: () => undefined, restrict: vi.fn(() => () => {}), guard: vi.fn(() => () => {}) })
       agentCtx.reflect.provide('skills', { register: () => () => {} })
-      agentCtx.reflect.provide('systemPrompt', { section: () => () => {} })
+      // Runtime-context contributions (memory) register like prompt sections and are disposed the same way.
+      const contexts = new Map<string, { name: string; order: number; text: unknown }>()
+      agentCtx.reflect.provide('systemPrompt', {
+        section: () => () => {},
+        context: (entry: { name: string; order: number; text: unknown }) => {
+          contexts.set(entry.name, entry)
+          return () => { contexts.delete(entry.name) }
+        },
+      })
       const inbox = { nextTurn: [] as UserMessage[], nextStep: [] as UserMessage[],
         // A pending message taken out, as DSH's inbox does by its id.
         remove: (id: string) => [inbox.nextTurn, inbox.nextStep].some(list => {
