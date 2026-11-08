@@ -102,7 +102,9 @@ export function policyHistory(store: Store, sources: SourceRegistry, policyVersi
   return { current: store.get(KV.settings.revision) ?? 0, policyVersion: policyVersionValue,
     items: versions.map((version, index) => {
       const previous = versions[index + 1]
-      return { revision: version.revision, savedAt: version.savedAt, source: version.source, block: version.block, policyVersion: version.policyVersion, policyChanged: version.policyChanged, notified: version.notified.map(id => ({ id, title: store.tickets.get(id)?.title ?? id })),
+      return { revision: version.revision, savedAt: version.savedAt, source: version.source, block: version.block,
+        ...(version.actor === undefined ? {} : { actor: version.actor }), ...(version.reason === undefined ? {} : { reason: version.reason }),
+        policyVersion: version.policyVersion, policyChanged: version.policyChanged, notified: version.notified.map(id => ({ id, title: store.tickets.get(id)?.title ?? id })),
         changes: previous && previous.revision === version.revision - 1 ? changesOf(previous.settings, version.settings, sources) : null }
     }) }
 }

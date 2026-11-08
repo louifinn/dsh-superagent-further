@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, fieldTier, policyEffects, policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -19,6 +19,8 @@ import { KV } from '../kv.ts'
  * Thrown by `Settings.save` and `Settings.sync` and translated into an HTTP 409 response by the management routes.
  */
 export class SettingsConflict extends Error {}
+/** Who requested a save and the operator's words that asked for it, recorded with the new revision (docs/011 A5.3). */
+export interface SettingsAudit { actor?: string; reason?: string }
 const now = (): string => new Date().toISOString()
 /** Executor settings that control shell execution paths, prepare commands, command shims, and the registered projects. */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
@@ -67,6 +69,29 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 's
     // Only the management panel may switch source accounts.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts') },
   },
+}
+
+/**
+ * Refuses a tool-origin save that touches any field outside tier A (docs/011 A5.5). Confirmation-tier fields name
+ * themselves so the model can ask the operator to save them in the panel; panel-only fields keep their existing code.
+ * A Source is compared after validation, so dropping a retired config key is not a change the tool has to ask for.
+ */
+function refuseToolFields(block: SettingsBlock, id: string, current: SettingsValue, candidate: SettingsValue, sources: SourceRegistry): void {
+  const before = block.startsWith('source:')
+    ? {
+        ...current,
+        sources: {
+          ...current.sources,
+          [id]: sources.validate(id, { enabled: current.sources[id]?.enabled ?? true, config: current.sources[id]?.config ?? {} }),
+        },
+      }
+    : current
+  const changed = changedPaths(before, candidate)
+  const confirmation = changed.filter(path => fieldTier(block, path) === 'B')
+  if (confirmation.length) throw new UserError('approvalRequired', { block, fields: confirmation.join(', ') })
+  if (changed.some(path => fieldTier(block, path) === 'C')) {
+    throw new UserError(block.startsWith('source:') ? 'panelOnlyAccounts' : 'panelOnlyEnvironment')
+  }
 }
 
 /** Host dependencies used by `Settings`. */
@@ -161,12 +186,14 @@ export class Settings {
    * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI) or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent-further` so setup runs again.
    * @param origin - Caller origin; restricts execution-environment and account-CLI changes to `'panel'` (a guardrail against prompt-injected tool calls, not an OS security boundary, since agents run shell commands; `origin` has no default so no caller receives panel privileges implicitly).
+   * @param audit - `actor` and the operator's `reason` for a save; a `'tool'` origin must give a non-empty reason, and both are recorded on the new revision.
    * @returns Save outcome with the block's current `revision`, whether `policy_changed`, whether `restarting`, and `context_delivery` status (`'injected'` or `'pending'`).
    * @throws SettingsConflict when `block`'s revision changed before or during validation checks.
-   * @throws UserError | z.ZodError when `block` is unknown, the source is not installed, `value` is invalid (such as an `executor` block carrying `paused`, which only `pause` sets), a non-panel `origin` changes panel-only fields, or a role-model or account check fails.
+   * @throws UserError | z.ZodError when `block` is unknown, the source is not installed, `value` is invalid (such as an `executor` block carrying `paused`, which only `pause` sets), a tool save lacks a reason or changes a field outside tier A (docs/011), a non-panel `origin` changes panel-only fields, or a role-model or account check fails.
    */
-  async save(block: SettingsBlock, value: unknown, revision: number, origin: SettingsOrigin) {
+  async save(block: SettingsBlock, value: unknown, revision: number, origin: SettingsOrigin, audit: SettingsAudit = {}) {
     const { store, sources, engine, sessions } = this.host
+    if (origin === 'tool' && !audit.reason?.trim()) throw new UserError('reasonRequired')
     const stale = () => revision !== store.blockRevision(block)
     if (stale()) throw new SettingsConflict('Settings changed. Reload before saving.')
     const id = block.startsWith('source:') ? block.slice(7) : block
@@ -177,6 +204,7 @@ export class Settings {
     const parsed = rules.parse(value, sources, id)
     const current = store.settings()
     const candidate = rules.merge(current, parsed, id)
+    if (origin === 'tool') refuseToolFields(block, id, current, candidate, sources)
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null
     if (model && JSON.stringify(model) !== JSON.stringify(previous)) {
@@ -200,7 +228,8 @@ export class Settings {
     const effects = before === after ? new Map() : policyEffects(store.tickets.open(), old, SettingsSchema.parse(settings), scope)
     const notified = [...effects.keys()]
     store.atomic(() => {
-      store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified })
+      store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified,
+        ...(audit.actor === undefined ? {} : { actor: audit.actor }), ...(audit.reason === undefined ? {} : { reason: audit.reason }) })
       if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })
@@ -217,14 +246,17 @@ export class Settings {
   /**
    * Pauses or resumes processing (new evaluations, worker dispatch, and channel delivery, while Sources continue recording
    * Triggers); saved in its own `'pause'` block so concurrent `executor` edits remain valid across it.
+   * @param audit - `actor` and the operator's `reason`; a `'tool'` origin must give a non-empty reason.
    * @returns Whether processing is now paused (`{ paused }`).
    */
-  async pause(paused: boolean, origin: SettingsOrigin): Promise<{ paused: boolean }> {
+  async pause(paused: boolean, origin: SettingsOrigin, audit: SettingsAudit = {}): Promise<{ paused: boolean }> {
     const { store, sessions } = this.host
+    if (origin === 'tool' && !audit.reason?.trim()) throw new UserError('reasonRequired')
     const old = store.settings()
     if (old.paused === paused) return { paused }
     store.atomic(() => {
-      const record = { source: origin, block: 'pause' as const, policyVersion: policyVersion(old), policyChanged: false, notified: [] }
+      const record = { source: origin, block: 'pause' as const, policyVersion: policyVersion(old), policyChanged: false, notified: [],
+        ...(audit.actor === undefined ? {} : { actor: audit.actor }), ...(audit.reason === undefined ? {} : { reason: audit.reason }) }
       store.saveSettings({ ...old, paused }, record)
       if (origin !== 'tool') sessions.notify(...settingsNotice('pause', ['paused']))
     })
