@@ -107,7 +107,7 @@ it('accepts a GitHub Source saved without a CLI, and verifies any other account 
   const unbound = { ...current, sources: { ...current.sources, github: { enabled: true, config: {} } } }
   await expect(setup.checkAccounts('source:github', unbound)).resolves.toBeUndefined()
   // Every other GitHub account change is still verified before it is stored; the repository is the first project's.
-  const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { cli: 'dsh-superagent-missing-gh' } } } }
+  const partial = { ...current, sources: { ...current.sources, github: { enabled: true, config: { cli: 'dsh-superagent-further-missing-gh' } } } }
   await expect(setup.checkAccounts('source:github', partial)).rejects.toThrow(SetupError)
 })
 it('stores the GitHub Source without the retired repository setting and checks the first project\'s repository instead', async () => {

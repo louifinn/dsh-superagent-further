@@ -113,7 +113,9 @@ it.each(RULES)('%s (%s)', (_rule, file, says, gone = []) => {
 
 it('keeps each role\'s own instructions short', () => {
   expect(masterPrompt.length).toBeLessThan(1400)
-  expect(workerPrompt.length).toBeLessThan(1000)
+  // The 0.3.0 rename made the worker's registration names 12 characters longer, so the same instructions now
+  // measure 1,001; the limit moves with the name and not with added rules.
+  expect(workerPrompt.length).toBeLessThan(1010)
 })
 
 const trigger: Trigger = { id: 'request-1', source: 'github', threads: [{ source: 'github', id: '42' }], actor: { source: 'github', id: 'alice' }, human: true,

@@ -49,14 +49,14 @@ export interface SessionsHost {
 interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
 
 /** The agent presets Executor Sessions, the main Session and project Lead Sessions are created with, which the bundle's patch defines. */
-export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router', LEAD_PRESET = 'dsh-superagent-lead'
+export const WORKER_PRESET = 'dsh-superagent-further-worker', ROUTER_PRESET = 'dsh-superagent-further-router', LEAD_PRESET = 'dsh-superagent-further-lead'
 
 /** The runtime-context contribution that carries memories: volatile, so it must not live in the system prompt. */
-export const MEMORY_CONTEXT = 'dsh-superagent-memory'
+export const MEMORY_CONTEXT = 'dsh-superagent-further-memory'
 /** After the harness's own runtime contexts, whose orders reach 210 (dsh-system-prompt `CONTEXT_ORDERS`). */
 export const MEMORY_CONTEXT_ORDER = 300
 /** The runtime-context contribution that carries the operator's default language: volatile, so it must not live in the system prompt. */
-export const LANGUAGE_CONTEXT = 'dsh-superagent-language'
+export const LANGUAGE_CONTEXT = 'dsh-superagent-further-language'
 /** After the memory snapshot, whose order is 300. */
 export const LANGUAGE_CONTEXT_ORDER = 310
 /** The Session id of a project's Lead: one persistent Session per registered project (docs/010-project-orchestrator.md). */
@@ -296,12 +296,12 @@ export class Sessions {
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
     this.updateModelHealth()
     // Disable variable interpolation so literal ${{ ... }} expressions in team prompts are preserved.
-    binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
+    binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-further-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = project ? composeLeadPrompt(version.config, project)
         : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      return `[dsh-superagent-further prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     // Memory is volatile: a write or an ended Ticket changes it. It travels in the runtime-context snapshot, which DSH
     // appends as a small user message after the cached history when it changes, instead of the system prompt, whose change
@@ -326,7 +326,7 @@ export class Sessions {
       binding.skills = undefined
       this.bindSkills(binding, host.prompts.current())
     })
-    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release a skill scope: %s', String(error)) }) })
+    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.ctx.logger.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
     await skillScope
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
@@ -406,7 +406,7 @@ export class Sessions {
     for (const [name, content] of this.host.prompts.skills(version.config)) {
       const bundled = name === 'feishu' || name === 'github' ? bundledSkills[name] : undefined
       const body = version.config.skills[name] ?? ''
-      const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent operational skill.')
+      const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent-further operational skill.')
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
     }
@@ -431,7 +431,7 @@ export class Sessions {
     this.bindings.delete(agent)
     binding.skills?.dispose()
     for (const dispose of binding.disposers.splice(0).reverse()) {
-      try { dispose() } catch (error) { this.ctx.logger.warn('dsh-superagent could not release what it registered for a Session: %s', String(error)) }
+      try { dispose() } catch (error) { this.ctx.logger.warn('dsh-superagent-further could not release what it registered for a Session: %s', String(error)) }
     }
   }
   /** Releases prompt sections, skills, and tools registered by `Sessions` across all decorated agents. */

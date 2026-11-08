@@ -155,7 +155,7 @@ async function acceptedTicket(trigger = feishu('1', '@bot 修一下回归')) {
 }
 beforeEach(async () => {
   // The runtime applies the worker environment to the whole process, and a host that embeds the
-  // plugin (the desktop profile runs dsh-superagent inside DSH itself) may have left it applied
+  // plugin (the desktop profile runs dsh-superagent-further inside DSH itself) may have left it applied
   // when the suite starts. Start every test from the environment a fresh process would have.
   delete process.env.GIT_CONFIG_GLOBAL
   delete process.env.GIT_CONFIG_NOSYSTEM
@@ -410,12 +410,12 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   // Memory travels in the runtime-context snapshot, not the system prompt: a change appends a small snapshot instead of
   // rewriting (and re-caching) the whole prompt.
   const masterContexts = contexts.get(runtime.masterId) ?? []
-  const memoryContext = masterContexts.find(entry => entry.name === 'dsh-superagent-memory')
+  const memoryContext = masterContexts.find(entry => entry.name === 'dsh-superagent-further-memory')
   expect(memoryContext).toBeDefined()
   expect(typeof memoryContext!.text === 'function' ? memoryContext!.text({}) : memoryContext!.text).toContain(ticket.title)
   // The operator's default language is operator configuration; like memory it is a runtime context, and a change on the
   // panel applies to the next model request without a restart or a plugin reload.
-  const languageEntry = masterContexts.find(entry => entry.name === 'dsh-superagent-language')
+  const languageEntry = masterContexts.find(entry => entry.name === 'dsh-superagent-further-language')
   expect(languageEntry).toBeDefined()
   const languageText = () => typeof languageEntry!.text === 'function' ? languageEntry!.text({}) : languageEntry!.text
   expect(languageText()).toContain('简体中文')
@@ -684,7 +684,7 @@ it('projects read models for the management page and removes thread subscription
   runtime.store.threads.describe(thread.key, { label: 'Named by its source' })
   expect(threadList(viewsOf(runtime), 'all', 0, 20).items[0]).toMatchObject({ title: 'Named by its source' })
   expect((await api('GET', 'state')).body).not.toHaveProperty('tickets')
-  // scripts/dsh-superagent and agents read health from GET state (docs/006, Management API); settings and their revisions have their own route.
+  // scripts/dsh-superagent-further and agents read health from GET state (docs/006, Management API); settings and their revisions have their own route.
   expect((await api('GET', 'state')).body).toMatchObject({ health: { runtime: { state: expect.any(String) } }, paused: false, load: { maxWorkers: 3 } })
   expect((await api('GET', 'settings')).body).toMatchObject({ sources: expect.arrayContaining([expect.objectContaining({ id: 'github',
     revision: expect.any(Number), value: expect.objectContaining({ enabled: true }) })]), blocks: { policy: { revision: expect.any(Number) } } })
@@ -752,7 +752,7 @@ it('refuses an accept through orchestrator_route for inferred candidates so proa
   expect(runtime.store.tickets.list()).toEqual([])
 })
 
-it('syncs a Source\'s list once its plugin loads after dsh-superagent started', async () => {
+it('syncs a Source\'s list once its plugin loads after dsh-superagent-further started', async () => {
   const next = await restart()
   await next.ready
   vi.mocked(Commands.prototype.lark).mockResolvedValue({ users: [{ member_id: MEMBER, name: 'Alice' }], has_more: false })
@@ -845,9 +845,9 @@ it('retries only a failed, blocked or undelivered ticket with a new assignment, 
 })
 
 it('links Channels and Threads for people, finds tickets by a bare PR number, and keeps ended subscriptions out of the default Thread filter', async () => {
-  const { ticket } = await acceptedTicket(feishu('1', '@_user_1 修一下回归', { mentions: [{ id: 'ou_bot', key: '@_user_1', name: 'dsh-superagent' }] }))
+  const { ticket } = await acceptedTicket(feishu('1', '@_user_1 修一下回归', { mentions: [{ id: 'ou_bot', key: '@_user_1', name: 'dsh-superagent-further' }] }))
   const home = `feishu:${CHAT}:om_1`
-  expect(runtime.store.triggers.get(key('feishu', 'om_1'))!.text).toBe('@dsh-superagent 修一下回归')
+  expect(runtime.store.triggers.get(key('feishu', 'om_1'))!.text).toBe('@dsh-superagent-further 修一下回归')
   const chatLink = `https://applink.feishu.cn/client/chat/open?openChatId=${CHAT}`
   expect(ticketDetail(viewsOf(runtime), ticket.id)!.channels).toEqual([expect.objectContaining({ source: 'feishu', url: chatLink })])
   expect(threadDetail(viewsOf(runtime), home, undefined, 10)!.url).toBe(chatLink)
@@ -914,7 +914,7 @@ it('keeps pages of Source reads, prompt previews and Feishu message links in mem
   const link = 'https://applink.feishu.cn/client/message/link/open?token=t30'
   vi.mocked(Commands.prototype.lark).mockResolvedValue({ messages: [{ message_id: 'om_30', chat_id: CHAT, message_app_link: link }] })
   expect(await runTool(runtime.masterId, 'orchestrator_read', { resource: `trigger/${message.id}` })).toMatchObject({ source_url: link })
-  // An AppLink is found by the links read since dsh-superagent started.
+  // An AppLink is found by the links read since dsh-superagent-further started.
   expect((await api('GET', `search?q=${encodeURIComponent(link)}`)).body).toMatchObject({ items: [expect.objectContaining({ id: message.id })] })
   const config = runtime.prompts.current().config
   const { previews } = await runTool(runtime.masterId, 'orchestrator_prompts_save', { config, preview: true }) as { previews: { read: string }[] }
@@ -950,7 +950,7 @@ it('waits for setup without the agent\'s GitHub CLI: the panel works, and nothin
   expect(next.configured()).toBe(false)
   expect(next.setupProblem).toEqual({ place: 'github', code: 'agentCliUnset', values: {}, detail: 'The agent GitHub CLI is not set.' })
   expect(next.health.runtime).toMatchObject({ state: 'paused', code: 'setupPending' })
-  expect(() => next.deployment).toThrow('dsh-superagent is waiting for setup: The agent GitHub CLI is not set.')
+  expect(() => next.deployment).toThrow('dsh-superagent-further is waiting for setup: The agent GitHub CLI is not set.')
   expect((await api('GET', 'state')).body).toMatchObject({ setup: { problem: { place: 'github' }, accounts: null, machine: { stateDir: directory } } })
   expect(overviewOf(next).problems[0]).toEqual({ kind: 'setup', ...next.setupProblem })
   await receive(feishu('30', '@bot 修一下'), next)
@@ -960,7 +960,7 @@ it('waits for setup without the agent\'s GitHub CLI: the panel works, and nothin
   expect(controller.create).not.toHaveBeenCalled()
   expect(deliveries).not.toHaveBeenCalled()
   // A save that changes nothing records nothing; any other save runs setup again, since it may be the fix, and so does a
-  // check after a fix outside dsh-superagent.
+  // check after a fix outside dsh-superagent-further.
   const revision = next.store.get<number>('settings-revision')
   expect(await next.settings.save('policy', next.store.settings().policy, next.store.blockRevision('policy'), 'panel')).toMatchObject({ saved: true, restarting: false })
   expect(next.store.get<number>('settings-revision')).toBe(revision)
@@ -1122,7 +1122,7 @@ it('writes worker shims and the agent environment from the configuration only, a
   expect(process.env.PATH?.split(delimiter)).not.toContain(bin)
 })
 
-it('waits for setup when the shim directory holds a file dsh-superagent did not write, and leaves the file alone', async () => {
+it('waits for setup when the shim directory holds a file dsh-superagent-further did not write, and leaves the file alone', async () => {
   writeFileSync(join(directory, 'worker-bin', 'my-script'), '#!/bin/sh\n')
   const next = await restart()
   await next.ready
@@ -1867,7 +1867,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;
     request: { agentPreset: string; maxDepth: number; parent: { id: string } } }
   expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'parent',
-    request: { agentPreset: 'dsh-superagent-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
+    request: { agentPreset: 'dsh-superagent-further-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
   // The child's report reaches the Ticket through its Lead, and a ready report ends it.
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
   await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done' })
@@ -1983,8 +1983,8 @@ it('restarts a worker whose shell job the host stop ended with the recovery note
 it('creates an Executor Session under the bundle\'s worker preset, and the main Session under its router preset', async () => {
   const { sessionId } = await acceptedTicket()
   const created = controller.create.mock.calls.map(([options]) => options as { sessionId: string; agentPreset: string })
-  expect(created.find(options => options.sessionId === sessionId)).toMatchObject({ agentPreset: 'dsh-superagent-worker' })
-  expect(created.find(options => options.sessionId === runtime.masterId)).toMatchObject({ agentPreset: 'dsh-superagent-router' })
+  expect(created.find(options => options.sessionId === sessionId)).toMatchObject({ agentPreset: 'dsh-superagent-further-worker' })
+  expect(created.find(options => options.sessionId === runtime.masterId)).toMatchObject({ agentPreset: 'dsh-superagent-further-router' })
 })
 
 it('selects its own preset again for a main Session or worker a person switched before its first turn, and not after it', async () => {
@@ -2000,14 +2000,14 @@ it('selects its own preset again for a main Session or worker a person switched 
   const emit = (sessionId: string, preset: string) => (runtime as unknown as { ctx: Context }).ctx.emit('agent-preset/selected', sessionId, preset)
   // A person opened the blank main Session in DSH's Web UI, which selected the default preset for it.
   emit(runtime.masterId, 'standard')
-  await vi.waitFor(() => expect(presets.select).toHaveBeenCalledWith(agents.get(runtime.masterId), 'dsh-superagent-router'))
+  await vi.waitFor(() => expect(presets.select).toHaveBeenCalledWith(agents.get(runtime.masterId), 'dsh-superagent-further-router'))
   // Its own preset, which that selection announces the same way, is left alone.
   presets.select.mockClear()
-  emit(runtime.masterId, 'dsh-superagent-router'); await Promise.resolve()
+  emit(runtime.masterId, 'dsh-superagent-further-router'); await Promise.resolve()
   expect(presets.select).not.toHaveBeenCalled()
   emit(sessionId, 'standard')
-  await vi.waitFor(() => expect(presets.select).toHaveBeenCalledWith(agents.get(sessionId), 'dsh-superagent-worker'))
-  // Another Session is not one of dsh-superagent's.
+  await vi.waitFor(() => expect(presets.select).toHaveBeenCalledWith(agents.get(sessionId), 'dsh-superagent-further-worker'))
+  // Another Session is not one of dsh-superagent-further's.
   presets.select.mockClear()
   emit('someone-else', 'standard'); emit('worker-nothing', 'standard'); await Promise.resolve()
   expect(presets.select).not.toHaveBeenCalled()

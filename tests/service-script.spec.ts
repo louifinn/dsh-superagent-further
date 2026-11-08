@@ -1,5 +1,5 @@
 /**
- * Tests for scripts/dsh-superagent.
+ * Tests for scripts/dsh-superagent-further.
  *
  * The service manager is dependency-free Node ESM and derives its checkout root from its own location. These tests copy
  * it into a temporary checkout whose path contains spaces (so path handling is exercised), and inject its two test
@@ -117,7 +117,7 @@ function runEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
 function runWith(overrides: Record<string, string>, ...args: string[]): Promise<Result> {
   // A cold Windows runner can spend over twenty seconds in the real CIM scan this suite asks for, so the helper waits
   // longer than the per-test deadline; a run it had to kill must never look like a command that exited 0.
-  return new Promise(resolve => execFile(process.execPath, [join(root, 'scripts', 'dsh-superagent'), ...args],
+  return new Promise(resolve => execFile(process.execPath, [join(root, 'scripts', 'dsh-superagent-further'), ...args],
     { env: runEnv(overrides), timeout: 60_000 },
     (error, stdout, stderr) => resolve({
       code: typeof error?.code === 'number' ? error.code : error?.killed === true ? -1 : 0,
@@ -136,8 +136,8 @@ beforeEach(() => {
   mkdirSync(join(root, 'bin'))
   // An extensionless ESM entry needs the checkout's module type, as the real repository has.
   writeFileSync(join(root, 'package.json'), '{"type":"module"}\n')
-  copyFileSync(join(import.meta.dirname, '..', 'scripts', 'dsh-superagent'), join(root, 'scripts', 'dsh-superagent'))
-  copyFileSync(join(import.meta.dirname, '..', 'scripts', 'dsh-superagent.cmd'), join(root, 'scripts', 'dsh-superagent.cmd'))
+  copyFileSync(join(import.meta.dirname, '..', 'scripts', 'dsh-superagent-further'), join(root, 'scripts', 'dsh-superagent-further'))
+  copyFileSync(join(import.meta.dirname, '..', 'scripts', 'dsh-superagent-further.cmd'), join(root, 'scripts', 'dsh-superagent-further.cmd'))
   writeFileSync(join(root, 'fake-launcher.mjs'), FAKE_LAUNCHER)
   writeFileSync(launcherPids(), '')
   processes()
@@ -169,7 +169,7 @@ afterEach(async () => {
 
 it('refuses to stop when two processes serve the profile, before it writes the stop marker', async () => {
   processes(service(sleeper()), { pid: sleeper(), name: 'node', args: ['node', '/opt/dsh/lib/cli.js', '--profile=superagent'] })
-  expect(await run('stop')).toMatchObject({ code: 1, stderr: expect.stringContaining('Multiple dsh-superagent processes found') })
+  expect(await run('stop')).toMatchObject({ code: 1, stderr: expect.stringContaining('Multiple dsh-superagent-further processes found') })
   expect(existsSync(join(control('superagent'), 'manually-stopped'))).toBe(false)
 }, 20_000)
 it('keeps a stop per profile', async () => {
@@ -195,14 +195,14 @@ it('records the service PID at start, and still refuses a second instance the sc
   const launch = JSON.parse(readFileSync(launchRecord(), 'utf8')) as { argv: string[]; cwd: string }
   expect(launch.argv).toEqual(['--profile', 'superagent', '--no-open'])
   expect(launch.cwd).toBe(realpathSync(root))
-  const logName = readdirSync(join(root, '.artifacts')).find(name => /^dsh-superagent-superagent-\d{8}-\d{6}-\d+\.log$/.test(name))!
+  const logName = readdirSync(join(root, '.artifacts')).find(name => /^dsh-superagent-further-superagent-\d{8}-\d{6}-\d+\.log$/.test(name))!
   const log = readFileSync(join(root, '.artifacts', logName), 'utf8')
   expect(log).toContain('fake launcher stdout')
   expect(log).toContain('fake launcher stderr')
   const second = sleeper()
   processes({ pid, name: 'node', args: ['node', '/opt/my tools/dsh/lib/cli.js', '--profile', 'superagent', '--no-open'] }, service(second))
   const again = await run('start', '--url', mock.url, '--timeout', '10')
-  expect(again).toMatchObject({ code: 1, stderr: expect.stringContaining('Multiple dsh-superagent processes') })
+  expect(again).toMatchObject({ code: 1, stderr: expect.stringContaining('Multiple dsh-superagent-further processes') })
   expect(await status('superagent', mock.url)).toMatchObject({ pids: [pid, second] })
 }, 20_000)
 it('waits only for the process it stopped', async () => {
@@ -212,28 +212,28 @@ it('waits only for the process it stopped', async () => {
   processes(service(pid))
   const mock = await answering({ shutdown: () => { processes(service(replacement)); try { process.kill(pid) } catch { /* already gone */ } } })
   expect(await run('stop', '--url', mock.url, '--stop-timeout', '5'))
-    .toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent stopped') })
+    .toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent-further stopped') })
 }, 20_000)
 it('keeps only the newest logs it wrote for the profile', async () => {
   const mock = await answering({ gated: true })
   mkdirSync(join(root, '.artifacts'), { recursive: true })
   for (const profile of ['superagent', 'other']) {
     for (let index = 0; index < 25; index++) {
-      const log = join(root, '.artifacts', `dsh-superagent-${profile}-20260901-0000${String(index).padStart(2, '0')}-1.log`)
+      const log = join(root, '.artifacts', `dsh-superagent-further-${profile}-20260901-0000${String(index).padStart(2, '0')}-1.log`)
       writeFileSync(log, '')
       utimesSync(log, 1_700_000_000 + index, 1_700_000_000 + index)
     }
   }
-  writeFileSync(join(root, '.artifacts', 'dsh-superagent-20260901-000000-1.log'), '')
+  writeFileSync(join(root, '.artifacts', 'dsh-superagent-further-20260901-000000-1.log'), '')
   expect(await run('start', '--url', mock.url, '--timeout', '10')).toMatchObject({ code: 0 })
   const logs = readdirSync(join(root, '.artifacts'))
-  const own = logs.filter(name => name.startsWith('dsh-superagent-superagent-')).sort()
+  const own = logs.filter(name => name.startsWith('dsh-superagent-further-superagent-')).sort()
   expect(own).toHaveLength(20)
   // The oldest went; the new one stays, with the newest earlier ones. Another profile's logs and older names stay.
-  expect(own).not.toContain('dsh-superagent-superagent-20260901-000000-1.log')
-  expect(own.filter(name => !name.startsWith('dsh-superagent-superagent-20260901-'))).toHaveLength(1)
-  expect(logs.filter(name => name.startsWith('dsh-superagent-other-'))).toHaveLength(25)
-  expect(logs).toContain('dsh-superagent-20260901-000000-1.log')
+  expect(own).not.toContain('dsh-superagent-further-superagent-20260901-000000-1.log')
+  expect(own.filter(name => !name.startsWith('dsh-superagent-further-superagent-20260901-'))).toHaveLength(1)
+  expect(logs.filter(name => name.startsWith('dsh-superagent-further-other-'))).toHaveLength(25)
+  expect(logs).toContain('dsh-superagent-further-20260901-000000-1.log')
 }, 20_000)
 it('reports a service whose Feishu bot setup could not check as running, and reads an answer with keys missing', async () => {
   processes(service(sleeper()))
@@ -270,7 +270,7 @@ it('restarts the service, and a restart whose graceful stop timed out does not k
   const mock = await answering({ shutdown: () => { try { process.kill(old) } catch { /* already gone */ } } })
   const restarted = await run('restart', '--url', mock.url, '--timeout', '10', '--stop-timeout', '5')
   const pid = tableEntries()[0]!.pid
-  expect(restarted).toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent stopped.') })
+  expect(restarted).toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent-further stopped.') })
   expect(restarted.stdout).not.toContain('Automatic recovery is paused')
   expect(existsSync(join(control('superagent'), 'manually-stopped'))).toBe(false)
   expect(readFileSync(join(control('superagent'), 'service.pid'), 'utf8')).toBe(`${pid}\n`)
@@ -291,7 +291,7 @@ setInterval(() => {}, 1000)`], { stdio: 'ignore' })
   children.push(holder)
   while (!existsSync(held)) await new Promise(resolve => setTimeout(resolve, 50))
   expect(await run('status')).toMatchObject({ code: 1,
-    stderr: expect.stringContaining('Another dsh-superagent control operation is in progress') })
+    stderr: expect.stringContaining('Another dsh-superagent-further control operation is in progress') })
 }, 20_000)
 it('refuses to start a service while no process runs it but something answers at its URL', async () => {
   const mock = await answering({ state: READY })
@@ -321,7 +321,7 @@ appendFileSync(process.env.DSH_TEST_LAUNCHER_PIDS, process.pid + '\\n')
 writeFileSync(process.env.DSH_SUPERAGENT_PROCESS_TABLE, JSON.stringify([
   { pid: process.pid, name: 'node', args: ['node', '/opt/my tools/dsh/lib/cli.js', '--profile', profile, '--no-open'] },
 ]))
-process.stderr.write('dsh-superagent (dsh-superagent): Error: dsh-superagent is already hosted for C:/state\\n')
+process.stderr.write('dsh-superagent-further (dsh-superagent-further): Error: dsh-superagent-further is already hosted for C:/state\\n')
 process.stderr.write('Error: Lock file is already being held\\n')
 setInterval(() => {}, 1000)
 `)
@@ -366,7 +366,7 @@ it('falls back to a forceful stop when the shutdown route is absent or the servi
   processes(service(absent))
   const mock = await answering({ shutdown: 'absent' })
   expect(await run('stop', '--url', mock.url, '--stop-timeout', '5'))
-    .toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent stopped') })
+    .toMatchObject({ code: 0, stdout: expect.stringContaining('dsh-superagent-further stopped') })
   expect(mock.requests).toContain('POST /orchestrator/api/shutdown 1')
   expect(() => process.kill(absent, 0)).toThrow()
   const unreachable = sleeper()
@@ -400,19 +400,19 @@ it('does not count a run of this script itself as the service, whatever its path
   // A `status` or `stop` command carries the same `--profile` words a service does; counting one would let the script see
   // (and on POSIX stop) itself. The Windows branch is saved from that only by also requiring a `cli.js` word.
   processes(
-    { pid: sleeper(), name: 'node', args: [process.execPath, join(root, 'scripts', 'dsh-superagent'), 'status', '--profile', 'superagent'] },
-    { pid: sleeper(), name: 'node', args: ['node', 'C:\\src\\dsh-superagent', 'status', '--profile', 'superagent'] },
+    { pid: sleeper(), name: 'node', args: [process.execPath, join(root, 'scripts', 'dsh-superagent-further'), 'status', '--profile', 'superagent'] },
+    { pid: sleeper(), name: 'node', args: ['node', 'C:\\src\\dsh-superagent-further', 'status', '--profile', 'superagent'] },
   )
   expect((await status('superagent')).pids).toEqual([])
 }, 20_000)
 it('prints usage for --help and exits 2 for invalid arguments', async () => {
-  expect(await run('--help')).toMatchObject({ code: 0, stdout: expect.stringContaining('usage: dsh-superagent') })
+  expect(await run('--help')).toMatchObject({ code: 0, stdout: expect.stringContaining('usage: dsh-superagent-further') })
   expect(await run('bogus')).toMatchObject({ code: 2, stderr: expect.stringContaining('invalid choice') })
   expect(await run('--timeout', '0', 'status')).toMatchObject({ code: 2, stderr: expect.stringContaining('must be positive') })
 }, 20_000)
 it.runIf(process.platform === 'win32')('runs the Windows .cmd wrapper with the same exit codes as node', async () => {
   const result = await new Promise<Result>(resolve => execFile(process.env.ComSpec ?? 'cmd.exe',
-    ['/d', '/s', '/c', 'dsh-superagent.cmd status'], { cwd: join(root, 'scripts'), env: runEnv(), timeout: 60_000 },
+    ['/d', '/s', '/c', 'dsh-superagent-further.cmd status'], { cwd: join(root, 'scripts'), env: runEnv(), timeout: 60_000 },
     (error, stdout, stderr) => resolve({
       code: typeof error?.code === 'number' ? error.code : error?.killed === true ? -1 : 0,
       killed: error?.killed === true,

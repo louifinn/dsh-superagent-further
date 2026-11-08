@@ -1,6 +1,6 @@
 # 001 Domain model
 
-This document names the concepts of dsh-superagent and the rules each one keeps. The code, the tools the agents call, the panel and the other documents use these terms and no others. Following [000 Philosophy](000-philosophy.md), the model holds only concepts the work needs, and a business need becomes an attribute of one of them.
+This document names the concepts of dsh-superagent-further and the rules each one keeps. The code, the tools the agents call, the panel and the other documents use these terms and no others. Following [000 Philosophy](000-philosophy.md), the model holds only concepts the work needs, and a business need becomes an attribute of one of them.
 
 ## Flow
 
@@ -55,7 +55,7 @@ Three Session roles carry the work. The Orchestrator and the project Leads appea
 | Role | Session | Rules it keeps |
 | --- | --- | --- |
 | Orchestrator (main Session) | `orchestrator`, the deployment's main Session | Evaluates Triggers, creates Requests and Tickets, dispatches Tickets to their projects, replies to people and keeps installation-wide Memory. Never executes a Ticket's work or changes a repository. The panel and the user-facing documents call this role the Orchestrator; the code and prompts call the Session `orchestrator` |
-| Lead (Project Lead) | `lead-<project id>`, preset `dsh-superagent-lead` | One per registered project, persistent while the deployment runs. Receives its project's accepted Tickets from the Orchestrator, starts, steers and settles the Executor subagents, and carries its project's clone, repository and base branch. Reads no admission, Policy or work instructions. Changes no Policy or settings; proposes records instead of writing them |
+| Lead (Project Lead) | `lead-<project id>`, preset `dsh-superagent-further-lead` | One per registered project, persistent while the deployment runs. Receives its project's accepted Tickets from the Orchestrator, starts, steers and settles the Executor subagents, and carries its project's clone, repository and base branch. Reads no admission, Policy or work instructions. Changes no Policy or settings; proposes records instead of writing them |
 | Executor | `worker-<ticket id>`, a subagent of its project's Lead | Runs one Assignment in its own Session and directory. Handles a follow-up that reaches its Ticket, or hands it back; reports through its Lead. Never decides authorization, changes a Policy or ends its own Ticket |
 
 Only the Orchestrator writes domain records, and it does so through the Engine. A Lead and an Executor act on what they are given, not on what they would record.
@@ -136,10 +136,10 @@ A reference list of the terms this and the later documents use, with their Chine
 
 | Term | 中文 | Meaning |
 | --- | --- | --- |
-| Agent | 智能体 | The automated team member dsh-superagent runs, acting on Sources through identities such as a GitHub account and a Feishu bot |
+| Agent | 智能体 | The automated team member dsh-superagent-further runs, acting on Sources through identities such as a GitHub account and a Feishu bot |
 | Session | Session | A DeepSeek Harness conversation with its own context and tools; the Orchestrator, each Lead and each Executor run in one |
 | Main Session | 主 Session | The DSH Session that evaluates Triggers, creates Requests and Tickets, dispatches Tickets and replies; the role the panel calls the Orchestrator, `orchestrator` in code and prompts |
-| Lead (Project Lead) | 项目 Lead | The DSH Session that runs one project's Tickets for the Orchestrator; `lead-<project id>` in session storage, preset `dsh-superagent-lead` |
+| Lead (Project Lead) | 项目 Lead | The DSH Session that runs one project's Tickets for the Orchestrator; `lead-<project id>` in session storage, preset `dsh-superagent-further-lead` |
 | Executor Session | 执行器 Session | The DSH Session an Executor runs for one Ticket; `worker` in code and prompts. Under a Lead it is a subagent of that Lead Session and stays out of the Session list |
 | Source | 来源 | A stream of events: a kind that a plugin provides, plus one instance configuration |
 | Trigger | 触发 | One immutable event from a Source |

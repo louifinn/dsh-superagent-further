@@ -34,10 +34,10 @@ function profile(dshHome: string, stateDir: string): void {
   const directory = join(dshHome, 'profiles', 'install-test')
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, 'package.json'), JSON.stringify({
-    dependencies: { 'dsh-superagent': 'link:/repo' },
-    dsh: { profile: { bundles: ['dsh-superagent'] } },
+    dependencies: { 'dsh-superagent-further': 'link:/repo' },
+    dsh: { profile: { bundles: ['dsh-superagent-further'] } },
   }))
-  writeFileSync(join(directory, 'cordis.patch.yml'), `- id: dsh-superagent\n  config:\n    stateDir: ${stateDir}\n`)
+  writeFileSync(join(directory, 'cordis.patch.yml'), `- id: dsh-superagent-further\n  config:\n    stateDir: ${stateDir}\n`)
 }
 
 /** Creates the state database with the schema record the store writes on first open. */

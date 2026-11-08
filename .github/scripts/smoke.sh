@@ -12,7 +12,7 @@ profile=${SMOKE_PROFILE:-smoke}
 port=${SMOKE_PORT:-3099}
 work="${RUNNER_TEMP:-$(mktemp -d)}/superagent-smoke"
 state="$work/state"
-logs=(.artifacts/dsh-superagent-"$profile"-*.log)
+logs=(.artifacts/dsh-superagent-further-"$profile"-*.log)
 
 fail() {
   echo "smoke: $*" >&2
@@ -28,19 +28,19 @@ cat > "$HOME/.dsh/profiles/$profile/cordis.patch.yml" <<EOF
   config:
     host: 127.0.0.1
     port: $port
-- id: dsh-superagent
+- id: dsh-superagent-further
   config:
     stateDir: $state
 EOF
 dsh plugin --profile "$profile" add "link:$root" > /dev/null
 
 set +e
-node scripts/dsh-superagent start --profile "$profile" --url "http://127.0.0.1:$port"
+node scripts/dsh-superagent-further start --profile "$profile" --url "http://127.0.0.1:$port"
 started=$?
 set -e
 [ "$started" -eq 3 ] || fail "start exited $started, wanted 3 (waiting for setup)"
 
-logs=(.artifacts/dsh-superagent-"$profile"-*.log)
+logs=(.artifacts/dsh-superagent-further-"$profile"-*.log)
 token=$(grep -ho 'token=[A-Za-z0-9_-]*' "${logs[@]}" 2>/dev/null | tail -n 1 | cut -d= -f2)
 [ -n "$token" ] || fail "no panel token in the log"
 
@@ -56,5 +56,5 @@ verified=$?
 set -e
 [ "$verified" -eq 2 ] || fail "verify-install exited $verified, wanted 2 (waiting for setup)"
 
-node scripts/dsh-superagent stop --profile "$profile" --url "http://127.0.0.1:$port" > /dev/null
+node scripts/dsh-superagent-further stop --profile "$profile" --url "http://127.0.0.1:$port" > /dev/null
 echo "smoke ok"

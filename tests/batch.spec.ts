@@ -8,7 +8,7 @@ import { batchArguments, expandsInBatch, invocation, isBatchFile } from '../src/
 const windows = process.platform === 'win32'
 const directories: string[] = []
 const temporary = (): string => {
-  const directory = mkdtempSync(join(tmpdir(), 'dsh-superagent-batch-'))
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-superagent-further-batch-'))
   directories.push(directory)
   return directory
 }

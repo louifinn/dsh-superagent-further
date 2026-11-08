@@ -144,7 +144,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
       const child = agents.get(targetId)
       if (!child) throw new Error(`Session ${targetId} not found`)
       // A message for a running turn is taken by its next step; an idle worker is woken by a follow-up that starts one.
-      const message = { id: `message-${targetId}`, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } } as never
+      const message = { id: `message-${targetId}`, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } } as never
       if (child.status === 'idle') child.followup(message)
       else child.steer(message)
       return `message-${targetId}`
@@ -280,11 +280,11 @@ export async function startRuntime(seed?: (store: Store) => void) {
       await (controller.create as (options: { sessionId: string }) => Promise<void>)({ sessionId: id })
       // DSH's spawn provider records the parent in the child's header before the Session is decorated.
       const child = agents.get(id)! as unknown as { session: { header: Record<string, unknown> } }
-      child.session.header = { parentSession: parent, agentPreset: 'dsh-superagent-worker' }
+      child.session.header = { parentSession: parent, agentPreset: 'dsh-superagent-further-worker' }
       await hostCtx.ctx!.parallel('agent/created', { agent: agents.get(id)! } as never)
     },
     deliver: (id, content) => (agents.get(id) as unknown as { followup(message: unknown): void } | undefined)
-      ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } }),
+      ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }),
   })
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
     sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,

@@ -38,7 +38,7 @@ function stateDirectory(profile) {
   const patch = join(home, 'profiles', profile, 'cordis.patch.yml')
   if (existsSync(patch)) {
     const lines = readFileSync(patch, 'utf8').split(/\r?\n/)
-    const start = lines.findIndex(line => line.trim() === '- id: dsh-superagent')
+    const start = lines.findIndex(line => line.trim() === '- id: dsh-superagent-further')
     if (start !== -1) {
       for (const line of lines.slice(start + 1)) {
         if (/^\s*- id:/.test(line)) break

@@ -1,12 +1,12 @@
 /** Localization, reason formatting, message marker cleanup, and relative timestamp helpers. */
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
-import type { DshSuperagentKey } from './locales.ts'
+import type { DshSuperagentFurtherKey } from './locales.ts'
 import type { Localized } from '../sources/kind.ts'
 import type { SetupProblem } from '../setup.ts'
 import type { Health } from '../sources/host.ts'
 import { reasonText, type Reason } from '../core/reasons.ts'
 
-export type T = Translate<DshSuperagentKey>
+export type T = Translate<DshSuperagentFurtherKey>
 export const errorText = (failure: unknown): string => failure instanceof Error ? failure.message : String(failure)
 export const localized = (t: T, text: Localized | string | undefined): string =>
   typeof text === 'string' ? text : text ? text[t('lang') === 'en' ? 'en' : 'zh'] : ''
@@ -14,7 +14,7 @@ export const actorName = (t: T, actor: { name?: Localized } | undefined): string
   : t('automatedNotice')
 export function valueLabel(t: T, group: string, key: string | undefined): string {
   if (!key) return ''
-  const name = `${group}.${key}` as DshSuperagentKey
+  const name = `${group}.${key}` as DshSuperagentFurtherKey
   const text = t(name)
   return text === name ? key : text
 }
@@ -24,7 +24,7 @@ export function reasonLabel(t: T, reason: string | Reason | readonly Reason[] | 
   return [reason ?? []].flat().map(item => label(t, item)).filter(Boolean).join('；')
 }
 function label(t: T, reason: Reason): string {
-  const key = `reason.${reason.code}` as DshSuperagentKey
+  const key = `reason.${reason.code}` as DshSuperagentFurtherKey
   const text = reason.code === 'said' ? reason.values?.text ?? '' : t(key, reason.values)
   if (reason.code !== 'said' && text !== key) return text
   const written = reason.code === 'said' ? text : reasonText({ ...reason, triggerId: undefined })

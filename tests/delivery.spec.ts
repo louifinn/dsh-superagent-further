@@ -125,7 +125,7 @@ it('does not dispatch when cancelled or disposed during history loading', async 
   expect(disposed.steer).not.toHaveBeenCalled()
 })
 
-it('injects a notice once, as dsh-superagent\'s notice with its summary, without waking the agent', async () => {
+it('injects a notice once, as dsh-superagent-further\'s notice with its summary, without waking the agent', async () => {
   const f = fixture()
   await f.inject('notice:settings', 'Settings saved')
   await f.inject('notice:settings', 'Settings saved')

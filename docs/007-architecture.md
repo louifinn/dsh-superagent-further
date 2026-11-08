@@ -38,13 +38,13 @@ Shutdown cancels turns, waits for passes, effects and agents, restores the proce
 
 ### Platforms
 
-dsh-superagent runs on macOS, Linux and Windows 10/11, with each platform difference behind one module:
+dsh-superagent-further runs on macOS, Linux and Windows 10/11, with each platform difference behind one module:
 
 - **Absolute paths** (`src/infra/paths.ts`): the plugin `Config` schema accepts a drive-letter, UNC or root-relative path on Windows and a POSIX path elsewhere, and `policy.ts` applies the same rule to the Executor directory. The rule is a schema pattern rather than `path.isAbsolute`, which would accept the other platform's syntax.
 - **Batch-file CLIs** (`src/infra/batch.ts`): Windows starts a `.cmd`/`.bat` program only through `cmd.exe`, and Node cannot start one with an argument array at all. `Commands` builds that invocation with `cmd.exe /d /s /c` plus `windowsVerbatimArguments` and refuses an argument `cmd.exe` would rewrite (a `%VAR%` naming a variable in the CLI's environment, or a line break; a percent pair naming no variable, such as an encoded `%3A`, passes through unchanged); comment bodies and Feishu replies travel on the CLI's stdin (`gh api --input -`, `lark-cli --markdown -`) because they carry newlines; the Feishu event consumer starts its CLI the same way and ends the whole process tree when it stops.
 - **Worker environment** (`src/infra/environment.ts`): the `worker-bin` shims are batch files on Windows and `#!/bin/sh` scripts elsewhere, `PATH` is split with `path.delimiter`, and the git credential helper is compared in git's normalised `-z` form.
 - **Shell tool**: both presets install `bash` and `pwsh`; the main Session's allow list keeps the platform's shell (`src/app/sessions.ts`), and the Executor's prepare command runs through `sh -c` on POSIX and `pwsh -NoProfile -NonInteractive -Command` on Windows.
-- **Service lifecycle** (`scripts/dsh-superagent`, `scripts/dsh-superagent.cmd`): a dependency-free Node script with no Python or tmux, using `Get-CimInstance Win32_Process` for discovery on Windows and `ps -ww` elsewhere. A graceful stop asks the runtime over `POST /orchestrator/api/shutdown`, because Windows cannot deliver a graceful signal to a detached process; only when the route is missing does it fall back to `SIGINT` on POSIX or `taskkill /T` on Windows.
+- **Service lifecycle** (`scripts/dsh-superagent-further`, `scripts/dsh-superagent-further.cmd`): a dependency-free Node script with no Python or tmux, using `Get-CimInstance Win32_Process` for discovery on Windows and `ps -ww` elsewhere. A graceful stop asks the runtime over `POST /orchestrator/api/shutdown`, because Windows cannot deliver a graceful signal to a detached process; only when the route is missing does it fall back to `SIGINT` on POSIX or `taskkill /T` on Windows.
 - **Owner-only state** (`src/infra/acl.ts`): POSIX modes restrict nothing on Windows, so the state directory and database get an `icacls` ACL that grants only the operator's account.
 
 | Part | Module | Does |
@@ -247,9 +247,9 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `Sessions` (`src/app/sessions.ts`) manages DeepSeek Harness Sessions for both roles. `ensure` creates a Session with its role's model. `install` follows agent events and registers prompts, skills and tools for managed Sessions.
 
-`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
+`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-further-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
 
-`Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and that text travels in the runtime-context snapshot (pinned plus the most recent items, rebuilt for every model request within its character budget, appended after the cached history when it changes rather than rewriting the system prompt); the main Session sees the whole installation while a project Lead's tools and snapshot are scoped to its own project. An ended Request is remembered installation-wide, so it is Orchestrator-only by the same rule. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call. Every decorated Session also carries the operator's default language in a second runtime-context contribution (`dsh-superagent-language`, order 310), so a change on Settings → Language applies to the next model request without a restart.
+`Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and that text travels in the runtime-context snapshot (pinned plus the most recent items, rebuilt for every model request within its character budget, appended after the cached history when it changes rather than rewriting the system prompt); the main Session sees the whole installation while a project Lead's tools and snapshot are scoped to its own project. An ended Request is remembered installation-wide, so it is Orchestrator-only by the same rule. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call. Every decorated Session also carries the operator's default language in a second runtime-context contribution (`dsh-superagent-further-language`, order 310), so a change on Settings → Language applies to the next model request without a restart.
 
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
@@ -261,7 +261,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 
 | Glue | Translates |
 | --- | --- |
-| `src/app/runtime.ts` | The composition root: builds the parts with the interfaces they use, registers the routes and the Source host, and starts and stops dsh-superagent |
+| `src/app/runtime.ts` | The composition root: builds the parts with the interfaces they use, registers the routes and the Source host, and starts and stops dsh-superagent-further |
 | `src/app/notices.ts` | Domain events and worker reports into notices and relays for the main Session |
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts` | Tool arguments of the main Session and the Executor Sessions into calls of the core classes, and their results into cards |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
@@ -308,7 +308,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Path | Responsibility |
 | --- | --- |
 | `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
-| `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the agent CLI from the Source settings and the primary repository from the first registered project, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields whose change restarts dsh-superagent. The code names no person, account or organization |
+| `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the agent CLI from the Source settings and the primary repository from the first registered project, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields whose change restarts dsh-superagent-further. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share |
 | `src/policy.ts` | The Policy: the settings schemas by block, the localized built-in rules and their migration from the English defaults, the Policy version, the gate and Mandate revalidation |
 | `src/projects.ts` | The projects this installation works on: one absolute local workspace and one `owner/name` remote repository per project, with an optional base branch; the Execution settings block holds the list, and the first project supplies the deployment's primary repository |
@@ -409,7 +409,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/setup-wizard.tsx` | The first-run setup wizard: welcome, the first project, the GitHub account check, the optional Feishu Source, the default language and a summary; each step can be skipped or revisited, a save that restarts the runtime says so, and the last answer is recorded in the Store |
 | `src/client/setup-wizard-entry.tsx` | When the wizard opens by itself: on a first run, once per browser session, with the header button that reopens it afterwards |
-| `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |
+| `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent-further restarts |
 | `src/client/api.ts` | Calls and polls of the management API, typed by `src/app/api.ts`, and the Decision filters of the Eval status |
 | `src/client/route.ts` | The tabs, the settings groups, the typed routes that `parseRoute` reads, and the route memory with the settings group opened last |
 | `src/client/overview.tsx` | The overview |
@@ -481,8 +481,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
 | `tests/model-surface.spec.ts` | Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary, within a size budget per role |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/index.spec.ts` | The plugin configuration and setup, the agent's process environment, the plugin entry |
-| `tests/service-script.spec.ts` | `scripts/dsh-superagent` against an injectable process table, launcher and `dsh`, and a mock management API |
+| `tests/service-script.spec.ts` | `scripts/dsh-superagent-further` against an injectable process table, launcher and `dsh`, and a mock management API |
 | `tests/verify-install.spec.ts` | `scripts/verify-install` against temporary profiles and state databases at the current, older and newer schema versions |
+| `tests/migrate-rename.spec.ts` | `scripts/migrate-rename.mjs` against a temporary profile and session log: the dependency, bundle and patch ids, the stored preset ids, the backups, the dry run and idempotence |
 | `tests/batch.spec.ts`, `tests/acl.spec.ts` | Batch-file CLIs through `cmd.exe` with an exact argument round trip, and owner-only state files as POSIX modes or Windows ACLs |
 | `tests/client.spec.tsx`, `tests/navigation.spec.ts`, `tests/controls.spec.tsx` | The client plugin's registration and polling, Session navigation and route memory, the local controls, and the panel's imports, which have no cycle |
 | `tests/panel-overview.spec.tsx`, `panel-source.spec.tsx`, `panel-trigger.spec.tsx`, `panel-eval.spec.tsx`, `panel-execution.spec.tsx` | Each page of the panel, against a fake management API answered by route |
@@ -556,7 +557,7 @@ The main Session also has DeepSeek Harness's `skill`, `bash`, `read`, `read_imag
 
 ### Presets and wait limits
 
-New main Sessions use `dsh-superagent-router` (`ROUTER_PRESET`). Shell commands and job waits return after 5 seconds. If the Web UI selects another preset before the first turn, `Sessions` restores this preset, or `WORKER_PRESET` for a worker.
+New main Sessions use `dsh-superagent-further-router` (`ROUTER_PRESET`). Shell commands and job waits return after 5 seconds. If the Web UI selects another preset before the first turn, `Sessions` restores this preset, or `WORKER_PRESET` for a worker.
 
 The `noWait` guard in `src/app/sessions.ts` refuses main-Session shell commands that invoke `sleep` at a command position, shell `timeoutMs` above 30 seconds, and `job_output` waits above 5 seconds. Reports and job results arrive automatically, so waiting only delays incoming candidates.
 
@@ -645,15 +646,15 @@ Workers receive assignments and Inputs inline. The first message includes the ti
 
 There is no tool for dismissing an unavailable Decision, rerunning setup, refreshing Source display names, or sending an Executor-owned human follow-up to Eval. The last action is deliberately refused by `orchestrator_trigger_requeue`. Other panel actions have equivalent tools.
 
-Most built-in instructions live in `prompts/*.md`, with one sentence per line joined by `promptFile`. Source skills live in `skills/dsh-superagent-*/SKILL.md`. Tool descriptions and fixed notices such as restart recovery notes remain in code. Assessment instructions live only in `prompts/admission.md`.
+Most built-in instructions live in `prompts/*.md`, with one sentence per line joined by `promptFile`. Source skills live in `skills/dsh-superagent-further-*/SKILL.md`. Tool descriptions and fixed notices such as restart recovery notes remain in code. Assessment instructions live only in `prompts/admission.md`.
 
 `tests/model-surface.spec.ts` checks these surfaces for drift. [004 Prompts](004-prompts.md) explains the team's editable parts.
 
 ## Configuration reload
 
-Every plugin configuration key except `stateDir` is volatile. The panel's Deployment settings and DeepSeek Harness's Plugin Manager edit them through DeepSeek Harness's configuration form; the host writes `cordis.patch.yml` and updates the values in place, and dsh-superagent reads each limit when it uses it, so a change applies without a restart.
+Every plugin configuration key except `stateDir` is volatile. The panel's Deployment settings and DeepSeek Harness's Plugin Manager edit them through DeepSeek Harness's configuration form; the host writes `cordis.patch.yml` and updates the values in place, and dsh-superagent-further reads each limit when it uses it, so a change applies without a restart.
 
-A settings save that changes a Source field setup reads, such as an account's CLI, and any save while setup waits, restarts dsh-superagent. DeepSeek Harness's settings service does not serve the entry during that restart, so after its own restart dsh-superagent asks it to read the entry again, and an open form becomes editable again.
+A settings save that changes a Source field setup reads, such as an account's CLI, and any save while setup waits, restarts dsh-superagent-further. DeepSeek Harness's settings service does not serve the entry during that restart, so after its own restart dsh-superagent-further asks it to read the entry again, and an open form becomes editable again.
 
 ## Reviewing a change against real data
 

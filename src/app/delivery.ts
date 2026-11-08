@@ -5,6 +5,9 @@ import { freezeMessage, MessageId, type ContextFormed, type UserMessage } from '
 import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 
+// The source kind predates the 0.3.0 rename. It is a stored wire format: Sessions delivered before the upgrade name it,
+// and recognizing the same kind after the upgrade is what keeps their deliveries idempotent (no second acknowledgement
+// or reply). Do not replace the literal with the current package name.
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'dsh-superagent': { kind: 'dsh-superagent' } & ContextFormed
@@ -26,7 +29,7 @@ function deliveryId(message: UserMessage): string | undefined {
 /**
  * Delivers messages to DSH agents at most once per request ID across active and restored Sessions.
  * Tracks delivered message IDs from live Session events, persisted history, and pending inboxes so retries from `Sessions` do not duplicate messages,
- * and marks delivered messages with `dsh-superagent`'s own source (`dsh-superagent`) rather than user RPCs so they are never mistaken for messages written by a person.
+ * and marks delivered messages with its own source kind (`dsh-superagent`, kept from earlier releases as a stored wire format) rather than user RPCs so they are never mistaken for messages written by a person.
  */
 export class AgentDelivery {
   private readonly seen = new WeakMap<Session, Seen>()

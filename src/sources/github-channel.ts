@@ -14,7 +14,11 @@ const CommentSchema = z.looseObject({
 const gone = (error: unknown): boolean => error instanceof CliError
   && (error.code === 410 || (error.code === 403 && /locked/i.test(error.message)))
 const missing = (error: unknown): boolean => error instanceof CliError && (error.code === 404 || error.code === 410)
-/** Posts a comment or review-thread reply with an embedded HTML marker so retries do not create duplicate comments. */
+/**
+ * Posts a comment or review-thread reply with an embedded HTML marker so retries do not create duplicate comments.
+ * The marker keeps the pre-0.3.0 `dsh-superagent` prefix deliberately: comments already on GitHub and Outbox entries
+ * queued under that name still have to be recognized after the rename, or a retry posts the same comment twice.
+ */
 export async function sendGithub(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'> {
   // A reply belongs to the repository its channel names (a project's), or to the deployment's when it names none.
   const { commands: base } = host
@@ -36,6 +40,7 @@ export async function sendGithub(host: Pick<SourceContext, 'commands'>, message:
       rootId = source ? source.in_reply_to_id ?? source.id : undefined
     }
     const path = rootId === undefined ? `issues/${number}/comments` : `pulls/${number}/comments`
+    // Pre-rename prefix, kept as a wire format; see this function's comment.
     const marker = `<!-- dsh-superagent:${message.id} -->`
     const mine = (comment: z.infer<typeof CommentSchema>) => sameName(comment.user?.login ?? '', github.login)
       && (rootId === undefined || comment.in_reply_to_id === rootId) && (comment.body ?? '').includes(marker)

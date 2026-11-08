@@ -46,7 +46,7 @@ it('asks DSH to read its settings entry again once a restart it started finished
   let finish = () => {}
   ctx.fiber.restart.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
   await apply(ctx as never, Config({ stateDir: '/srv/state' }))
-  // Saving a Source account change restarts dsh-superagent, which re-runs setup and refreshes the settings descriptor.
+  // Saving a Source account change restarts dsh-superagent-further, which re-runs setup and refreshes the settings descriptor.
   runtimes.at(-1)!.restart()
   await Promise.resolve()
   expect(describe).not.toHaveBeenCalled()

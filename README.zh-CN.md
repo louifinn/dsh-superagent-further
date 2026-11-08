@@ -1,4 +1,4 @@
-# dsh-superagent
+# dsh-superagent-further
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@
 > 需要人来运维的工具，而不是托管服务：在让它无人值守运行之前，请先读
 > [设计哲学](docs/000-philosophy.md) 与 [部署指南](docs/006-deployment.md)。
 
-dsh-superagent 是面向团队所用仓库的主动式编程智能体，以插件包（bundle）的形式运行在
+dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，以插件包（bundle）的形式运行在
 [DeepSeek Harness](https://www.deepseek.com/en/harness/) 上。它监听 GitHub，也可选用飞书。当团队允许的人向它
 发出工作请求时，它会开出一个请求（Request）以及交付该请求的若干工单（Ticket），让每张工单在自己的会话和检出目录里
 工作，并在原来的对话里回复 —— 通常是一个由人合并的 pull request。Web 面板只列出等待人处理的事项。
@@ -26,12 +26,12 @@ dsh-superagent 是面向团队所用仓库的主动式编程智能体，以插�
 
 | | |
 | --- | --- |
-| 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
+| 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：72 个 spec 文件，**1326 passed / 5 skipped（1331）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
-| 发布 | `0.2.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-0.2.0.tgz` 并发布 |
+| 检查 | `pnpm check`：74 个 spec 文件，**1352 passed / 5 skipped（1357）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 发布 | `0.3.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.3.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
-| 状态数据库 | 架构版本 15（`10 → 11 → 12 → 13 → 14 → 15` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
+| 状态数据库 | 架构版本 17（`10 → 11 → 12 → 13 → 14 → 15 → 16 → 17` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
 
 ## 它做什么
 
@@ -51,7 +51,7 @@ dsh-superagent 是面向团队所用仓库的主动式编程智能体，以插�
 
 安装步骤较多，所以由智能体与你一起完成。对你的编程智能体说：
 
-> 阅读本仓库的 SETUP.md，和我一起配置 dsh-superagent。
+> 阅读本仓库的 SETUP.md，和我一起配置 dsh-superagent-further。
 
 它会一次问一个简短问题，展示一次完整计划，然后安装并配置好一切。手工参考手册 —— 账号、项目、执行、来源、托管、
 升级与故障排查 —— 是 [docs/006-deployment.md](docs/006-deployment.md)。简要步骤如下：
@@ -62,7 +62,7 @@ dsh-superagent 是面向团队所用仓库的主动式编程智能体，以插�
 2. 在配置档的 `cordis.patch.yml` 里写入本机回环（loopback）`webserver` 端口、`stateDir`，以及使用飞书时的飞书插件。
 3. 在面板里登记 **Projects**：id、本地 clone 的绝对路径、`owner/name` 形式的仓库、可选基线分支。启动前必须至少
    有一个项目；没有项目时 onboarding 会拒绝启动。
-4. 启动主机（Windows 用 `scripts\dsh-superagent.cmd start`，其他平台用 `scripts/dsh-superagent start`），
+4. 启动主机（Windows 用 `scripts\dsh-superagent-further.cmd start`，其他平台用 `scripts/dsh-superagent-further start`），
    从日志里拿到面板 URL，用 token 登录。
 5. 运行 `scripts/verify-install`（Windows 上为 `.cmd`）：它会检查 DSH 版本、配置档、patch、API、持有状态锁的进程
    以及数据库架构，只有安装就绪时才以 `0` 退出。
@@ -120,7 +120,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 | 规模 | 单仓库、单主机、单状态目录 | 一个来源轮询多个项目、按项目检出与 Lead、按项目的并发限制；强制一主机 | 团队在多个仓库工作；第二个配置档或第二个智能体会增加概念与噪音 |
 | 执行 | 每张工单一个根 worker 会话 | Orchestrator → 每项目常驻 Lead → 隐藏执行器子智能体，重启后接管 | 会话列表更干净、项目上下文常驻，总编排器不再承担项目劳动 |
 | 跨项目 | 一次接受的请求 = 一张工单、一个目录 | Ticket 之上的 Request，每交付单元一张工单、`after` 依赖、一次确认/一次结果/一个 done | 单张工单无法合法跨越项目；而人发的仍是一个请求 |
-| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → 12 → 13 → 14 → 15`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
+| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → 12 → 13 → 14 → 15 → 16 → 17`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
 | 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志 | 无人值守需要每个平台上可见、可脚本化的运维 |
 | 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报 | “每个失败都可见”意味着运维者能看见趋势，而不只是状态 |
 | 信任 | 触发的字段信任问题仍列为未决问题 | 可信与不可信字段形成文档并由 `tests/trust.spec.ts` 钉住；消息正文不能改变角色、工具、Policy 或强度；属主独占的状态 ACL；批处理参数防护 | 一旦有第二个人或第二个项目，提示注入与共享机器数据就是真实问题 |
@@ -133,7 +133,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 - **路径** —— 一条平台规则（`src/infra/paths.ts`）供给各个 schema；`stateDir` 与项目工作区在两个平台族上都是绝对
   路径，原先假定 `/` 的测试现在会运行使用真实 `C:\` 路径的 Windows 分支。
-- **服务脚本** —— `scripts/dsh-superagent` 是不依赖第三方库的 Node 程序，带 `.cmd` 启动器。Windows 上通过
+- **服务脚本** —— `scripts/dsh-superagent-further` 是不依赖第三方库的 Node 程序，带 `.cmd` 启动器。Windows 上通过
   `Get-CimInstance Win32_Process` 发现主机（POSIX 回退到 `ps`），把它以分离进程启动、输出写入日志，并通过 shutdown
   路由停止，必要时回退到 `taskkill` 进程树。它不再需要 Python、tmux 或 `fcntl`；它用独占文件锁与失效 PID 接管来加锁。
 - **批处理 CLI** —— Windows 上 `spawn`/`execFile` 无法用参数数组启动 `gh.cmd`、`lark-cli.cmd` 以及包装用的
@@ -201,17 +201,17 @@ worker 环境是有范围限制并被文档化的。凭据仍然比理想状态�
 
 ### 工程与分发
 
-`pnpm check` 是唯一的检查：类型检查、70 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
+`pnpm check` 是唯一的检查：类型检查、74 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
 和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，`release.yml` 打包插件包并附加到 GitHub release。
-测试套件共 1331 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
+测试套件共 1357 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
 Linux 套件，是本 fork 证据的一部分。文档也被测试：[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求
-007 列出每个源文件与 spec。插件包保留原型的 id、配置形态与 CLI 可见行为；新增内容是增量设置与面板行，并配有
-`CHANGELOG` 与 semver。
+007 列出每个源文件与 spec。插件包保留其配置形态与 CLI 可见行为；0.3.0 把包名与全部注册 id 改为
+`dsh-superagent-further`，已有安装按 006 的迁移步骤处理。新增内容是增量设置与面板行，并配有 `CHANGELOG` 与 semver。
 
 ### 没有改变的部分
 
 领域模型与词汇（Source、Thread、Trigger、admission、Ticket、Assignment、Report、Attention、Mandate、Policy）、作为
-唯一写入者并以 effects/relay/notice 投递的 Engine、提示词组合与编号文档 000–008、`dsh-superagent` 包布局，以及面向
+唯一写入者并以 effects/relay/notice 投递的 Engine、提示词组合与编号文档 000–008、`dsh-superagent-further` 包布局，以及面向
 运维者的承诺：智能体只在被请求或被允许时行动，只在有人必须行动或可以使用结果时说话。从原型安装迁移会保留其工单、
 Thread、决策与结束状态；升级步骤在 006。
 
@@ -246,7 +246,7 @@ src/
   executor/         DshExecutor：启动、投递、槽位、Lead 派发、工作/派发准备
   infra/            worker 环境、shim、命令执行、路径、ACL、批处理 CLI
   client/           Web 面板（React），中英文文本
-scripts/            dsh-superagent(.cmd)、verify-install(.cmd)、switch-project、clean-worktrees(.cmd)
+scripts/            dsh-superagent-further(.cmd)、verify-install(.cmd)、switch-project、clean-worktrees(.cmd)
 prompts/            智能体提示词，包括 Lead 的提示词
 docs/               编号设计文档、路线图、编排器文档与工程技能笔记
 ```
@@ -286,7 +286,7 @@ pnpm check        # 类型检查 + 测试 + 构建
   生效的路径（批处理 CLI、ACL、服务脚本）每次推送都会被运行。`.github/workflows/smoke.yml` 在 macOS 上启动真实主机；
   `.github/workflows/release.yml` 在 `v*` 标签上运行。
 - Linux 可以在 WSL 里用 Node 22 与 pnpm 11.7.0 运行；每次推送 CI 都会跑。Windows 上服务脚本是
-  `scripts\dsh-superagent.cmd`，面板 token 在最新的 `.artifacts/dsh-superagent-*.log` 里。
+  `scripts\dsh-superagent-further.cmd`，面板 token 在最新的 `.artifacts/dsh-superagent-further-*.log` 里。
 - 新增来源的流程见 [008](docs/008-cookbook.md)；新的源文件与 spec 必须加入 007 的表格，因为 `tests/docs.spec.ts`
   会强制检查。
 

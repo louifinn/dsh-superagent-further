@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Manage a local dsh-superagent service (one DSH profile, default `superagent`) without touching other DSH profiles.
+ * Manage a local dsh-superagent-further service (one DSH profile, default `superagent`) without touching other DSH profiles.
  *
- * Run this file with Node 22.19+ (`node scripts/dsh-superagent ...`, or `scripts\dsh-superagent.cmd ...` on Windows).
+ * Run this file with Node 22.19+ (`node scripts/dsh-superagent-further ...`, or `scripts\dsh-superagent-further.cmd ...` on Windows).
  * It has no dependency beyond the Node standard library and does not need Python, tmux, fcntl, `ps`, or `wmic`.
  *
  * `status`, `start`, and `restart` exit 0 while the service runs normally; 1 when it is stopped, duplicated, unreachable,
@@ -10,7 +10,7 @@
  * error; and 3 when it runs and waits for setup. A restart fixes neither 2 nor 3: they need a person.
  *
  * Version files live under `.artifacts/control/profiles/<profile>/` (`service.pid`, `manually-stopped`,
- * `operation.lock`); logs are `.artifacts/dsh-superagent-<profile>-<stamp>-<pid>.log`, newest 20 kept.
+ * `operation.lock`); logs are `.artifacts/dsh-superagent-further-<profile>-<stamp>-<pid>.log`, newest 20 kept.
  *
  * Graceful stop: `stop` and `restart` first POST `/orchestrator/api/shutdown` with the management header
  * `x-orchestrator-request: 1`. A 200 answer means the service flushes and exits by itself; the script then waits up to
@@ -45,16 +45,16 @@ const KEEP_LOGS = 20
 const PART_ERROR = 2
 const SETUP_WAITS = 3
 
-const USAGE = `usage: dsh-superagent {start,stop,restart,status} [options]
+const USAGE = `usage: dsh-superagent-further {start,stop,restart,status} [options]
 
-Manage a local dsh-superagent service (one DSH profile, default \`superagent\`).
+Manage a local dsh-superagent-further service (one DSH profile, default \`superagent\`).
 
 positional arguments:
   {start,stop,restart,status}
 
 options:
   -h, --help            show this help message and exit
-  --profile PROFILE     DSH profile that loads dsh-superagent (default: $DSH_SUPERAGENT_PROFILE or superagent)
+  --profile PROFILE     DSH profile that loads dsh-superagent-further (default: $DSH_SUPERAGENT_PROFILE or superagent)
   --url URL             health-check URL; override after changing the profile port
                         (default: $DSH_SUPERAGENT_URL or http://127.0.0.1:3082)
   --timeout SECONDS     startup timeout in seconds (default: 60)
@@ -121,12 +121,12 @@ function acquireLock(directory) {
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error
       if (!lockIsStale(file)) {
-        throw new Error('Another dsh-superagent control operation is in progress.')
+        throw new Error('Another dsh-superagent-further control operation is in progress.')
       }
       try { rmSync(file, { force: true }) } catch { /* another process may have removed it */ }
     }
   }
-  throw new Error('Another dsh-superagent control operation is in progress.')
+  throw new Error('Another dsh-superagent-further control operation is in progress.')
 }
 
 /** Return whether the lock file records an owner that no longer runs (or is unreadable and old enough). */
@@ -155,7 +155,7 @@ function localStamp() {
 
 /** Retain only the newest `KEEP_LOGS` log files for `profile`; other profiles' and other names' files stay. */
 function pruneLogs(profile) {
-  const name = new RegExp(`^${escapeRegExp(`dsh-superagent-${profile}-`)}\\d{8}-\\d{6}-\\d+\\.log$`)
+  const name = new RegExp(`^${escapeRegExp(`dsh-superagent-further-${profile}-`)}\\d{8}-\\d{6}-\\d+\\.log$`)
   let files = []
   try {
     files = readdirSync(ARTIFACTS).filter(entry => name.test(entry))
@@ -180,7 +180,7 @@ function escapeRegExp(text) {
  * health arrived, so it repeats the host's own message instead of "inspect the log".
  */
 function startupFailure(profile, since) {
-  const name = new RegExp(`^${escapeRegExp(`dsh-superagent-${profile}-`)}\\d{8}-\\d{6}-\\d+\\.log$`)
+  const name = new RegExp(`^${escapeRegExp(`dsh-superagent-further-${profile}-`)}\\d{8}-\\d{6}-\\d+\\.log$`)
   let files = []
   try {
     files = readdirSync(ARTIFACTS).filter(entry => name.test(entry))
@@ -195,7 +195,7 @@ function startupFailure(profile, since) {
     try { text = readFileSync(file.path, 'utf8') } catch { continue }
     const lines = text.split(/\r?\n/)
     // The host's own explanation wins over the lock library's, which follows it on the stack.
-    const hosted = lines.find(line => line.includes('dsh-superagent is already hosted for '))
+    const hosted = lines.find(line => line.includes('dsh-superagent-further is already hosted for '))
     const chosen = hosted ?? [...lines].reverse().find(line => line.includes('Error: '))
     if (chosen !== undefined) {
       const at = chosen.indexOf('Error: ')
@@ -341,7 +341,7 @@ function nameMatches(name) {
  */
 function isScript(entry) {
   if (entry.pid === process.pid) return true
-  return entry.args.some(word => word === SCRIPT || /(^|[\\/])dsh-superagent(?:\.cmd)?$/i.test(word))
+  return entry.args.some(word => word === SCRIPT || /(^|[\\/])dsh-superagent-further(?:\.cmd)?$/i.test(word))
 }
 
 /** Return whether command-line arguments belong to the main DSH service process for `profile`. */
@@ -492,7 +492,7 @@ async function stop(args, intentional) {
   const directory = control(args.profile)
   const pids = processes(args.profile)
   if (pids.length > 1) {
-    throw new Error('Multiple dsh-superagent processes found; refusing to choose one.')
+    throw new Error('Multiple dsh-superagent-further processes found; refusing to choose one.')
   }
   // Write the stop marker before waiting so monitors respect the intentional stop even if a graceful stop times out.
   if (intentional) writeFileSync(join(directory, 'manually-stopped'), `${new Date().toISOString()}\n`)
@@ -514,7 +514,7 @@ async function stop(args, intentional) {
     }
   }
   try { rmSync(join(directory, 'service.pid'), { force: true }) } catch { /* already gone */ }
-  console.log(intentional ? 'dsh-superagent stopped. Automatic recovery is paused until start/restart.' : 'dsh-superagent stopped.')
+  console.log(intentional ? 'dsh-superagent-further stopped. Automatic recovery is paused until start/restart.' : 'dsh-superagent-further stopped.')
 }
 
 /** Return the command and arguments that launch `dsh --profile <profile> --no-open`. */
@@ -569,14 +569,14 @@ async function start(args) {
   const directory = control(args.profile)
   const pids = processes(args.profile)
   if (pids.length > 1) {
-    throw new Error('Multiple dsh-superagent processes found; refusing to start another.')
+    throw new Error('Multiple dsh-superagent-further processes found; refusing to start another.')
   }
   if (pids.length === 0) {
     const launch = launchCommand(args.profile)
     if (await state(args.url) !== undefined) {
       throw new Error('An existing orchestrator answers at this URL; refusing duplicate startup.')
     }
-    const log = join(ARTIFACTS, `dsh-superagent-${args.profile}-${localStamp()}-${process.pid}.log`)
+    const log = join(ARTIFACTS, `dsh-superagent-further-${args.profile}-${localStamp()}-${process.pid}.log`)
     writeFileSync(log, '')
     pruneLogs(args.profile)
     const logFd = openSync(log, 'a')
@@ -602,10 +602,10 @@ async function start(args) {
     // Report why instead of waiting the whole timeout for a runtime it will never have.
     if (await state(args.url) === undefined) {
       const failure = startupFailure(args.profile, 0)
-      throw new Error(failure ?? `A dsh process (PID ${pids[0]}) serves this profile, but no orchestrator answers at ${args.url}. Stop it: scripts/dsh-superagent stop`)
+      throw new Error(failure ?? `A dsh process (PID ${pids[0]}) serves this profile, but no orchestrator answers at ${args.url}. Stop it: scripts/dsh-superagent-further stop`)
     }
     writeFileSync(join(directory, 'service.pid'), `${pids[0]}\n`)
-    console.log(`dsh-superagent already running (PID ${pids[0]}); no duplicate started.`)
+    console.log(`dsh-superagent-further already running (PID ${pids[0]}); no duplicate started.`)
   }
   try { rmSync(join(directory, 'manually-stopped'), { force: true }) } catch { /* already the start state */ }
   const deadline = Date.now() + args.timeout * 1_000
@@ -616,11 +616,11 @@ async function start(args) {
       if (found.length === 1) writeFileSync(join(directory, 'service.pid'), `${found[0]}\n`)
       const code = await printStatus(args)
       if (current.setup) {
-        console.log('dsh-superagent is waiting for setup: ' + String(current.setup.detail ?? ''))
-        console.log('Open the URL DSH printed in the log, then the dsh-superagent overview.')
+        console.log('dsh-superagent-further is waiting for setup: ' + String(current.setup.detail ?? ''))
+        console.log('Open the URL DSH printed in the log, then the dsh-superagent-further overview.')
       }
       if (current.feishu) {
-        console.log('dsh-superagent runs without Feishu: ' + String(current.feishu.detail ?? ''))
+        console.log('dsh-superagent-further runs without Feishu: ' + String(current.feishu.detail ?? ''))
         console.log('Fix it on the Feishu card of the Source settings.')
       }
       for (const [name, detail] of partErrors(current)) {

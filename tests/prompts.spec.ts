@@ -79,7 +79,7 @@ it.runIf(process.platform === 'win32')('reads an absolute prompt path on a drive
   // A drive-letter path is absolute on Windows even when no relative form exists (two drives share no prefix);
   // `promptFile` must open it as given rather than composing `prompts\<drive>:\...`.
   const drive = packagePath('prompts').slice(0, 2).toLowerCase()
-  const path = `${drive === 'z:' ? 'y' : 'z'}:\\dsh-superagent-missing\\prompt`
+  const path = `${drive === 'z:' ? 'y' : 'z'}:\\dsh-superagent-further-missing\\prompt`
   expect(() => promptFile(path)).toThrow(`Missing packaged file: ${path}.md`)
 })
 
@@ -121,7 +121,7 @@ it('lists a ticket\'s execution environment in its prompt, and says setup is inc
     expect(promptsOf(store).compose(defaultPrompts(), 'worker', ticket).endsWith('- DSH_SUPERAGENT_DIR = "/srv/work/fix-1": This ticket\'s directory.')).toBe(true)
     expect(promptParts(defaultPrompts(), 'worker', 'env').at(-1)).toEqual({ name: 'runtime/environment', kind: 'generated', key: 'runtime/environment',
       text: 'env' })
-    expect(new Prompts(store, () => 100000, () => undefined, () => false).compose(defaultPrompts(), 'worker')).toContain('dsh-superagent is waiting for setup')
+    expect(new Prompts(store, () => 100000, () => undefined, () => false).compose(defaultPrompts(), 'worker')).toContain('dsh-superagent-further is waiting for setup')
   })
 })
 

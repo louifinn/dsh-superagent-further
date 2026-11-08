@@ -17,7 +17,7 @@ Opening the panel answers three questions, in this order:
 
 ## Tabs
 
-The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
+The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, **Memory**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
 
 | Tab | Shows |
 | --- | --- |
@@ -26,7 +26,8 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |
 | Eval | Decisions with their reason and matched rules |
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
-| Settings | Sources, Eval, Execution, Prompts and Deployment. Each group includes its save history |
+| Memory | The master switch, the injection and automatic-write switches, snapshot limits, and the stored memories: search, sort and project filters, expand for the full record, pin or forget one |
+| Settings | Sources, Eval, Execution, Language, Prompts and Deployment. Each group includes its save history |
 
 ### Reading individual records
 
@@ -40,7 +41,8 @@ Ticket details show the originating Trigger, Decision and reason, scope and Poli
 
 - **Sources:** one card per Source with its switch, fields and verified account facts. GitHub also offers receive-all switches for new Issues, pull requests, comments and default-branch CI. Polling and read limits are under Advanced.
 - **Eval:** the Policy version and rules, followed by **On each Source** and the Eval settings. The built-in rules show their Chinese names and instructions; each row expands for editing, can be duplicated or removed, and its switch enables or disables it. The two original rules are enabled and the eight newer categories ship disabled. The history below the form words rule changes in Chinese, naming the rule that was added, renamed, re-worded, enabled, disabled or removed. Each Source tab contains its allowed list, membership sync, admission table and bot list. Sync runs at startup and on **Sync now**. The admission table distinguishes receiving scope, sender membership and whether the message addresses the agent. Eval settings select the accept mode, timeout and assessment model.
-- **Execution:** worker model, concurrency, directory root, prepare command and blocked commands. Clicking an available variable inserts it into the prepare command.
+- **Execution:** worker model, concurrency, directory root, the registered projects, prepare command and blocked commands. Clicking an available variable inserts it into the prepare command.
+- **Language:** the default language for words a person reads, saved with the block's revision; the next model request uses it, and the runtime context names it to every Session.
 - **Prompts:** **Edit** changes team sections, built-in parts and skills. **Full prompt** shows the assembled text and compares it with saved text or defaults. **History** lists versions. Edited built-in parts are marked changed and can be reset; templates list their required placeholders.
 
   An upgrade that changes an overridden default marks it **Default updated** (默认内容已更新). The panel compares the old and new defaults above the team's text. If the old default was not recorded, it compares the team's text with the new default instead. Choose **Keep my text** or **Use the new default**. Overrides for removed parts are listed below the tab bar and dropped on the next save.
@@ -66,7 +68,7 @@ Search also finds Threads by references such as `#12` or a GitHub URL, and Ticke
 
 A first run — no project registered and no recorded answer — opens the setup wizard by itself when the panel loads. It opens once per browser session: closing it does not mark it answered, and a reload does not open it again. **Setup wizard** (设置向导) in the header reopens it at any time, before and after the first run ends.
 
-The wizard walks through welcome, the first project, the GitHub agent account check, the optional Feishu Source, the default language and a summary. **Skip this step** moves on without saving, **Skip the wizard** ends the whole flow, and **Back** returns to the previous step; saved steps apply immediately. A save that restarts dsh-superagent says **Restarting…** and the panel reconnects on its own. A refused save leaves its error on the step that raised it.
+The wizard walks through welcome, the first project, the GitHub agent account check, the optional Feishu Source, the default language and a summary. **Skip this step** moves on without saving, **Skip the wizard** ends the whole flow, and **Back** returns to the previous step; saved steps apply immediately. A save that restarts dsh-superagent-further says **Restarting…** and the panel reconnects on its own. A refused save leaves its error on the step that raised it.
 
 The project and language steps write the same settings blocks as Settings → Execution and Settings → Language, with the block's current revision, so the two surfaces never disagree. Skipping or finishing writes a marker to the Store's key-value area; that marker is what ends the first run. The browser session only keeps the closed wizard from reopening while the panel stays open. Registering a project also ends the first run without an answer, and the header entry stays available.
 

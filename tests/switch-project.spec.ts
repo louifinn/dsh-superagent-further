@@ -14,19 +14,19 @@ function workspace(): string {
   return root
 }
 
-/** Writes a profile that installs dsh-superagent, with a patch naming the port and state directory. */
+/** Writes a profile that installs dsh-superagent-further, with a patch naming the port and state directory. */
 function profile(home: string, name: string, port?: number): void {
   const directory = join(home, 'profiles', name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, 'package.json'), JSON.stringify({
-    dependencies: { '@deepseek-ai/dsh-base': 'link:base', 'dsh-superagent': 'link:F:/src/dsh-superagent' },
+    dependencies: { '@deepseek-ai/dsh-base': 'link:base', 'dsh-superagent-further': 'link:F:/src/dsh-superagent-further' },
   }, null, 2))
   writeFileSync(join(directory, 'cordis.patch.yml'), [
     '- id: webserver',
     '  config:',
     '    host: 127.0.0.1',
     ...port === undefined ? [] : [`    port: ${port}`],
-    '- id: dsh-superagent',
+    '- id: dsh-superagent-further',
     '  config:',
     `    stateDir: C:/Users/me/.dsh/state/${name}`,
   ].join('\n'))
@@ -84,7 +84,7 @@ describe('switch-project', () => {
     profile(root, 'alpha', 3082)
     profile(root, 'beta', 3083)
     hostedAt(artifacts, 'alpha')
-    writeFileSync(join(artifacts, 'dsh-superagent-beta-20261107-090000-1.log'),
+    writeFileSync(join(artifacts, 'dsh-superagent-further-beta-20261107-090000-1.log'),
       'dsh web: http://127.0.0.1:3083/?token=panel-token\n')
     const fake = fakeService(root)
     const result = run(root, fake, artifacts, ['beta', '--json'])
@@ -116,7 +116,7 @@ describe('switch-project', () => {
     const fake = fakeService(root)
     const result = run(root, fake, join(root, '.artifacts'), ['gamma'])
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain('No project profile "gamma" installs dsh-superagent. Known projects: ')
+    expect(result.stderr).toContain('No project profile "gamma" installs dsh-superagent-further. Known projects: ')
     expect(calls(fake.calls)).toEqual([])
   })
 
@@ -143,7 +143,7 @@ describe('switch-project', () => {
     const result = run(root, fake, artifacts, ['alpha'])
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('beta is hosted (PID')
-    expect(result.stderr).toContain('node scripts/dsh-superagent stop --profile beta')
+    expect(result.stderr).toContain('node scripts/dsh-superagent-further stop --profile beta')
     expect(calls(fake.calls)).toEqual([])
   })
 

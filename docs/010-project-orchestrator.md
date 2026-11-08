@@ -104,7 +104,7 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 2. A dispatch effect writes a `project_message` record (`kind: assignment`, the Ticket id, project,
    the assignment's brief) and prompts the Lead Session with a stable request id.
 3. The Lead reads the Ticket through its project-scoped tools, decides how to execute it and starts
-   one worker subagent (`startActivation`, `agentPreset: dsh-superagent-worker`, `cwd` = the Ticket's
+   one worker subagent (`startActivation`, `agentPreset: dsh-superagent-further-worker`, `cwd` = the Ticket's
    checkout, `parent` = the Lead agent, reserved id `worker-<ticketId>`).
 4. The worker reports through the existing `orchestrator_report` tool; the Lead validates it, asks a
    person when the Ticket stage is `person`, and writes a `project_message` (`kind: report`) back to
@@ -151,7 +151,7 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 
 ## Presets and tools
 
-- New preset `dsh-superagent-lead` (order 89): the router's shell/job 5-second behaviour, file reads
+- New preset `dsh-superagent-further-lead` (order 89): the router's shell/job 5-second behaviour, file reads
   and search, skills, compaction, and a delegation group with `tool-subagent` and
   `tool-subagent-control`; app tools `lead_assign` (start a worker subagent for a Ticket),
   `lead_status` (its running subagents and pending messages) and `lead_report` (send a
@@ -174,7 +174,7 @@ delivery, Lead ensure/decorate, and `ticketOfSession` for a subagent worker; a m
 Lead Session, round-trips one message and disposes it on the real host.
 
 Status (2026-11-08): built — schema 13 with the `lead_message` table and `LeadMessages`, the
-`dsh-superagent-lead` preset and its prompt section, `ensureLead`/`adoptLead` with reserved ids, and the
+`dsh-superagent-further-lead` preset and its prompt section, `ensureLead`/`adoptLead` with reserved ids, and the
 project-aware interfaces. The manual round-trip on the real host follows once P2 exercises a Lead.
 
 **P2 — Execution path.** `DshExecutor` starts a Ticket's worker as a Lead subagent whenever the

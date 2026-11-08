@@ -1,4 +1,4 @@
-/** Application composition root and lifecycle manager for dsh-superagent. */
+/** Application composition root and lifecycle manager for dsh-superagent-further. */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -51,7 +51,7 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 
-// Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
+// Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
 
@@ -62,11 +62,11 @@ const now = (): string => new Date().toISOString()
  */
 export function hostedElsewhere(error: unknown, stateDir: string, masterId: string): unknown {
   if ((error as { code?: string } | undefined)?.code !== 'session/writer-held') return error
-  return new Error(`dsh-superagent is already hosted for ${stateDir}: another DeepSeek Harness process still holds the orchestrator Session (${masterId}). Stop the other host: scripts/dsh-superagent stop for the service, or quit and reopen the DeepSeek Harness application, then start this one.`, { cause: error })
+  return new Error(`dsh-superagent-further is already hosted for ${stateDir}: another DeepSeek Harness process still holds the orchestrator Session (${masterId}). Stop the other host: scripts/dsh-superagent-further stop for the service, or quit and reopen the DeepSeek Harness application, then start this one.`, { cause: error })
 }
 
 /**
- * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
+ * Composition root of dsh-superagent-further that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
  * Locks the state directory before opening SQLite so concurrent processes cannot corrupt or double-migrate state.
  */
@@ -106,18 +106,18 @@ export class Runtime extends Service implements SourceHost {
     // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
     // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
-    try { restrictToOwner(machine.stateDir, true) } catch (error) { ctx.logger.warn('dsh-superagent: %s', String(error)) }
+    try { restrictToOwner(machine.stateDir, true) } catch (error) { ctx.logger.warn('dsh-superagent-further: %s', String(error)) }
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     let release: (() => unknown) | undefined
     try {
       release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
     } catch (error) {
-      throw new Error(`dsh-superagent is already hosted for ${machine.stateDir}. Stop the other host: scripts/dsh-superagent stop for the service, or disable the dsh-superagent plugin in the profile that runs it, then start this one.`, { cause: error })
+      throw new Error(`dsh-superagent-further is already hosted for ${machine.stateDir}. Stop the other host: scripts/dsh-superagent-further stop for the service, or disable the dsh-superagent-further plugin in the profile that runs it, then start this one.`, { cause: error })
     }
     this.releaseLock = async () => { await release?.() }
     let opened: Store | undefined
     try {
-      const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
+      const report = (error: unknown) => { ctx.logger.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
@@ -213,7 +213,7 @@ export class Runtime extends Service implements SourceHost {
               }, request.ended.at)
             }
           } catch (error) {
-            ctx.logger.warn('dsh-superagent could not remember a finished item: %s', String(error))
+            ctx.logger.warn('dsh-superagent-further could not remember a finished item: %s', String(error))
           }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
@@ -237,7 +237,7 @@ export class Runtime extends Service implements SourceHost {
     }
   }
   get health(): Readonly<Record<string, Health>> { return this.board.all }
-  /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */
+  /** Aborted when dsh-superagent-further stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
   context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
@@ -274,7 +274,7 @@ export class Runtime extends Service implements SourceHost {
     this.sessions.install()
     this.executor.install()
     try {
-      await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
+      await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent-further orchestrator', 'orchestrator')
     } catch (error) {
       throw hostedElsewhere(error, this.machine.stateDir, this.masterId)
     }
@@ -291,14 +291,14 @@ export class Runtime extends Service implements SourceHost {
   private async reclaimFinishedWorktrees(): Promise<void> {
     try {
       const done = await reclaimWorktrees({ store: this.store, settings: this.store.settings(), stateDir: this.machine.stateDir })
-      for (const item of done) if (item.removed) this.ctx.logger.info('dsh-superagent: removed the worktree of Ticket %s at %s', item.ticketId, item.directory)
-    } catch (error) { this.ctx.logger.warn('dsh-superagent: worktree cleanup failed: %s', String(error)) }
+      for (const item of done) if (item.removed) this.ctx.logger.info('dsh-superagent-further: removed the worktree of Ticket %s at %s', item.ticketId, item.directory)
+    } catch (error) { this.ctx.logger.warn('dsh-superagent-further: worktree cleanup failed: %s', String(error)) }
   }
   private async cleanupLoop(): Promise<void> {
     while (!this.stopped.signal.aborted) {
       await this.reclaimFinishedWorktrees()
       // Memory retention runs on the same schedule, so a changed retention applies without a restart.
-      try { this.store.memories.prune() } catch (error) { this.ctx.logger.warn('dsh-superagent: memory cleanup failed: %s', String(error)) }
+      try { this.store.memories.prune() } catch (error) { this.ctx.logger.warn('dsh-superagent-further: memory cleanup failed: %s', String(error)) }
       try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
     }
   }
@@ -330,13 +330,13 @@ export class Runtime extends Service implements SourceHost {
   /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
   stop(): Promise<void> { return this.stopping ??= this.shutdown() }
   /**
-   * Stops the runtime and then ends the host process. `scripts/dsh-superagent stop` requests this over the management API
+   * Stops the runtime and then ends the host process. `scripts/dsh-superagent-further stop` requests this over the management API
    * because Windows cannot deliver a graceful signal to a detached process; POSIX stops send SIGINT and never take this path.
    */
   requestShutdown(): void {
     if (this.stopping) return
     void this.stop().then(() => { this.exit(0) }, (error: unknown) => {
-      this.ctx.logger.error('dsh-superagent shutdown failed: %s', String(error))
+      this.ctx.logger.error('dsh-superagent-further shutdown failed: %s', String(error))
       this.exit(1)
     })
   }
@@ -358,7 +358,7 @@ export class Runtime extends Service implements SourceHost {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
       this.setup.restore()
       try { this.store.close() } finally {
-        const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release its state directory lock: %s',
+        const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent-further could not release its state directory lock: %s',
           String(error)) }
         await this.releaseLock?.().catch(unreleased)
       }

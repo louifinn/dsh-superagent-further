@@ -39,7 +39,9 @@ interface Skill { name: string; description: string; content: string }
  */
 // The orchestrator budget rose from 59,000 with the three memory tools (memory_write, memory_search, memory_forget),
 // which add about 2,200 characters of schemas and no prompt text: attention stays bounded, the capability is real.
-const BUDGET: Record<Role, number> = { orchestrator: 62_000, worker: 40_500 }
+// The worker budget rose from 40,500 with the 0.3.0 rename: the package name appears in the preset, skill and
+// tool text the model reads, and the longer registration ids add about 30 characters at this size.
+const BUDGET: Record<Role, number> = { orchestrator: 62_000, worker: 40_600 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -143,14 +145,14 @@ async function start() {
       const child = agents.get(spec.childId) as unknown as { session: { header?: unknown }; status: string; followup: (message: unknown) => void }
       child.session.header = { parentSession: spec.request.parent.id, agentPreset: spec.request.agentPreset }
       await ctx.parallel('agent/created', { agent: child } as never)
-      child.followup({ id: 'activation-' + spec.childId, role: 'user', content: spec.request.prompt, source: { kind: 'dsh-superagent', form: 'relay' } })
+      child.followup({ id: 'activation-' + spec.childId, role: 'user', content: spec.request.prompt, source: { kind: 'dsh-superagent-further', form: 'relay' } })
       child.status = 'running'
       return { childId: spec.childId, result: new Promise(() => {}), dispose: async () => {} }
     },
     sendMessage: async (_sender: unknown, targetId: string, content: unknown[]) => {
       const child = agents.get(targetId) as unknown as { status: string; followup: (message: unknown) => void; steer: (message: unknown) => void } | undefined
       if (!child) throw new Error('Session ' + targetId + ' not found')
-      const message = { id: 'message-' + targetId, role: 'user', content, source: { kind: 'dsh-superagent', form: 'relay' } }
+      const message = { id: 'message-' + targetId, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }
       if (child.status === 'idle') child.followup(message)
       else child.steer(message)
       return 'message-' + targetId
@@ -393,7 +395,7 @@ it('collects both roles\' tools, prompts, skills and inputs', () => {
     expect(toolsOf('orchestrator').has(name)).toBe(false)
   }
   const wheres = new Set(surfaces.map(surface => surface.where))
-  for (const where of ['orchestrator prompt runtime/dispatch', 'worker prompt runtime/work', 'skill dsh-superagent-github', 'skill dsh-superagent-feishu',
+  for (const where of ['orchestrator prompt runtime/dispatch', 'worker prompt runtime/work', 'skill dsh-superagent-further-github', 'skill dsh-superagent-further-feishu',
     'orchestrator prompt runtime/admission', 'orchestrator input candidate', 'orchestrator input worker_attention', 'orchestrator input worker_report',
     'orchestrator input thread_unrelated', 'orchestrator input ticket_ended', 'orchestrator input settings_saved', 'worker input assignment (explicit)',
     'worker input assignment (inferred)', 'worker input policy-changed', 'worker input resumed', 'worker input status',
