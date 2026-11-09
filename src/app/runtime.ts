@@ -35,7 +35,7 @@ import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
-import { requestResultNotices } from './request-notices.ts'
+import { projectResultChannels, projectResultNotices, requestResultNotices } from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Automations, type ScheduleService } from './automations.ts'
 import { localFile } from './files.ts'
@@ -186,6 +186,16 @@ export class Runtime extends Service implements SourceHost {
             const first = request ? store.tickets.get(request.ticketIds[0] ?? '') : undefined
             const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
             if (request) for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+          }
+          // Report a completed project request's whole derived chain once, through the Channels it started in (docs/012 D6).
+          if (event.type === 'project-request.completed') {
+            const root = store.projectRequests.get(event.data.projectRequestId)
+            // A derived request completes into its root's aggregate report; only a root sends one.
+            if (root && !root.root?.project_request_id) {
+              const channels = projectResultChannels(root, id => store.requests.get(id), id => store.triggers.get(id))
+              const report = projectResultNotices(root, channels, id => store.tickets.get(id), id => store.projectRequests.get(id), setup.deployment.repository)
+              for (const message of report) outbox.send(message)
+            }
           }
           // Notify the ticket's conversations whenever it ends via a pull request.
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined

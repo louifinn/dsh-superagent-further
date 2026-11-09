@@ -2181,3 +2181,44 @@ it('keeps the Policy the main Session judges by in its prompt, after admission a
   expect(policy()).toContain('No rule is enabled: a proactive candidate can only be ignored.')
   expect(policy()).toContain('The accept mode and the rules decide proactive candidates only')
 })
+
+it('answers a whitelisted mention the main Session ignores with one notice on its Channel', async () => {
+  const ignored = feishu('12', '@bot 今天天气怎么样')
+  await receive(ignored)
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', trigger_id: ignored.id })
+  await route({ kind: 'ignore', trigger_id: ignored.id, reason: '只是聊天' })
+  const decision = runtime.store.decisions.byThread(`feishu:${CHAT}:om_12`).at(-1)!
+  const id = key('explicit-reply', decision.id, ignored.id)
+  // The person asked the agent directly, so the decision reaches them once on the Channel they used.
+  expect(runtime.store.receipts.get(id)).toMatchObject({ status: 'sent', kind: 'notice', channel: ignored.channel,
+    text: '你的请求未被采纳：只是聊天。' })
+  expect(runtime.store.receipts.waiting().filter(item => item.kind === 'notice')).toEqual([])
+})
+
+it('reports a completed root project request once through the Channel its chain started in', async () => {
+  const { trigger, ticket } = await acceptedTicket(feishu('1', '@bot 修复回归'))
+  // The worker gives the task up, which ends the Ticket and its domain Request.
+  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
+  const origin = { trigger_id: trigger.id, thread_key: `feishu:${CHAT}:om_1` }
+  const root = runtime.engine.raiseProjectRequest({ project: 'default', title: 'Add a status page', instruction: 'Build it.',
+    raised_by: { session: 'lead-default' }, root: origin })
+  runtime.engine.disposeProjectRequest(root.id, { by: 'lead-default', action: 'accept', text: 'Accepted' })
+  const derived = runtime.engine.raiseProjectRequest({ project: 'default', title: 'Write the copy', instruction: 'Write it.',
+    raised_by: { session: 'lead-default' }, root: { ...origin, project_request_id: root.id } })
+  runtime.store.projectRequests.save({ ...runtime.store.projectRequests.get(root.id)!, tickets: [ticket.id], derived: [derived.id] })
+  runtime.engine.completeProjectRequest(root.id, { by: 'lead-default', text: 'The page is live' })
+  await runtime.idle()
+  const id = key('project-result', root.id, 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }))
+  expect(runtime.store.receipts.get(id)).toMatchObject({ status: 'sent', kind: 'notice',
+    text: [
+      'Project request "Add a status page" is complete (1 Tickets, 1 derived requests):',
+      '- default: 修复回归 dropped',
+      'Derived requests:',
+      '- Write the copy: pending',
+      'Summary: The page is live',
+    ].join('\n') })
+  // Completing the root again is refused, so no second report is ever queued.
+  expect(() => runtime.engine.completeProjectRequest(root.id, { by: 'lead-default', text: 'Again' })).toThrow()
+  await runtime.idle()
+  expect(runtime.store.receipts.waiting().filter(item => item.kind === 'notice')).toEqual([])
+})
