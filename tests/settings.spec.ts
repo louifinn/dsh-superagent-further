@@ -298,6 +298,96 @@ it('still rejects an invalid or unknown tier-A payload from a tool, writing noth
     .rejects.toMatchObject({ code: 'unknownBlock' })
 })
 
+it('proposes a tier-B change, supersedes the block\'s older pending proposal, and applies it with its actor, reason and id in the history', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const evaluation = settings.block('eval')
+  const current = evaluation.value as Settings['eval']
+  const mode = current.mode === 'auto' ? 'observe' : 'auto'
+  const reason = 'The person asked to run the evaluator in the other mode'
+  const first = settings.propose('eval', { ...current, mode }, 'Make it quieter', 'master-session')
+  expect(first).toMatchObject({ block: 'eval', status: 'pending', actor: 'master-session', base_revision: evaluation.revision, reason: 'Make it quieter' })
+  expect(first.id).toMatch(/^pr-[0-9a-f]{8}$/)
+  expect(first.diff).toEqual([{ path: 'eval.mode', from: current.mode, to: mode }])
+  expect(first.value).toMatchObject({ mode })
+  expect(Date.parse(first.expires_at) - Date.parse(first.created_at)).toBe(7 * 24 * 60 * 60 * 1000)
+
+  const second = settings.propose('eval', { ...current, mode }, reason, 'master')
+  expect(settings.proposal(first.id)?.status).toBe('superseded')
+  expect(settings.proposals().items.map(item => item.id)).toEqual([second.id])
+
+  const applied = await settings.applyProposal(second.id)
+  expect(applied).toMatchObject({ revision: store.blockRevision('eval'), proposal: { id: second.id, status: 'applied', decided_by: 'panel' } })
+  expect(store.settings().eval.mode).toBe(mode)
+  expect(store.settingsHistory(1)[0]).toMatchObject({ source: 'panel', block: 'eval', actor: 'master', reason, proposal: second.id })
+  const history = policyHistory(store, h.runtime.sources, policyVersion(store.settings()))
+  expect(history.items[0]).toMatchObject({ proposal: second.id, actor: 'master', reason })
+  await expect(settings.applyProposal(second.id)).rejects.toBeInstanceOf(SettingsConflict)
+
+  const executor = settings.block('executor').value as Settings['executor']
+  const rejected = settings.propose('executor', { ...executor, maxWorkers: executor.maxWorkers + 1 }, 'The person asked for one more worker', 'master')
+  expect(settings.rejectProposal(rejected.id)).toMatchObject({ status: 'rejected', decided_by: 'panel' })
+  expect(store.settings().executor.maxWorkers).toBe(executor.maxWorkers)
+  await expect(settings.applyProposal(rejected.id)).rejects.toBeInstanceOf(SettingsConflict)
+})
+
+it('expires a pending proposal after seven days, and refuses to apply one whose base revision another save moved', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const evaluation = settings.block('eval')
+  const current = evaluation.value as Settings['eval']
+  const mode = current.mode === 'auto' ? 'observe' : 'auto'
+  const expiring = settings.propose('eval', { ...current, mode }, 'The person asked for this', 'master')
+  store.proposals.save({ ...expiring, expires_at: new Date(Date.now() - 1000).toISOString() })
+  expect(settings.proposals().items).toEqual([])
+  expect(settings.proposal(expiring.id)?.status).toBe('expired')
+  await expect(settings.applyProposal(expiring.id)).rejects.toBeInstanceOf(SettingsConflict)
+
+  const stale = settings.propose('eval', { ...current, mode }, 'The person asked for this', 'master')
+  const moved = await settings.save('eval', { ...current, mode }, store.blockRevision('eval'), 'panel')
+  expect(moved.saved).toBe(true)
+  await expect(settings.applyProposal(stale.id)).rejects.toBeInstanceOf(SettingsConflict)
+  expect(settings.proposal(stale.id)?.status).toBe('expired')
+  expect(store.settings().eval.mode).toBe(mode)
+})
+
+it('keeps a failed application pending with its error and writes no settings', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const executor = settings.block('executor')
+  const current = executor.value as Settings['executor']
+  const proposal = settings.propose('executor', { ...current, maxWorkers: current.maxWorkers + 1 }, 'The person asked for one more worker', 'master')
+  vi.spyOn(settings, 'save').mockRejectedValueOnce(new Error('The provider is unavailable'))
+  const before = JSON.stringify(store.settings())
+  await expect(settings.applyProposal(proposal.id)).rejects.toThrow('The provider is unavailable')
+  expect(JSON.stringify(store.settings())).toBe(before)
+  expect(settings.proposal(proposal.id)).toMatchObject({ status: 'pending', error: 'The provider is unavailable' })
+})
+
+it('proposes only changes that need the panel: refusing tier A alone, tier C, pause, no-ops and unknown blocks', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const evaluation = settings.block('eval').value as Settings['eval']
+  const executor = settings.block('executor').value as Settings['executor']
+  const revision = store.blockRevision('eval')
+  const failureOf = (run: () => unknown) => { try { run() } catch (error) { return error } return undefined }
+
+  expect(failureOf(() => settings.propose('eval', { ...evaluation, mode: 'observe' }, '   ', 'master')))
+    .toMatchObject({ code: 'reasonRequired' })
+  expect(failureOf(() => settings.propose('eval', { ...evaluation, mode: 'observe' }, 'x'.repeat(281), 'master'))).toBeInstanceOf(Error)
+  expect(failureOf(() => settings.propose('eval', { ...evaluation }, 'The person asked for nothing', 'master'))).toBeInstanceOf(Error)
+  expect(failureOf(() => settings.propose('eval', { ...evaluation, timeoutSeconds: 240 }, 'The person asked for a timeout', 'master')))
+    .toMatchObject({ message: expect.stringContaining('saved directly') })
+  expect(failureOf(() => settings.propose('pause' as SettingsBlock, {}, 'The person asked for this', 'master')))
+    .toMatchObject({ message: expect.stringContaining('tier-A') })
+  expect(failureOf(() => settings.propose('executor', { ...executor, directory: '/tmp/elsewhere' }, 'The person asked for this', 'master')))
+    .toMatchObject({ code: 'panelOnlyEnvironment' })
+  expect(failureOf(() => settings.propose('missing' as SettingsBlock, {}, 'The person asked for this', 'master')))
+    .toMatchObject({ code: 'unknownBlock' })
+  expect(store.blockRevision('eval')).toBe(revision)
+  expect(store.proposals.list()).toEqual([])
+})
+
 it('keeps the panel path able to save a tier-B field and change the Policy version, without an audit reason', async () => {
   h = await startRuntime()
   const { settings, store } = h.runtime

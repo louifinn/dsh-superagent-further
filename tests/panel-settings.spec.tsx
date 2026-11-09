@@ -176,6 +176,54 @@ it('registers a project with its local workspace and remote repository in the Ex
   expect(server.settings.executor.projects).toEqual([{ id: 'app', name: 'App', workspace, repository: 'owner/app', branch: '' }])
 })
 
+it('lists a pending proposal with its per-field diff, applies it through the panel save path, and shows the block pending badge', async () => {
+  const proposal = { id: 'pr-11112222', block: 'eval' as const, base_revision: 1, value: { ...server.settings.eval, mode: 'off' as const },
+    diff: [{ path: 'eval.mode', from: server.settings.eval.mode, to: 'off' }], reason: 'The person asked for observe mode',
+    actor: 'master-session', status: 'pending' as const, created_at: '2026-11-01T00:00:00.000Z', expires_at: '2026-11-08T00:00:00.000Z' }
+  server.proposals = [proposal]
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  expect(text()).toContain(`${zh.proposalsTitle} · 1`)
+  expect(text()).toContain(zh.proposalPending)
+  expect(text()).toContain(proposal.reason)
+  expect(text()).toContain('eval.mode')
+  expect(text()).toContain('off')
+  expect(text()).toContain('observe')
+  await click(zh.proposalApply)
+  expect(server.requests.filter(request => request.method === 'POST').map(request => request.path))
+    .toEqual([`settings/proposals/${proposal.id}/apply`])
+  expect(server.settings.eval.mode).toBe('off')
+  expect(server.revisions.eval).toBe(2)
+  expect(server.proposals[0]?.status).toBe('applied')
+  expect(text()).not.toContain(zh.proposalsTitle)
+})
+
+it('rejects a pending proposal, and the history names its proposal with the approver\'s actor and reason', async () => {
+  const executor = { ...server.settings.executor, maxWorkers: server.settings.executor.maxWorkers + 1 }
+  const proposal = { id: 'pr-33334444', block: 'executor' as const, base_revision: 0, value: executor,
+    diff: [{ path: 'executor.maxWorkers', from: server.settings.executor.maxWorkers, to: executor.maxWorkers }],
+    reason: 'The person asked for one more worker', actor: 'master', status: 'pending' as const,
+    created_at: '2026-11-01T00:00:00.000Z', expires_at: '2026-11-08T00:00:00.000Z' }
+  server.proposals = [proposal]
+  server.history = { ...server.history, items: [{ revision: 5, savedAt: '2026-11-01T00:00:00.000Z', source: 'panel', block: 'executor',
+    policyVersion: 'abcdef1234567890', policyChanged: false, notified: [], actor: 'master', reason: 'The person asked for this',
+    proposal: proposal.id, changes: [] }] }
+  await mount()
+  await click(zh['tab.execution'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  expect(text()).toContain('executor.maxWorkers')
+  await click(zh.proposalReject)
+  expect(server.requests.filter(request => request.method === 'POST').map(request => request.path))
+    .toEqual([`settings/proposals/${proposal.id}/reject`])
+  expect(server.proposals[0]?.status).toBe('rejected')
+  expect(server.settings.executor.maxWorkers).toBe(executor.maxWorkers - 1)
+  await click(zh.configHistory)
+  expect(text()).toContain(zh.historyProposal.replace('{proposal}', proposal.id))
+  expect(text()).toContain(zh.historyActor.replace('{actor}', 'master'))
+  expect(text()).toContain(zh.historyReason.replace('{reason}', 'The person asked for this'))
+})
+
 it('saves the default language from its own Settings group', async () => {
   await mount()
   await click(zh['tab.settings'])

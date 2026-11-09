@@ -93,6 +93,8 @@ export interface PanelServer {
   threads: ThreadRow[]
   threadPages: (key: string, query: { before?: string; around?: string }) => ThreadPageView | undefined
   person: TicketRow[]; search: Pick<ApiResponse<'GET search'>, 'items' | 'threads'>; history: HistoryView
+  /** Settings proposals the Routes list, apply, and reject; tests seed this with pending rows. */
+  proposals: ApiResponse<'GET settings/proposals'>['items']
   requests: { path: string; method: string; body?: unknown }[]
   /** Requests with undeclared query params or invalid body presence; asserted empty after each test. */
   misuse: string[]
@@ -265,7 +267,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], memories: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], memories: [], proposals: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -320,6 +322,38 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'GET sources': { answer: sourceStatuses },
   'GET settings': { answer: settingsView },
+  'GET settings/proposals': { answer: () => ({ items: server.proposals.filter(proposal => proposal.status === 'pending') }) },
+  'POST settings/proposals/:id/apply': { answer: ({ params }) => {
+    const proposal = server.proposals.find(item => item.id === params.id)
+    if (!proposal) return refuse(404, 'Settings proposal not found')
+    if (proposal.status !== 'pending') return refuse(409, `Settings proposal ${params.id} is ${proposal.status}, not pending`)
+    if (proposal.base_revision !== (server.revisions[proposal.block] ?? 0)) return refuse(409, 'Settings changed. Reload before saving.')
+    const block = proposal.block
+    if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(proposal.value) }
+    else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(proposal.value) }
+    else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(proposal.value) }
+    else if (block === 'memory') server.settings = { ...server.settings, memory: MemoryConfigSchema.parse(proposal.value) }
+    else if (block === 'language') server.settings = { ...server.settings, language: LanguageConfigSchema.parse(proposal.value) }
+    else if (block.startsWith('source:')) {
+      const source = KINDS.find(kind => `source:${kind.kind}` === block)
+      if (!source) return refuse(404, 'Source not found')
+      const { enabled, config } = SourceSave.parse(proposal.value)
+      server.settings = { ...server.settings, sources: { ...server.settings.sources, [source.kind]: { enabled, config: source.schema.parse(config) } } }
+    } else return refuse(400, 'Invalid settings: block')
+    server.revisions[block] = (server.revisions[block] ?? 0) + 1
+    const applied = { ...proposal, status: 'applied' as const, decided_at: new Date().toISOString(), decided_by: 'panel',
+      applied_revision: server.revisions[block]! }
+    server.proposals = server.proposals.map(item => item.id === params.id ? applied : item)
+    return { revision: applied.applied_revision, restarting: false, proposal: applied }
+  } },
+  'POST settings/proposals/:id/reject': { answer: ({ params }) => {
+    const proposal = server.proposals.find(item => item.id === params.id)
+    if (!proposal) return refuse(404, 'Settings proposal not found')
+    if (proposal.status !== 'pending') return refuse(409, `Settings proposal ${params.id} is ${proposal.status}, not pending`)
+    const rejected = { ...proposal, status: 'rejected' as const, decided_at: new Date().toISOString(), decided_by: 'panel' }
+    server.proposals = server.proposals.map(item => item.id === params.id ? rejected : item)
+    return { proposal: rejected }
+  } },
   'GET memories': { query: ['q', 'project', 'sort', 'offset', 'limit'], answer: ({ query }) => {
     const needle = (query.q ?? '').toLowerCase()
     const project = query.project ?? ''

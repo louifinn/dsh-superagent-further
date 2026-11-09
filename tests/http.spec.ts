@@ -54,6 +54,40 @@ it('answers each kind of failure with its own status', async () => {
   expect(await call('POST', 'executor/pause', 'not json')).toEqual({ status: 400, body: { error: 'The request body is not JSON' } })
 })
 
+it('lists pending settings proposals and applies or rejects one for the panel', async () => {
+  const applied: string[] = []
+  const rejected: string[] = []
+  const pending = { id: 'pr-1234abcd', block: 'eval', base_revision: 0, value: {}, diff: [], reason: 'The person asked',
+    actor: 'master', status: 'pending', created_at: '2026-01-01T00:00:00.000Z', expires_at: '2026-01-08T00:00:00.000Z' }
+  const call = serve({
+    settings: {
+      proposals: () => ({ items: [pending] }),
+      applyProposal: async (id: string) => {
+        applied.push(id)
+        if (id === 'stale') throw new SettingsConflict('Settings changed. Reload before saving.')
+        return id === pending.id ? { revision: 1, restarting: false,
+          proposal: { ...pending, status: 'applied', decided_by: 'panel', applied_revision: 1 } } : undefined
+      },
+      rejectProposal: (id: string) => {
+        rejected.push(id)
+        return id === pending.id ? { ...pending, status: 'rejected', decided_by: 'panel' } : undefined
+      },
+    },
+  })
+  expect(await call('GET', 'settings/proposals')).toEqual({ status: 200, body: { items: [pending] } })
+  expect(await call('POST', `settings/proposals/${pending.id}/apply`)).toMatchObject({ status: 200,
+    body: { revision: 1, proposal: { status: 'applied', decided_by: 'panel' } } })
+  expect(await call('POST', `settings/proposals/${pending.id}/reject`)).toMatchObject({ status: 200,
+    body: { proposal: { status: 'rejected', decided_by: 'panel' } } })
+  expect(await call('POST', 'settings/proposals/pr-none/apply')).toEqual({ status: 404, body: { error: 'Settings proposal not found' } })
+  expect(await call('POST', 'settings/proposals/pr-none/reject')).toEqual({ status: 404, body: { error: 'Settings proposal not found' } })
+  expect(await call('POST', 'settings/proposals/stale/apply')).toEqual({ status: 409, body: { error: 'Settings changed. Reload before saving.' } })
+  expect(await call('POST', `settings/proposals/${pending.id}/apply`, undefined, { 'x-orchestrator-request': undefined }))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+  expect(applied).toEqual([pending.id, 'pr-none', 'stale'])
+  expect(rejected).toEqual([pending.id, 'pr-none'])
+})
+
 it('decodes path parameters and parses each route\'s query', async () => {
   const seen: unknown[] = []
   const call = serve({

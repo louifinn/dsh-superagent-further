@@ -7,7 +7,7 @@ import { LanguageSettings } from './language.tsx'
 import { PromptsPage } from './prompts.tsx'
 import { usePanel } from './provider.tsx'
 import { SETTINGS_GROUPS, settingsRoute, type SettingsGroup } from './route.ts'
-import { SettingsProvider } from './settings-kit.tsx'
+import { SettingsProposals, SettingsProvider } from './settings-kit.tsx'
 import { SourceSettings } from './source.tsx'
 
 const STAGE_GROUPS: readonly SettingsGroup[] = ['source', 'eval', 'execution']
@@ -34,6 +34,7 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
     </nav>
     <div className="dt-settings-body">
       <h2 className="dt-settings-title">{t(`settingsGroup.${group}`)}</h2>
+      {group !== 'prompts' && group !== 'deployment' && <SettingsProposals />}
       {content}
     </div>
   </div>

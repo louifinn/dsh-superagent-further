@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 17
+export const SCHEMA_VERSION = 18
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -193,6 +193,12 @@ export function migrateTo17(store: Store): void {
     if (next) step(name, () => { store.set(name, { ...version!, settings: next }) })
   }
 }
+/**
+ * Schema 18 adds the `settings_proposal` table for tier-B settings awaiting the operator's approval in the management
+ * panel (docs/011 A5.2). The Store creates the table before this runs, so no schema 17 record changes shape here; the step
+ * stays in the sequence so a later record rewrite that belongs to the proposals flow has one place to live.
+ */
+export function migrateTo18(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

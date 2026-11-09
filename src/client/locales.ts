@@ -956,6 +956,24 @@ const TEXT = {
   'wizardSkipped': ['已跳过设置向导，可随时从页面右上角重新打开。',
     'Setup wizard skipped; reopen it anytime from the page header.'],
   'wizardFinished': ['设置已完成。', 'Setup finished.'],
+  // Settings proposals: a tool may only propose tier-B changes; the operator approves or rejects them here.
+  proposalsTitle: ['待批设置提案', 'Pending settings proposals'],
+  proposalsIntro: ['工具只能提案；在这里批准后才会按普通保存流程写入，并记录提案、会话与理由。',
+    'Tools can only propose; approving here saves through the ordinary panel path and records the proposal, Session, and reason.'],
+  proposalBlock: ['设置块：{block}', 'Settings block: {block}'],
+  proposalReason: ['操作者的原话：{reason}', 'The operator\'s words: {reason}'],
+  proposalRequestedBy: ['由会话 {actor} 请求', 'Requested by Session {actor}'],
+  proposalExpires: ['到期时间：{time}', 'Expires {time}'],
+  proposalField: ['字段', 'Field'],
+  proposalFrom: ['当前值', 'Current'],
+  proposalTo: ['提案值', 'Proposed'],
+  proposalPending: ['待批', 'Pending'],
+  proposalApply: ['批准并保存', 'Approve and save'],
+  proposalReject: ['拒绝', 'Reject'],
+  proposalApplied: ['提案已批准并保存', 'Proposal approved and saved'],
+  proposalRejected: ['提案已拒绝', 'Proposal rejected'],
+  proposalError: ['保存失败：{error}', 'Saving failed: {error}'],
+  historyProposal: ['批准提案 {proposal}', 'Approved proposal {proposal}'],
 } as const satisfies Record<string, readonly [string, string]>
 export type DshSuperagentFurtherKey = keyof typeof TEXT
 const language = (index: 0 | 1) => Object.fromEntries(Object.entries(TEXT).map(([key, pair]) => [key, pair[index]])) as Record<DshSuperagentFurtherKey, string>
