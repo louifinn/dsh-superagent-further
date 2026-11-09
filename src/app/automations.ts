@@ -6,7 +6,8 @@
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import { LIMITS } from '../limits.ts'
-import type { AutomationAudit, AutomationRecord, AutomationRecords, AutomationHostStatus, AutomationScope } from './store.ts'
+import type { AutomationAudit, AutomationDelivery, AutomationRecord, AutomationRecords, AutomationHostStatus, AutomationScope } from './store.ts'
+import { AUTOMATION_DELIVERY_LIMIT } from './store.ts'
 
 /** The first line of every delivery prompt, and the prefix that marks a Host task as this plugin's installation automation. */
 export const AUTOMATION_MARKER_PREFIX = '[AUTOMATION '
@@ -169,6 +170,17 @@ export interface AutomationList { items: AutomationSummary[]; unrecorded: { id: 
 export interface AutomationConflict extends AutomationSummary { conflict: true; warning: string }
 /** What one startup reconciliation found. */
 export interface AutomationReconciliation { checked: number; orphaned: number; drifted: number; unrecorded: number }
+/** One recorded delivery event as the panel shows it; the task id is on the containing item. */
+export interface AutomationDeliveryView {
+  at: string
+  kind: 'delivered' | 'error' | 'orphaned'
+  scheduled_at: string | null
+  delivered_at: string | null
+  message_id: string | null
+  error: string | null
+}
+/** How many recent deliveries a panel item carries; the store keeps up to 50 per task. */
+export const AUTOMATION_HISTORY_SHOWN = 10
 
 /**
  * Builds the stable first lines and standing-instruction paragraph of a delivery prompt. A project-scope prompt carries the
@@ -197,6 +209,13 @@ function summaryOf(record: AutomationRecord): AutomationSummary {
 /** Whether a Host result is a refusal rather than a task. */
 const failed = (result: ScheduleTask | ScheduleFailure | { id: string; deleted: true }): result is ScheduleFailure =>
   'code' in result
+/** The panel form of one recorded delivery event. */
+function deliveryView(entry: AutomationDelivery): AutomationDeliveryView {
+  return {
+    at: entry.at, kind: entry.kind, scheduled_at: entry.scheduled_at, delivered_at: entry.delivered_at,
+    message_id: entry.message_id, error: entry.error,
+  }
+}
 /** Whether a Host result is a deletion acknowledgement. */
 const deleted = (result: ScheduleTask | ScheduleFailure | { id: string; deleted: true }): result is { id: string; deleted: true } =>
   !failed(result) && 'deleted' in result
@@ -312,6 +331,43 @@ export class Automations {
       return base
     }
   }
+  /** The newest recorded delivery events of one task, for the panel; failures and orphans carry their reason. */
+  history(id: string, limit = AUTOMATION_HISTORY_SHOWN): AutomationDeliveryView[] {
+    this.required(id)
+    return this.store.deliveries.list(id, limit).map(deliveryView)
+  }
+  /**
+   * Reads the Host catalog once and records deliveries observed since the last read, without bumping a record revision or
+   * writing an audit entry. The panel calls this before listing so a delivery that arrived since startup is visible in the
+   * history; when the Host cannot answer, the records are left untouched and the failure is only logged (docs/011 B3.4).
+   */
+  async refresh(): Promise<{ checked: number; observed: number }> {
+    let tasks: ScheduleTask[]
+    try {
+      tasks = await this.schedule.catalog()
+    } catch (error) {
+      this.logger?.warn('dsh-superagent-further could not refresh Host automation tasks: %s', String(error))
+      return { checked: 0, observed: 0 }
+    }
+    const byId = new Map(tasks.map(task => [task.id, task]))
+    const at = this.clock().toISOString()
+    let checked = 0, observed = 0
+    for (const record of this.store.records()) {
+      if (record.dsh_task === null) continue
+      const task = byId.get(record.dsh_task)
+      if (task === undefined) continue
+      checked += 1
+      const entries = await this.observedDeliveries(record, task, at)
+      if (entries.length === 0) continue
+      record.host_status = task.status
+      record.last_delivery_at = task.lastDelivery?.deliveredAt ?? record.last_delivery_at
+      record.next_at = task.scheduledAt ?? record.next_at
+      record.updated_at = at
+      this.store.saveWithHistory(record, entries)
+      observed += entries.length
+    }
+    return { checked, observed }
+  }
   /**
    * Updates a record and its Host task, refusing to overwrite a Host task that changed after the revision last read. Scope and
    * project are fixed at creation: create a task at the new scope instead of editing these fields.
@@ -345,10 +401,12 @@ export class Automations {
           record.last_delivery_at = live.lastDelivery?.deliveredAt ?? record.last_delivery_at
         }
         record.last_error = 'The Host task changed outside this plugin; review its schedule before editing again'
-        record.updated_at = this.clock().toISOString()
+        const at = this.clock().toISOString()
+        record.updated_at = at
         record.revision += 1
         this.audit(record, 'drifted', actor, record.last_error)
-        this.store.save(record)
+        this.store.saveWithHistory(record, [{ automation: record.id, at, kind: 'error', scheduled_at: record.next_at,
+          delivered_at: null, message_id: null, error: record.last_error }])
         return { ...summaryOf(record), conflict: true, warning: record.last_error }
       }
       this.orphan(record, actor, result.code === 'schedule_ended'
@@ -421,7 +479,12 @@ export class Automations {
       const metadata = status !== record.host_status || next !== record.next_at
         || (task?.lastDelivery?.deliveredAt ?? record.last_delivery_at) !== record.last_delivery_at
       const error = issues.length ? issues.join('; ') : null
-      if (metadata || error !== record.last_error || record.orphaned !== isOrphan) {
+      const entries = task === undefined ? [] : await this.observedDeliveries(record, task, at)
+      if (error !== null && error !== record.last_error) {
+        entries.push({ automation: record.id, at, kind: isOrphan ? 'orphaned' : 'error', scheduled_at: next,
+          delivered_at: null, message_id: null, error })
+      }
+      if (metadata || error !== record.last_error || record.orphaned !== isOrphan || entries.length > 0) {
         record.host_status = status
         record.next_at = next
         record.last_delivery_at = task?.lastDelivery?.deliveredAt ?? record.last_delivery_at
@@ -430,7 +493,7 @@ export class Automations {
         record.revision += 1
         this.audit(record, isOrphan ? 'orphaned' : isDrift ? 'drifted' : 'reconciled',
           'startup', error ?? 'Refreshed Host task metadata')
-        this.store.save(record)
+        this.store.saveWithHistory(record, entries)
       }
       if (issues.length && this.logger) this.logger.warn('dsh-superagent-further automation %s: %s', record.id, issues.join('; '))
     }
@@ -474,6 +537,36 @@ export class Automations {
       list,
     ].join('\n')
   }
+  /**
+   * The delivery events this plugin has not recorded yet. The Host's per-task history is authoritative and can include
+   * occurrences this plugin missed while it was not running; the catalog's `lastDelivery` is the fallback when the history
+   * cannot be read. The plugin keeps the same per-task bound as the Host history it asks for, so a long offline period
+   * collapses to the newest `AUTOMATION_DELIVERY_LIMIT` occurrences.
+   */
+  private async observedDeliveries(record: AutomationRecord, task: ScheduleTask, at: string): Promise<AutomationDelivery[]> {
+    const latest = task.lastDelivery?.deliveredAt
+    if (latest === undefined) return []
+    if (latest === record.last_delivery_at && this.store.deliveries.has(record.id, latest)) return []
+    const entries: AutomationDelivery[] = []
+    try {
+      const history = await this.schedule.history({ id: task.id, limit: AUTOMATION_DELIVERY_LIMIT })
+      if (!('code' in history)) {
+        // Record oldest first so the newest delivery keeps the highest row id and `list` (newest first) stays chronological.
+        for (const item of [...history.records].reverse()) {
+          if (this.store.deliveries.has(record.id, item.deliveredAt)) continue
+          entries.push({ automation: record.id, at, kind: 'delivered', scheduled_at: item.scheduledAt,
+            delivered_at: item.deliveredAt, message_id: item.messageId, error: null })
+        }
+      }
+    } catch (error) {
+      this.logger?.warn('dsh-superagent-further could not read the Host delivery history of %s: %s', task.id, String(error))
+    }
+    if (entries.length === 0 && !this.store.deliveries.has(record.id, latest)) {
+      entries.push({ automation: record.id, at, kind: 'delivered', scheduled_at: task.lastDelivery?.scheduledAt ?? null,
+        delivered_at: latest, message_id: task.lastDelivery?.messageId ?? null, error: null })
+    }
+    return entries
+  }
   /** Whether `id` still names a registered project, by the resolver or the recorded id list. */
   private projectExists(id: string): boolean {
     return this.projectOf(id) !== undefined || this.projects().includes(id)
@@ -486,12 +579,15 @@ export class Automations {
   }
   /** Marks one record orphaned and records why, without touching its Host task. */
   private orphan(record: AutomationRecord, by: string, detail: string): void {
+    const at = this.clock().toISOString()
+    const first = record.last_error !== detail
     record.orphaned = true
     record.last_error = detail
-    record.updated_at = this.clock().toISOString()
+    record.updated_at = at
     record.revision += 1
     this.audit(record, 'orphaned', by, detail)
-    this.store.save(record)
+    this.store.saveWithHistory(record, first ? [{ automation: record.id, at, kind: 'orphaned', scheduled_at: record.next_at,
+      delivered_at: null, message_id: null, error: detail }] : [])
   }
   /** Appends one audit entry, keeping only the newest `LIMITS.automationAudit`. */
   private audit(record: AutomationRecord, kind: AutomationAudit['kind'], by: string, detail: string): void {

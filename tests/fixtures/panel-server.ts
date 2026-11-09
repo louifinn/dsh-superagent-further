@@ -383,6 +383,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET automations': { answer: () => {
     if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
     return { service: true, items: server.automations, unrecorded: [],
+      attention: server.automations.filter(row => row.orphaned || row.last_error !== null).length,
       projects: server.settings.executor.projects.map(({ id, name }) => ({ id, name })) }
   } },
   'POST automations': { body: true, answer: ({ body }) => {
@@ -400,6 +401,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       next_at: null, last_delivery_at: null, last_error: null, revision: 0, created_at: at, updated_at: at,
       dsh_task: `schedule-${server.automations.length + 1}`,
       target_session: scope === 'project' ? `lead-${project}` : 'master',
+      history: [],
     }
     server.automations = [...server.automations, row]
     return row

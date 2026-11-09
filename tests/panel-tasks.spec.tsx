@@ -14,7 +14,7 @@ const row = (id: string, over: Partial<Row> = {}): Row => ({
   rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', enabled: true, orphaned: false, host_status: 'active',
   next_at: '2026-11-10T09:00:00.000Z', last_delivery_at: null, last_error: null, revision: 0,
   created_at: '2026-11-09T12:00:00.000Z', updated_at: '2026-11-09T12:00:00.000Z', dsh_task: 'schedule-1',
-  target_session: 'master', ...over,
+  target_session: 'master', history: [], ...over,
 })
 
 function projects() {
@@ -83,6 +83,41 @@ it('edits a task without re-targeting it, and toggles enabled from the table', a
   expect(server.automations[0]!.enabled).toBe(false)
   expect(server.requests.some(request => request.method === 'PUT' && request.body
     && (request.body as { enabled?: boolean }).enabled === false)).toBe(true)
+})
+
+it('shows the recent delivery history and flags an error without any other notice channel', async () => {
+  server.automations = [
+    row('auto-00000001', {
+      last_delivery_at: '2026-11-09T08:00:00.000Z',
+      last_error: 'The Host task changed outside this plugin; review its schedule before editing again',
+      history: [
+        { at: '2026-11-09T08:05:00.000Z', kind: 'orphaned', scheduled_at: '2026-11-10T09:00:00.000Z',
+          delivered_at: null, message_id: null, error: 'The Host task ended' },
+        { at: '2026-11-09T08:00:00.000Z', kind: 'delivered', scheduled_at: '2026-11-09T08:00:00.000Z',
+          delivered_at: '2026-11-09T08:00:00.000Z', message_id: 'm1', error: null },
+      ],
+    }),
+    row('auto-00000002'),
+  ]
+  await mount()
+  await click(tab(zh['tab.tasks']))
+  // The attention count is the page badge; this mission does not touch the tab bar.
+  expect(all('ul[data-attention="1"]')).toHaveLength(1)
+  expect(document.querySelector('[data-attention-item="auto-00000001"]')?.textContent)
+    .toContain('The Host task changed outside this plugin')
+  expect(document.querySelector('[data-automation="auto-00000001"]')?.getAttribute('data-attention')).toBe('true')
+  expect(document.querySelector('[data-automation="auto-00000002"]')?.getAttribute('data-attention')).toBeNull()
+  // The error reason is visible while the task is not orphaned; the old page showed it only for orphans.
+  expect(document.querySelector('[data-automation="auto-00000001"] [data-automation-reason]')?.textContent)
+    .toContain('The Host task changed outside this plugin')
+  const history = document.querySelector('[data-delivery-history="auto-00000001"]')!
+  expect(history.querySelectorAll('li')).toHaveLength(2)
+  // Newest first: the orphan event precedes the delivered one.
+  expect(history.querySelectorAll('li')[0]!.textContent).toContain(zh.automationOrphaned)
+  expect(history.querySelectorAll('li')[1]!.textContent).toContain(zh.automationDelivered)
+  expect(history.textContent).toContain('The Host task ended')
+  expect(text()).toContain(zh.automationAttentionHint)
+  expect(text()).toContain(zh.automationHistoryEmpty)
 })
 
 it('reports that the Host schedule service is unavailable instead of failing', async () => {

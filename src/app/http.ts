@@ -142,12 +142,17 @@ const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources:
 const setupState = (runtime: HttpHost): SetupState => ({ deployment: runtime.configured() ? runtime.deployment : undefined,
   problem: runtime.setupProblem, feishuProblem: runtime.feishuProblem })
 export type StateView = ReturnType<typeof stateView>
-/** The Automations page's response: the tasks, unrecorded Host tasks, and the projects a new task can target. */
+/** The Automations page's response: the tasks with their recent deliveries, unrecorded Host tasks, and the create form's projects. */
 async function automationsPage(runtime: HttpHost): Promise<AutomationsView> {
-  if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-  const list = await runtime.automations.list()
-  return { service: true, items: list.items, unrecorded: list.unrecorded,
-    projects: runtime.store.settings().executor.projects.map(({ id, name }) => ({ id, name })) }
+  const service = runtime.automations
+  if (service === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+  // Reading the Host once here records deliveries that arrived since startup; it does not bump revisions or audit.
+  await service.refresh()
+  const list = await service.list()
+  const items = list.items.map(item => ({ ...item, history: service.history(item.id) }))
+  return { service: true, items, unrecorded: list.unrecorded,
+    projects: runtime.store.settings().executor.projects.map(({ id, name }) => ({ id, name })),
+    attention: items.filter(item => item.orphaned || item.last_error !== null).length }
 }
 function ticketPage(runtime: HttpHost, id: string) {
   const detail = ticketDetail(views(runtime), id), ticket = runtime.store.tickets.get(id)
