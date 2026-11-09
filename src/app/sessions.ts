@@ -16,6 +16,7 @@ import { RetryHealth } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
+import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
 import { leadTools } from './tools/lead.ts'
 import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
@@ -29,7 +30,7 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
   readonly context: Context
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
@@ -129,14 +130,27 @@ export class Sessions {
   private readonly bindings = new Map<Agent, SessionBinding>()
   private readonly retryHealth = new RetryHealth()
   private readonly ctx: Context
+  /** Prompts a project's Lead about raised Project Requests and enforces the mandatory reply at its turn end. */
+  readonly lead: LeadDispatch
+  /** The Engine's project-request commands; assigned after the Runtime composes the Engine. */
+  private leadEngine?: LeadEngine
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
     this.ctx = host.context
     this.agentDelivery = new AgentDelivery(host.context)
+    this.lead = new LeadDispatch({ store: host.store, engine: () => {
+      if (!this.leadEngine) throw new Error('The Engine is not available for the Lead tools yet')
+      return this.leadEngine
+    }, ensureLead: async project => (await this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id,
+    prompt: (sessionId, requestId, text) => this.prompt(sessionId, requestId, text, 'queue'),
+    notify: (name, value, summary) => this.notify(name, value, summary),
+    warn: (message, error) => this.ctx.logger.warn('dsh-superagent-further %s: %s', message, String(error)) })
     // Deliver relays and notices to the main Session in the order they were queued.
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
   }
+  /** Gives the Lead dispatch and its tools the Engine's project-request commands once the Runtime has composed it. */
+  attachEngine(engine: LeadEngine): void { this.leadEngine = engine }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
     const ctx = this.ctx
@@ -165,7 +179,11 @@ export class Sessions {
       })
     })
     ctx.on('agent/status', ({ agent, status }) => {
-      if (status === 'idle' && !this.host.closing()) { this.retryHealth.clear(agent.id); this.updateModelHealth() }
+      if (status !== 'idle' || this.host.closing()) return
+      this.retryHealth.clear(agent.id); this.updateModelHealth()
+      // A Lead turn that ended with unanswered project requests is reminded, at most twice, then marked needs-attention.
+      const projectId = leadProjectOf(agent.id)
+      if (projectId !== undefined) void this.lead.turnEnded(projectId).catch(() => { /* the durable record stays for recovery */ })
     })
   }
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
@@ -348,9 +366,9 @@ export class Sessions {
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
     const register = this.registerTool(agent, binding)
-    // A Lead gets the preset's native tools (including delegation) plus its read-only project tools; an Executor Session
-    // gets the application tools its worker uses.
-    const tools = project ? leadTools(host.store, project) : host.tools(agent, ticket)
+    // A Lead gets the preset's native tools (including delegation) plus its project tools; an Executor Session gets the
+    // application tools its worker uses.
+    const tools = project ? leadTools({ store: host.store, lead: this.lead }, project) : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
       : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })

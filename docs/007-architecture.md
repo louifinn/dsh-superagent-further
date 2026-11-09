@@ -72,11 +72,11 @@ Each part extends `EnginePart` (`src/core/part.ts`), which provides options and 
 | `Assignments` | What the Executor and its workers report: an Assignment started, Inputs reached it or failed to, a restart interrupted it, and a worker's Report with its question for a person | Tickets, Replies |
 | `Replies` | Channel writes through the `Outbox`: the acknowledgement, the answer, the result and the attention message, each by the rule that allows it | Nothing |
 
-Project requests do not need a part: they live in the optional `projectRequests` repository. `raiseProjectRequest` records a worker's or a Lead's ask, and the Lead commands list, reply to, decide and complete one. They refuse with `ProjectRequestError` while that repository is absent, the request is unknown, or the change does not fit its status. A `disposeProjectRequest` accept records the decision only; creating the domain Request and its Tickets belongs to the Lead tools.
+Project requests do not need a part: they live in the optional `projectRequests` repository. `raiseProjectRequest` records a worker's ask, and the Lead commands list, reply to, decide and complete one. They refuse with `ProjectRequestError` while that repository is absent, the request is unknown, or the change does not fit its status. A `disposeProjectRequest` accept records the decision and, in its `notes`, the statement and deliverables the Lead planned; creating the domain Request and its Tickets from that plan is a later Engine command (docs/012-project-requests.md D5).
 
 Commands use imperative names such as `stopTicket`; facts reported by adapters use past-tense names such as `assignmentStarted`. The query `candidate` uses a noun.
 
-Callers receive only their role's `Pick` of the Engine: `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` or `EngineForExecutor`.
+Callers receive only their role's `Pick` of the Engine: `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` or `EngineForExecutor`. A project Lead calls the project-request subset of `EngineForMainSession` through `src/app/lead-dispatch.ts`; it is the same commands the main Session uses, not a sixth role.
 
 | Role | Method | Effect |
 | --- | --- | --- |
@@ -90,10 +90,10 @@ Callers receive only their role's `Pick` of the Engine: `EngineForSources`, `Eng
 | Main Session | `requestStatus(ticketId)` | Asks a waiting Executor Session for its status, and answers whether it asked |
 | Main Session | `note(ticketId, text)` | Gives a Ticket's Executor a fact from other work as a text Input, which grants nothing |
 | Main Session, Executor | `reply(request)` | Queues a message for the Channel its purpose names: `acknowledgement`, `answer`, `result` or `attention` |
-| Main Session | `listProjectRequests(filter?)` | The project requests the Lead may answer, optionally narrowed by `project` and `status`, oldest first |
-| Main Session | `replyProjectRequest(id, reply)` | Appends a Lead's reply to a request still open (`projectRequestOpen`), oldest first |
-| Main Session | `disposeProjectRequest(id, disposition)` | Answers a pending or `needs-info` request with a non-empty text and an `accept`, `reject` or `needs-info` decision, which it records after the reply |
-| Main Session | `completeProjectRequest(id, summary)` | Completes the work of an accepted or approved request with the Lead's summary |
+| Main Session, Lead | `listProjectRequests(filter?)` | The project requests the Lead may answer, optionally narrowed by `project` and `status`, oldest first |
+| Main Session, Lead | `replyProjectRequest(id, reply)` | Appends a Lead's reply to a request still open (`projectRequestOpen`), oldest first |
+| Main Session, Lead | `disposeProjectRequest(id, disposition)` | Answers a pending or `needs-info` request with a non-empty text and an `accept`, `reject` or `needs-info` decision, which it records after the reply |
+| Main Session, Lead | `completeProjectRequest(id, summary)` | Completes the work of an accepted or approved request with the Lead's summary |
 | Executor | `raiseProjectRequest(input)` | Records a worker's project request, or answers the open request that the same Ticket already has under the same project and title |
 | People | `stopTicket(ticketId, reason?)` | A person's stop, which withdraws the Mandate |
 | People | `retryTicket(ticketId)` | Ends the stalled Assignment of a Ticket that waits for a person after a `failed` or `blocked` Report, or whose Input delivery failed (`canRetry`), and starts a new one |
@@ -261,11 +261,11 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `Sessions` (`src/app/sessions.ts`) manages DeepSeek Harness Sessions for both roles. `ensure` creates a Session with its role's model. `install` follows agent events and registers prompts, skills and tools for managed Sessions.
 
-`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-further-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets one read-only application tool, `lead_status` (`src/app/tools/lead.ts`): its project, the open and recently ended Tickets, and the messages waiting for it. When the Host `schedule` service is installed, both the main Session and each Lead also carry the automation runtime context (`dsh-superagent-further-automation`, order 320): the main Session sees the installation tasks, while a Lead sees only its own project's report-only tasks. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
+`ensureLead` and `adoptLead` manage one persistent Lead Session per registered project: its id is `lead-<projectId>`, it runs the `dsh-superagent-further-lead` preset, its prompt comes from `composeLeadPrompt`, and its id is recorded in `KV.lead.sessions`. A Lead Session composes the shared rules and the Lead instructions with its project and gets five application tools (`src/app/tools/lead.ts`): `lead_status` reads its project, the open and recently ended Tickets and the messages waiting for it; `lead_requests` lists the project requests and unanswered worker reports; `lead_request_decide` answers one with the mandatory non-empty reply and records an `accept`, `reject` or `needs-info` decision, an accept carrying the statement and deliverables that the later Engine command turns into work; `lead_request_reply` appends a further reply without deciding; and `lead_request_complete` completes an accepted request with a summary. `LeadDispatch` (`src/app/lead-dispatch.ts`) sends the Lead the message for every raised request and every worker report that raised one, prompts it after the commit, delivers each of its replies back to the raising worker Session when that Session still exists, and enforces the activation boundary: when the Lead's turn ends with unanswered requests, it re-prompts with a reminder listing them at most twice (`REMINDERS`), then records a `needs-attention` notice through `lead_message` and `Sessions.notify` so the panel and the Orchestrator see it; the request stays pending. `Sessions.install` calls `turnEnded` when the Lead agent goes idle, and `reconcile` on startup re-prompts the messages that were waiting across a restart. When the Host `schedule` service is installed, both the main Session and each Lead also carry the automation runtime context (`dsh-superagent-further-automation`, order 320): the main Session sees the installation tasks, while a Lead sees only its own project's report-only tasks. The assignment tools and the executors it directs belong to the execution phase of `docs/010-project-orchestrator.md`.
 
 `Memories` (`src/app/memories.ts`) stores facts, decisions, preferences and lessons that outlive a Session: the main Session and each Lead get `memory_write`, `memory_search` and `memory_forget` (`src/app/tools/memory.ts`), the store deduplicates content by scope and text, and that text travels in the runtime-context snapshot (pinned plus the most recent items, rebuilt for every model request within its character budget, appended after the cached history when it changes rather than rewriting the system prompt); the main Session sees the whole installation while a project Lead's tools and snapshot are scoped to its own project. An ended Request is remembered installation-wide, so it is Orchestrator-only by the same rule. A Ticket and a Request are also remembered deterministically when they end, derived from the stored record rather than a model call. Every decorated Session also carries the operator's default language in a second runtime-context contribution (`dsh-superagent-further-language`, order 310), so a change on Settings → Language applies to the next model request without a restart.
 
-`prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
+`prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived. A project Lead's request prompts do not add a new effect kind: `LeadDispatch` calls `Sessions.prompt` directly after the raising write commits, and the durable `lead_message` rows plus `reconcile` cover a restart, so no new handler is needed while `effect` keeps its five kinds. Lead notices (`notify` under `lead-attention:<request>`) still travel through the `notice` effect and show in the panel.
 
 Each model request binds the Session to the current prompt revision. The revisions it used are stored durably: `promptVersion` identifies the active one and `mayRead` restricts which versions a worker can inspect. Registrations are tracked in one map per agent.
 
@@ -277,7 +277,8 @@ Each model request binds the Session to the current prompt revision. The revisio
 | --- | --- |
 | `src/app/runtime.ts` | The composition root: builds the parts with the interfaces they use, registers the routes and the Source host, and starts and stops dsh-superagent-further |
 | `src/app/notices.ts` | Domain events and worker reports into notices and relays for the main Session |
-| `src/app/tools/main.ts`, `src/app/tools/executor.ts` | Tool arguments of the main Session and the Executor Sessions into calls of the core classes, and their results into cards |
+| `src/app/lead-dispatch.ts` | Raised project requests and unanswered worker reports into Lead prompts and durable `lead_message` records, the Lead's disposition back to the raising Session, and the bounded `needs-attention` fallback at the Lead activation boundary |
+| `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
 | `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, and messages into CLI calls |
@@ -356,8 +357,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/project-requests.ts` | `ProjectRequests`: the Store's project-request repository, by id and by project in the order they were raised |
 | `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, 15 to 16 adds the `memory` table the Store creates, 16 to 17 removes the GitHub Source's own `repository` setting because the first registered project supplies the primary repository, 17 to 18 adds the `settings_proposal` table the Store creates, 18 to 19 adds the `automation` table the Store creates, 19 to 20 adds the `automation_delivery` table the Store creates, and 20 to 21 adds the `project_request` table the Store creates |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
+| `src/app/lead-dispatch.ts` | `LeadDispatch`: prompts a project Lead for raised project requests and unanswered worker reports, delivers its replies back to the raising Session, and enforces the mandatory reply at the Lead activation boundary with two reminders and then a `needs-attention` notice; `projectRequestView` shapes a request for the Lead's tools |
 | `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
-| `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
+| `src/app/tools/lead.ts` | The Lead's application tools: `lead_status`, `lead_requests`, `lead_request_decide`, `lead_request_reply` and `lead_request_complete` over its project, its Tickets, its project requests and the worker reports waiting for it |
 | `src/memory.ts` | The memory schemas: scope, kind, tags, source, pinning, expiry and the content hash that deduplicates a write |
 | `src/app/memories.ts` | `Memories`: the facts, decisions, preferences and lessons that outlive a Session, searched by the memory tools and rendered into the main Session's and each Lead's runtime-context snapshot |
 | `src/app/automations.ts` | `Automations`: installation- and project-scope automation records around the Host `schedule` service — validation, project registration, ensuring the target Lead Session, the delivery envelope and the report-only rule, the record/Host compensation order, enable/disable through `edit`, manual `run` that asks the Host to deliver once now, `remove` that deletes the Host task, record and history, drift and orphan reconciliation by recorded project id and target, the newest-50 delivery history per task and the `refresh` that backfills it from the Host `history` without a revision bump, and the main Session's and each Lead's `## automations` runtime context; the panel's `GET`/`POST`/`PUT`/`DELETE automations` and `POST automations/:id/run` routes call the same service |
@@ -373,7 +375,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
-| `src/app/sessions.ts` | Sessions |
+| `src/app/sessions.ts` | Sessions, and the Lead dispatch it attaches to the Engine and calls at each Lead turn end |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
@@ -386,7 +388,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/resources.ts` | `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role |
 | `src/app/tools/tool.ts` | The `Tool` type, `readTool`, the `orchestrator_read` of both roles, and `AcknowledgementSchema` |
 | `src/app/tools/main.ts` | The main Session's tools |
-| `src/app/tools/executor.ts` | An Executor Session's tools |
+| `src/app/tools/executor.ts` | An Executor Session's tools, including `request_create` and the `requests` a report names |
 | `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, request limits and one status per kind of failure |
 | `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
 | `src/app/views/text.ts` | The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` |
@@ -466,7 +468,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/projects.spec.ts` | Project validation: absolute workspaces, unique IDs and workspaces, and that a tool-originated save cannot change the list |
 | `tests/lead-dispatch.spec.ts` | The activation request of a Lead-hosted executor, and the activations a host holds, settles and disposes |
 | `tests/lead-messages.spec.ts` | Lead message records: one record per recipient and request id, project listings and undelivered messages, delivery and acknowledgement, and surviving a reopen from schema 12 |
-| `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
+| `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, the Lead tools, and one recovered Lead Session per registered project |
+| `tests/lead.spec.ts` | The project-request loop: a worker's `request_create` and its idempotent duplicate, a parent and its derived request, the prompt that reaches the project Lead, a finished report refused until it names the requests it leaves unanswered, the Lead's mandatory non-empty reply with decide/reply/complete, the reply delivered to the raising Session, and the activation boundary's two reminders followed by a bounded `needs-attention` notice |
 | `tests/memories.spec.ts` | Memories: scope and deduplication, browsing by keyword, project and order with pinned rows first and limited windows for paging, pinning, search, forget and expiry, the current schema, the snapshot's budget, the panel switches and limits, and retention that ages out only automatic records |
 | `tests/github-labels.spec.ts` | GitHub label changes: repository spelling, no-op adds, case-insensitive removes, project repositories, unknown labels refused, absent removes refused, contradictory changes refused, non-labelable Triggers refused |
 | `tests/files.spec.ts` | Workspace file resolution: a file inside a workspace, backslashes, and the refusals of absolute, parent, dot and repeated-separator paths, directories and missing files |
@@ -536,7 +539,7 @@ One SQLite file, `<stateDir>/orchestrator.sqlite`, which only the Store opens.
 | `trigger_thread` | Which Threads each Trigger is on, with its time and whether a person wrote it, so a Thread's Triggers are read without scanning every Trigger, in order of time and then id: a page of a Thread's timeline continues from a `<at>|<id>` cursor, and Triggers that share a time are not skipped | Store, with each Trigger |
 | `thread` | Threads: Subscriptions, the Tickets that follow it for context, queued Triggers, the Eval in progress, the count of its expiries and `meta`; the generated columns `active`, set while Triggers are queued or an Eval runs, and `subscribed`, its Source while a Ticket subscribes to it | Engine; Sources write `meta` |
 | `ticket` | Tickets with their Mandate, origin, execution, Assignments, Channels, Inputs and the Threads they follow; the generated columns `open`, set while it has not ended, and `active`, set while Inputs are undelivered or the latest Assignment is pending or running | Engine |
-| `project_request` | Project requests: the project, kind and title, who raised it with its Ticket and Assignment, the status, the Lead's replies and decision, the Request an acceptance created, the Tickets it covers and the derived requests that name it as root, the approval of an architecture request, and its times; the columns `project` and `status` serve the listings | Engine |
+| `project_request` | Project requests: the project, kind and title, who raised it with its Ticket and Assignment, the status, the Lead's replies and decision, the Request an acceptance creates, the Tickets it covers and the derived requests that name it as root, the approval of an architecture request, and its times; the columns `project` and `status` serve the listings | Engine |
 | `decision` | Decisions, by Thread | Engine |
 | `effect` | The effect queue: per kind and key, the payload, its order, failed attempts with the last error, and when it is due | Effects; the schema 11 migration queues what earlier versions kept for the main Session |
 | `outbox` | The receipt of each message for a Channel, by id, with the Ticket it is for and its `status`, `pending`, `sent` or `dropped`, kept so an id is never queued twice; for a dropped message, when and why, as the generated column `dropped`, its time, and a reason code. A message that waits has a `reply` effect, which holds its attempts | The Outbox |
@@ -600,18 +603,19 @@ Existing main Sessions on `standard` also need explicit timeouts for foreground 
 
 ### Executor tools
 
-Each Executor has six application tools:
+Each Executor has seven application tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `orchestrator_read` | Read resources available to its own Ticket |
 | `orchestrator_ack` | Acknowledge a request |
-| `orchestrator_report` | Report progress or an outcome, binding a pull request under the pull-request rules |
+| `orchestrator_report` | Report progress or an outcome, binding a pull request under the pull-request rules; its `requests` names the project requests the report leaves for the Lead to answer |
+| `request_create` | Raise a project request when the Ticket cannot finish without a decision, a new deliverable or another project's help: a title, an instruction, an optional kind and parent, and evidence; the project comes from the Ticket, and one open request per Ticket and title means a repeat returns the open request |
 | `orchestrator_thread_unrelated` | Drop an unrelated attached Thread, hand back its owned follow-ups and tell the main Session why |
 | `orchestrator_thread_follow` | Subscribe to a related Thread for context and tell the main Session |
 | `orchestrator_trigger_handback` | Hand back a message once, with a reason carried by its candidate |
 
-A hand-back returns `queued: false` if another Ticket still owns the message, or this Ticket never owned it. For example, a bot message went to Eval independently.
+A hand-back returns `queued: false` if another Ticket still owns the message, or this Ticket never owned it. For example, a bot message went to Eval independently. A report that ends the Ticket may not leave an open request of that Ticket unanswered: it names each one in `requests`, and the Lead gets a report message for each request so its reply and the report stay together.
 
 The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
 

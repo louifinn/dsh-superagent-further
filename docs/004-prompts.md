@@ -60,7 +60,7 @@ The environment section gives the main Session deployment-wide values and each E
 
 Executors also read DeepSeek Harness's coding prompt and the repository's `AGENTS.md`; the main Session does not. An inferred Ticket adds a final note limiting its Executor to the matched rules. Assignments and incoming messages arrive inline as Trigger cards, with resource pointers only for truncated content.
 
-A Lead Session (see `docs/010-project-orchestrator.md`) is assembled from the shared instructions, the `runtime/lead` part, the team sections, subscriptions and replies, the environment, and a project section that names the project, its local clone, its repository and its base branch; it reads no admission, Policy or work instructions, and its tools are the preset's plus the read-only `lead_status`.
+A Lead Session (see `docs/010-project-orchestrator.md`) is assembled from the shared instructions, the `runtime/lead` part, the team sections, subscriptions and replies, the environment, and a project section that names the project, its local clone, its repository and its base branch; it reads no admission, Policy or work instructions, and its tools are the preset's plus `lead_status`, `lead_requests`, `lead_request_decide`, `lead_request_reply` and `lead_request_complete`. The Lead prompt also carries the project-request rules: every request needs a non-empty reply, an accept names the statement and deliverables the work must carry, and a request left pending when a Lead turn ends is reminded at most twice before it is marked needs-attention.
 
 Executors work unattended. Their tools exclude those that ask a person, present UI to them or change the profile, such as `ask_user_question`, `present` and `plugin_manager`.
 

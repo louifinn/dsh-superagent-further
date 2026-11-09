@@ -1,9 +1,17 @@
-/** Lead application tools: what a project Lead can read about the project it serves. */
+/** Lead application tools: the project a Lead serves, and the Project Requests it must answer. */
 import { z } from 'zod'
-import { ticketStage, type Ticket } from '../../core/index.ts'
+import { ticketStage, type ProjectRequest, type Ticket } from '../../core/index.ts'
 import type { Project } from '../../projects.ts'
+import type { LeadDispatch } from '../lead-dispatch.ts'
+import { projectRequestView } from '../lead-dispatch.ts'
 import type { Store } from '../store.ts'
 import { tool, type Tool } from './tool.ts'
+
+/** Host dependencies of the Lead tools: the Store's project records and the Lead dispatch that owns disposition. */
+export interface LeadToolsHost {
+  readonly store: Pick<Store, 'tickets' | 'leads' | 'projectRequests'>
+  readonly lead: LeadDispatch
+}
 
 /** What one Ticket looks like to its project's Lead: the stage a person sees and the executor's latest state. */
 function row(ticket: Ticket) {
@@ -11,26 +19,110 @@ function row(ticket: Ticket) {
     executor: ticket.assignments.at(-1)?.state ?? 'none', ...ticket.ended === undefined ? {} : { ended: ticket.ended.outcome } }
 }
 
+/** A Project Request of this Lead's project, refusing one that is unknown or belongs to another project. */
+function requestOf(host: LeadToolsHost, project: Project, id: string): ProjectRequest {
+  const request = host.store.projectRequests.get(id)
+  if (!request) throw new Error(`Unknown project request ${id}`)
+  if (request.project !== project.id) throw new Error(`Project request ${id} belongs to project ${request.project}, not ${project.id}`)
+  return request
+}
+
+/** The statuses a Lead may filter its request list by. */
+const STATUS = z.enum(['pending', 'needs-info', 'accepted', 'rejected', 'awaiting-approval', 'approved', 'completed', 'withdrawn'])
+
 /**
- * The tools a project's Lead Session gets. `lead_status` is read-only: a Lead learns the Tickets of its project and the
- * messages waiting for it, which is what it needs to answer a person without guessing from the conversation alone.
+ * The tools a project's Lead Session gets. `lead_status` and `lead_requests` read the project; the other three record
+ * the mandatory reply: a disposition (with the plan an accept carries), an extra reply, or completion.
  */
-export function leadTools(store: Pick<Store, 'tickets' | 'leads'>, project: Project): Tool[] {
+export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
   return [tool({
     name: 'lead_status',
     description: 'Read the project this Lead serves: its local clone, repository and base branch, the open and recently ended '
       + 'Tickets of the project, and the messages waiting for the Lead.',
     schema: z.object({}).strict(),
     execute: async () => {
-      const open = store.tickets.open().filter(ticket => ticket.project === project.id)
-      const ended = store.tickets.list().filter(ticket => ticket.project === project.id && ticket.ended !== undefined).slice(-10)
+      const open = host.store.tickets.open().filter(ticket => ticket.project === project.id)
+      const ended = host.store.tickets.list().filter(ticket => ticket.project === project.id && ticket.ended !== undefined).slice(-10)
       return {
         project: { id: project.id, name: project.name, workspace: project.workspace, repository: project.repository,
           branch: project.branch === '' ? 'the repository default branch' : project.branch },
         tickets: { open: open.map(row), ended: ended.map(row) },
-        messages: store.leads.waiting('lead', project.id)
+        messages: host.store.leads.waiting('lead', project.id)
           .map(message => ({ kind: message.kind, request: message.requestId, ...message.ticketId === undefined ? {} : { ticket_id: message.ticketId }, body: message.body })),
       }
+    },
+  }), tool({
+    name: 'lead_requests',
+    description: 'Read the Project Requests of this project: the recent ones with who raised them and their replies, the pending '
+      + 'ones still unanswered, the worker reports awaiting a reply, and requests marked needs-attention.',
+    schema: z.object({
+      status: STATUS.optional().describe('Only requests in this status; omit for the recent requests of every status.'),
+    }).strict(),
+    execute: async ({ status }: { status?: z.infer<typeof STATUS> }) => {
+      const requests = host.store.projectRequests.list(project.id).filter(request => status === undefined || request.status === status)
+      const unanswered = host.lead.unanswered(project.id)
+      const reports = host.lead.unansweredReports(project.id)
+      return {
+        project: project.id,
+        requests: requests.slice(-30).reverse().map(projectRequestView),
+        unanswered: unanswered.map(request => ({ id: request.id, title: request.title, kind: request.kind, status: request.status,
+          raised_by: request.raised_by, created_at: request.created_at })),
+        reports: reports.map(message => ({ request_id: message.requestId.slice('worker-report:'.length),
+          ...message.ticketId === undefined ? {} : { ticket_id: message.ticketId }, at: message.at,
+          delivered: message.deliveredAt !== undefined, body: message.body })),
+        attention: host.lead.attention(project.id).map(message => ({ request_id: message.requestId.slice('lead-attention:'.length),
+          ...message.ticketId === undefined ? {} : { ticket_id: message.ticketId }, at: message.at, body: message.body })),
+      }
+    },
+  }), tool({
+    name: 'lead_request_decide',
+    description: 'Decide one project request with the reply it requires. On accept, name the statement and deliverables the work '
+      + 'should carry. The reply reaches the Session that raised the request when it still exists.',
+    schema: z.object({
+      id: z.string().trim().min(1).describe('The project request id, as lead_requests lists it.'),
+      action: z.enum(['accept', 'reject', 'needs-info']).describe('accept starts the work, reject declines it, needs-info asks the raiser for more.'),
+      reply: z.string().trim().min(1).max(8_000).describe('The required non-empty reply, in the language of the request.'),
+      statement: z.string().trim().min(1).max(8_000).optional().describe('accept: the instruction the accepted work follows.'),
+      deliverables: z.array(z.object({ project: z.string().trim().min(1).max(40).nullish(), title: z.string().trim().min(1).max(200).nullish(),
+        after: z.array(z.number().int().min(0)).nullish() }).strict()).max(8).optional()
+        .describe('accept: one entry per delivery unit; `after` names earlier indexes it waits on. This project is the default project.'),
+      notes: z.string().trim().min(1).max(4_000).optional().describe('Optional reason or constraint recorded with the decision.'),
+    }).strict(),
+    execute: async (input: { id: string; action: 'accept' | 'reject' | 'needs-info'; reply: string; statement?: string;
+      deliverables?: { project?: string | null; title?: string | null; after?: number[] | null }[]; notes?: string }) => {
+      const request = requestOf(host, project, input.id)
+      // An accepted project request's work stays in this project (docs/012 D2), so a deliverable naming another project is refused here too.
+      if (input.action === 'accept') {
+        for (const [index, item] of (input.deliverables ?? []).entries()) {
+          if (item.project && item.project !== project.id) throw new Error(`Deliverable ${index} belongs to project ${item.project}, not ${project.id}`)
+        }
+      }
+      const result = await host.lead.decide(request, input)
+      return { ...projectRequestView(result.request), reply_delivered: result.delivered }
+    },
+  }), tool({
+    name: 'lead_request_reply',
+    description: 'Add a reply to an open project request without deciding it, when the raiser needs an answer rather than a '
+      + 'disposition. The reply reaches the Session that raised the request when it still exists.',
+    schema: z.object({
+      id: z.string().trim().min(1).describe('The project request id.'),
+      reply: z.string().trim().min(1).max(8_000).describe('The reply, in the language of the request.'),
+    }).strict(),
+    execute: async ({ id, reply }: { id: string; reply: string }) => {
+      const result = await host.lead.reply(requestOf(host, project, id), reply)
+      return { ...projectRequestView(result.request), reply_delivered: result.delivered }
+    },
+  }), tool({
+    name: 'lead_request_complete',
+    description: 'Mark an accepted project request completed with a summary, and tell the Session that raised it. The origin-channel '
+      + 'result is reported separately.',
+    schema: z.object({
+      id: z.string().trim().min(1).describe('The accepted project request id.'),
+      summary: z.string().trim().min(1).max(8_000).describe('What was completed, in the language of the request.'),
+    }).strict(),
+    execute: async ({ id, summary }: { id: string; summary: string }) => {
+      const result = await host.lead.complete(requestOf(host, project, id), summary)
+      return { ...projectRequestView(result.request), reply_delivered: result.delivered }
     },
   })]
 }
