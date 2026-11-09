@@ -333,3 +333,23 @@ The operator asked on 2026-11-09 for a triage rule and for design decision docum
 - [x] Docs: [002 Authorization](002-authorization.md) lists all sixteen categories, the triage boundary and the design rule's Feishu path; [005 Panel](005-panel.md) and [007 Architecture](007-architecture.md) describe the enabled set, the `sendFile` contract and its runtime/tool path; `docs/011-capabilities.md` records Part D with its limits. Covered by `tests/docs.spec.ts`.
 - [x] `pnpm check` green, including the new file, Feishu delivery and triage tests.
 
+## Sprint 22 checklist (in progress)
+
+The operator asked on 2026-11-10 for project-level Requests raised by workers and disposed by a project Lead, for a
+mandatory Lead reply that is never ignored, for architecture work to run through a human approval gate, for a DSH
+Session outside the SuperAgent setup to submit a Request and always receive a reply, and for an explicit whitelisted
+mention or direct message to always be answered. The design spec is `docs/012-project-requests.md` (D1–D10); the Tower
+mission chain M13–M18 implements it in order, each mission merging only after its tests and `pnpm check` pass.
+
+- [ ] Schema 21: the `project_request` record, its store repository, migration and unit tests; no tools yet.
+- [ ] Worker and Lead tools: `request_create` and report `requests`, the Lead disposition and reply tools, and the
+  mandatory-reply enforcement at the Lead activation boundary, with prompts and tests.
+- [ ] Aggregate origin-channel report when a root project Request and all its derived work end; explicit (whitelisted
+  mention or direct message) Triggers always receive a reply, whatever the decision.
+- [ ] Architecture flow: design Ticket, human approval gate on the root channel, approval record and the
+  implementation Request only after approval.
+- [ ] External DSH Session bridge through a `session` Source kind and a submission tool, with the always-reply and
+  completion-report contract; if the DSH Host exposes no usable API the survey records the exact blocker.
+- [ ] Docs, CHANGELOG and README counts updated; `pnpm check` green; six-combination CI green; live smoke of the
+  project Request and approval round trip.
+
