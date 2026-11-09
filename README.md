@@ -49,14 +49,16 @@ unchanged from the prototype; this fork extends it to the project layer, operati
    request or a written rule the team configured.
 3. **Accepts.** Accepted work becomes a **Request** — the human ask — and one or more **Tickets**, one per
    delivery unit and per project. The Request carries the acknowledgement and the final result; each Ticket
-   carries its checkout, Lead, executor and pull request. A Ticket that no registered project can own is refused
+   carries its deliverable contract, Lead and executor, plus its checkout and pull request when the work is a
+   change. A Ticket that no registered project can own is refused
    at acceptance with a pointer to **Execution → Projects**.
-4. **Executes.** Each Ticket gets a worktree from its project's local clone and runs as a hidden subagent of that
-   project's **Lead** Session. Inputs, status requests and reports pass through the Lead, and a person may also talk
-   to the Lead directly.
-5. **Delivers.** The worker opens a pull request and reports it. A person reviews and merges. The Source observes
-   the merge, the Ticket ends `merged`, and the Request reports one result. Failures stay visible: health, the reply
-   queue, the outbox and the log all name what is stuck and what the operator can do next.
+4. **Executes.** A `change` Ticket gets a worktree from its project's local clone; an `answer` Ticket reads that
+   live clone read-only. Both run as a hidden subagent of the project's **Lead** Session. Inputs, status requests
+   and reports pass through the Lead, and a person may also talk to the Lead directly.
+5. **Delivers.** For a `change` Ticket the worker opens a pull request and reports it; a person reviews and merges,
+   the Source observes the merge, the Ticket ends `merged`, and the Request reports one result. For an `answer`
+   Ticket the ready report is the deliverable and ends the Ticket as `completed`. Failures stay visible: health, the
+   reply queue, the outbox and the log all name what is stuck and what the operator can do next.
 
 ## Quick start
 
@@ -136,7 +138,7 @@ That direction was settled on 2026-11-08 and the analysis for a later segmented 
 The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
 fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
 execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **223 files, +20,957 / −1,589** at the current head (the first release on this line was `0.2.0`), and
+(`8c32a9d`) is **223 files, +20,982 / −1,589** at the current head (the first release on this line was `0.2.0`), and
 the local history started from a byte-identical import, so every change below was made by this fork.
 
 | Area | Prototype | This fork | Why |
@@ -145,13 +147,14 @@ the local history started from a byte-identical import, so every change below wa
 | Scale | One repository, one host, one state dir | Many projects polled by one Source, per-project checkouts and Leads, per-project concurrency; one host at a time enforced | Teams work in several repositories; a second profile or a second agent would be more concepts and more noise |
 | Execution | Root worker Session per Ticket | Orchestrator → persistent Lead per project → hidden executor subagents, adoption after restart | Cleaner Session list, project context that persists, and a total Orchestrator free of project labour |
 | Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
+| Deliverable contract | A Ticket was implicitly one delivery: a ready report ended it as completed whether or not a pull request existed | Each Ticket carries `deliverable: change` or `answer`; `change` gets a branch and worktree and ends only through a followed pull request (its ready report names the PR), `answer` reads the project's live checkout read-only and ends as `completed` | Answer-only work should not pay for a branch it can never merge, and a change that never opened a PR must not report success |
+| Agent-raised work | Work entered only from a Source event accepted under the person's Policy | Workers, project Leads, installation automations and independent DSH Sessions can raise work as durable requests; every path records its origin, must reply, and cannot bypass Policy or admission | The agent must be able to start work it discovers without turning its own report into authority |
 | State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 22`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
 | Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md), [010 Project-level orchestrator](docs/010-project-orchestrator.md), [011 Capabilities](docs/011-capabilities.md), [012 Project requests](docs/012-project-requests.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions and their reasons must be readable without the interview that produced them |
 | Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs | Unattended use needs visible, scriptable operations on every platform |
 | Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest | "Every failure visible" means an operator can see the trend, not only the state |
 | Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
 | Engineering | No CI, no release, no changelog; tests assumed POSIX | `check.yml` (3 OS × Node 22/24), `smoke.yml` (real macOS host), `release.yml` (tagged tarball), `.gitattributes`, semver/CHANGELOG, reproducible `verify-install` | Platform regressions and unverifiable installs are exactly the failures a daily tool cannot afford |
-| Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md), [010 Project-level orchestrator](docs/010-project-orchestrator.md), [011 Capabilities](docs/011-capabilities.md), [012 Project requests](docs/012-project-requests.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions and their reasons must be readable without the interview that produced them |
 
 ### Platforms and deployment
 
@@ -197,8 +200,9 @@ domain still has Sources, Threads, Triggers, Tickets, Assignments, Reports and A
 bound to one project, with (1) its own prompt section carrying the project's clone, repository and base branch,
 (2) the preset tools it uses to reach and message its child executors — an executor's input is delivered
 through it, not by prompting a Session it owns — (3) `lead_status` and the project-request tools
-(`lead_requests`, `lead_request_decide`, `lead_request_reply`, `lead_request_complete`,
-`lead_request_approval`, `lead_request_approve`), (4) dispatch records in `lead_message`, schema 13, and
+(`lead_requests`, `lead_request_create`, `lead_request_decide`, `lead_request_reply`, `lead_request_complete`,
+`lead_request_approval`, `lead_request_approve`, `lead_request_escalate`), (4) dispatch records in `lead_message`,
+schema 13, and
 (5) no way to change Policy or settings.
 Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. A worker raises a project request
 when its Ticket needs a decision, a new deliverable or another project's work, and the Lead must answer it. The panel
@@ -225,20 +229,27 @@ information records the reply and changes nothing else. An unanswered request is
 needing attention, and the Lead closes a root request with one aggregate report on the channel the chain started
 from. Architecture requests take one extra step: a design Ticket produces a proposal, a person approves it on the
 root Thread, and only then does the implementation Request exist. An independent DSH Session can also submit work
-through the `session` Source and always receives an answer.
+through the `session` Source and always receives an answer. Automation deliveries extend the same upwards path: the
+main Session turns an installation automation delivery into an installation Request (`orchestrator_request_create`),
+and a Lead escalates work outside its project for the Orchestrator to decide (`lead_request_escalate` →
+`orchestrator_escalations` → `orchestrator_escalation_decide`), whose reply goes back to the Lead and whose acceptance
+creates the installation Request with `escalation` provenance.
 
 ### Operations, state and recovery
 
-- **Migrations** — schemas 11–21 reshape records, fill Ticket projects, add Lead messages, add Requests, end
+- **Migrations** — schemas 11–22 reshape records, fill Ticket projects, add Lead messages, add Requests, end
   Requests of already-ended Tickets, add the cross-Session memory table, remove the retired GitHub `repository`
-  setting, and add the settings-proposal, automation, automation-delivery and project-request tables. Each step runs in the opening
+  setting, add the settings-proposal, automation, automation-delivery and project-request tables, and write every
+  Ticket's deliverable contract (`change` for open Tickets and for an ended Ticket with a followed pull request,
+  `answer` otherwise). Each step runs in the opening
   transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
   too-new database visible instead of mysterious.
 - **One host** — the state lock message names the other host, its state directory and the switch command; an
   orchestrator Session held by a live DeepSeek Harness process is explained instead of retried forever. The in-app
   host applies the worker environment process-wide, which 006 states plainly because it changes who `gh` is in every
   Session of that application.
-- **Checkouts** — every Ticket gets a worktree and an `agent/` branch from its project clone; finished worktrees are
+- **Checkouts** — a `change` Ticket gets a worktree and an `agent/` branch from its project clone; an `answer` Ticket
+  reads the project's live clone under a read-only permission preset and opens no branch. Finished worktrees are
   reclaimed after `worktreeKeepDays` (default 7) by the host every six hours, and `scripts/clean-worktrees` previews
   or applies the same rule for an operator. Disk growth is a failure mode, so it is automated.
 - **Retries** — the outbox retries with backoff and exposes attempts, the reply queue shows the oldest wait and the
@@ -342,6 +353,9 @@ manual for a running installation is 006.
 - [009 Roadmap](docs/009-roadmap.md): from research prototype to daily use, and what the fork has landed
 - [010 Project-level orchestrator](docs/010-project-orchestrator.md): the Orchestrator → Lead → Worker design and its
   decisions
+- [011 Capabilities](docs/011-capabilities.md): the decision record for labels, file delivery, project requests,
+  installation self-bootstrap and Lead escalation
+- [012 Project requests](docs/012-project-requests.md): the design of project requests, escalations and installation work
 - [AGENTS.md](AGENTS.md): instructions for coding agents working in this repository
 - [docs/agents/domain.md](docs/agents/domain.md): the engineering-skills scaffolding used with coding agents
 

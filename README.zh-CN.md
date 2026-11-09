@@ -41,12 +41,13 @@ dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，
 2. **判断。** 只有当事件直接指向智能体、且来自团队允许的人时，它才会成为触发（Trigger）。主会话把触发当作**数据**
    评估，而不是当作指令；接受工作必须有明确的请求，或团队配置过的书面规则。
 3. **接受。** 被接受的工作成为一个 **Request**（人的请求）以及一张或多张 **Ticket**（按交付单元、按项目划分）。
-   Request 承载确认与最终结果；每张工单承载自己的检出目录、Lead、执行器与 pull request。没有已登记项目能承接的
-   工单会在接受阶段被拒绝，并提示去 **Execution → Projects** 登记项目。
-4. **执行。** 每张工单从所属项目的本地 clone 获得一个工作树，并作为该项目 **Lead** 会话的隐藏子智能体运行。输入、
-   状态请求与报告都经由 Lead 传递；人也可以直接和 Lead 对话。
-5. **交付。** 执行器（worker）开出 pull request 并报告。人评审并合并后，来源观察到合并，工单以 `merged` 结束，
-   Request 只报告一次结果。失败始终可见：健康状态、回复队列、发件箱与日志都会说明卡在哪里，以及运维者接下来能做什么。
+   Request 承载确认与最终结果；每张工单承载自己的交付契约、Lead 与执行器，变更类工单还承载检出目录与 pull
+   request。没有已登记项目能承接的工单会在接受阶段被拒绝，并提示去 **Execution → Projects** 登记项目。
+4. **执行。** `change` 工单从所属项目的本地 clone 获得一个工作树；`answer` 工单只读该 live clone。两者都作为
+   该项目 **Lead** 会话的隐藏子智能体运行。输入、状态请求与报告都经由 Lead 传递；人也可以直接和 Lead 对话。
+5. **交付。** `change` 工单由执行器开出 pull request 并报告，人评审并合并后，来源观察到合并，工单以 `merged` 结束，
+   Request 只报告一次结果；`answer` 工单的 ready 报告就是交付物，并以 `completed` 结束。失败始终可见：健康状态、
+   回复队列、发件箱与日志都会说明卡在哪里，以及运维者接下来能做什么。
 
 ## 快速开始
 
@@ -113,7 +114,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 原型是为单仓库、单 POSIX 主机、单人运维者准备的忠实研究产物。本 fork 保留其领域模型与哲学，改变的是日常使用提出的
 要求：平台、多项目、执行层级、运维、证据与分发。相对原型唯一提交（`8c32a9d`）的差异是当前 HEAD 上的
-**223 个文件、+20,957 / −1,589**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
+**223 个文件、+20,982 / −1,589**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
 改动都来自本 fork。
 
 | 方面 | 原型 | 本 fork | 原因 |
@@ -122,6 +123,8 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 | 规模 | 单仓库、单主机、单状态目录 | 一个来源轮询多个项目、按项目检出与 Lead、按项目的并发限制；强制一主机 | 团队在多个仓库工作；第二个配置档或第二个智能体会增加概念与噪音 |
 | 执行 | 每张工单一个根 worker 会话 | Orchestrator → 每项目常驻 Lead → 隐藏执行器子智能体，重启后接管 | 会话列表更干净、项目上下文常驻，总编排器不再承担项目劳动 |
 | 跨项目 | 一次接受的请求 = 一张工单、一个目录 | Ticket 之上的 Request，每交付单元一张工单、`after` 依赖、一次确认/一次结果/一个 done | 单张工单无法合法跨越项目；而人发的仍是一个请求 |
+| 交付契约 | 工单隐含就是一次交付：标 ready 就以 completed 结束，无论是否开过 PR | 每张工单带 `deliverable: change` 或 `answer`；`change` 获得分支与工作树，只能经被关注的 PR 结束（ready 报告须给出 PR），`answer` 只读项目的 live clone、以 `completed` 结束 | 只读问答不该为永不能合并的分支付费；没开 PR 的变更不能报成功 |
+| Agent 自举工作 | 工作只能来自经人工 Policy 接受的来源事件 | worker、项目 Lead、安装级自动化与独立 DSH 会话都能以持久请求发起工作；每条路径都记录来源、必须回复，且不能绕过 Policy 或准入 | 智能体必须能开始它发现的工作，但不能把自己的报告当作授权 |
 | 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 22`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
 | 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志 | 无人值守需要每个平台上可见、可脚本化的运维 |
 | 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报 | “每个失败都可见”意味着运维者能看见趋势，而不只是状态 |
@@ -163,8 +166,9 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 Lead 是本 fork 主要的架构新增，而且它刻意是一个**层**，不是一个新领域概念：领域里仍然只有来源、Thread、触发、工单、
 派发、报告与待答。Lead 是绑定到某个项目的持久会话，带有 (1) 自己的提示词段落，承载项目的 clone、仓库与基线分支，
 (2) 用来够到并给子执行器发消息的预设工具 —— 执行器的输入经由它送达，而不是去 prompt 一个它拥有的会话 ——
-(3) `lead_status` 与项目请求工具（`lead_requests`、`lead_request_decide`、`lead_request_reply`、
-`lead_request_complete`、`lead_request_approval`、`lead_request_approve`），(4) 记录在 `lead_message`（架构 13）
+(3) `lead_status` 与项目请求工具（`lead_requests`、`lead_request_create`、`lead_request_decide`、
+`lead_request_reply`、`lead_request_complete`、`lead_request_approval`、`lead_request_approve`、
+`lead_request_escalate`），(4) 记录在 `lead_message`（架构 13）
 里的派发记录，以及 (5) 没有任何修改 Policy 或设置的途径。被接受的工作作为派发的工单到达它；执行器是它的隐藏子会话。
 当工单需要决定、新交付物或其他项目的工作时，worker 会提出项目请求，Lead 必须回复。面板为每个项目显示一行（Lead
 会话、运行中的执行器、等待中的消息），有人点击时打开 Lead。Lead 承载的输入与报告路由是 P3 的工作；移除根 worker
@@ -184,17 +188,22 @@ Lead 是本 fork 主要的架构新增，而且它刻意是一个**层**，不�
 `lead` 依据的 Mandate 创建一个普通 Request 及其分阶段 Ticket，强度为 explicit，边界是本项目。拒绝或要求补充信息时
 只记录回复，其他什么都不改。未答复的请求会被提醒两次，然后记录为需要关注；Lead 用一条汇总报告结束根请求，发到
 整条链开始的渠道。架构请求多一步：设计 Ticket 产出方案，人在根 Thread 上批准，之后才会存在实现 Request。独立的
-DSH 会话也可以通过 `session` 来源提交工作，并且总会收到答复。
+DSH 会话也可以通过 `session` 来源提交工作，并且总会收到答复。自动化投递延伸了同一条上行路径：主会话可把安装级
+自动化投递转为安装级 Request（`orchestrator_request_create`），项目 Lead 可把本项目之外的工作升级给 Orchestrator
+决定（`lead_request_escalate` → `orchestrator_escalations` → `orchestrator_escalation_decide`），回复回到 Lead，
+接受后才以 `escalation` 依据创建安装级 Request。
 
 ### 运维、状态与恢复
 
-- **迁移** —— 架构 11–21 重塑记录、填入工单项目、加入 Lead 消息、加入 Request，并结束那些已有工单全部结束的 Request，
-  加入跨会话记忆表、移除已退休的 GitHub `repository` 设置，并加入设置提案、自动化、自动化投递与项目请求表。每一步
+- **迁移** —— 架构 11–22 重塑记录、填入工单项目、加入 Lead 消息、加入 Request，并结束那些已有工单全部结束的 Request，
+  加入跨会话记忆表、移除已退休的 GitHub `repository` 设置，加入设置提案、自动化、自动化投递与项目请求表，并为每张
+  工单写入交付契约（未结束的工单与已有被关注 PR 的已结束工单为 `change`，其余为 `answer`）。每一步
   都在打开数据库的事务里执行；`OLDEST_SCHEMA` 与 `verify-install` 让过旧或过新的数据库变得可见，而不是神秘。
 - **单主机** —— 状态锁的错误消息会指出另一个主机、它的状态目录与切换命令；被某个存活的 DeepSeek Harness 进程持有的
   orchestrator 会话会被解释清楚，而不是无限重试。应用内主机会进程级地应用 worker 环境，006 平实地写明这一点，因为它
   改变了该应用中每个会话里 `gh` 的身份。
-- **检出** —— 每张工单都从项目 clone 获得一个工作树和一个 `agent/` 分支；已结束工单的工作树在 `worktreeKeepDays`
+- **检出** —— `change` 工单从项目 clone 获得一个工作树和一个 `agent/` 分支；`answer` 工单在只读权限预设下读取
+  项目的 live clone，不创建任何分支；已结束工单的工作树在 `worktreeKeepDays`
   （默认 7 天）之后由主机每六小时回收，`scripts/clean-worktrees` 让运维者预览或应用同一规则。磁盘增长是一种失败模式，
   所以它被自动化了。
 - **重试** —— 发件箱带退避重试并暴露尝试次数，回复队列显示最久等待与下次尝试，来源会报告下次轮询时间。静默重试循环被
@@ -283,6 +292,8 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 - [008 食谱](docs/008-cookbook.md)：新增一个来源
 - [009 路线图](docs/009-roadmap.md)：从研究原型到日常使用，以及本 fork 已经落地的内容
 - [010 项目级编排器](docs/010-project-orchestrator.md)：Orchestrator → Lead → Worker 设计及其决策
+- [011 能力](docs/011-capabilities.md)：标签、文件投递、项目请求、安装级自举与 Lead 升级的决策记录
+- [012 项目请求](docs/012-project-requests.md)：项目请求、升级与安装级工作的设计
 - [AGENTS.md](AGENTS.md)：给在本仓库工作的编程智能体的说明
 - [docs/agents/domain.md](docs/agents/domain.md)：配合编程智能体使用的工程技能脚手架
 
