@@ -65,10 +65,14 @@ class FakeSchedule implements ScheduleService {
     return this.tasks.has(request.id) ? { records: this.deliveries.get(request.id) ?? [] } : { id: request.id, code: 'schedule_not_found' }
   }
   async run(request: { id: string }): Promise<ScheduleTask | { id: string; code: string }> {
+    this.runs.push(request.id)
+    if (this.runCode !== undefined) return { id: request.id, code: this.runCode }
     const task = this.tasks.get(request.id)
     return task ? { ...task } : { id: request.id, code: 'schedule_not_found' }
   }
   async deleteInactive(): Promise<{ deleted: number }> { return { deleted: 0 } }
+  readonly runs: string[] = []
+  runCode: string | undefined
 }
 
 let directory: string
@@ -419,12 +423,71 @@ describe('delivery history', () => {
   })
 })
 
+describe('running and deleting a task', () => {
+  it('asks the Host to deliver one run now, records the delivery it reports, and audits the run', async () => {
+    const created = await create()
+    schedule.tasks.get('schedule-1')!.lastDelivery = { scheduledAt: NEXT, deliveredAt: AT, messageId: 'm-run' }
+    schedule.deliveries.set('schedule-1', [{ scheduledAt: NEXT, deliveredAt: AT, messageId: 'm-run' }])
+    const summary = await automations.run(created.id, 'human')
+    expect(schedule.runs).toEqual(['schedule-1'])
+    expect(summary).toMatchObject({ id: created.id, revision: 1, host_status: 'active', enabled: true, last_delivery_at: AT })
+    expect(automations.history(created.id)).toEqual([{ at: AT, kind: 'delivered', scheduled_at: NEXT, delivered_at: AT,
+      message_id: 'm-run', error: null }])
+    const record = store.automations.get(created.id)!
+    expect(record.audit.at(-1)).toMatchObject({ kind: 'ran', by: 'human' })
+  })
+
+  it('reports a Host that already queued or is running the same task as a refusal without touching the record', async () => {
+    const created = await create()
+    const before = store.automations.get(created.id)!
+    schedule.runCode = 'schedule_execution_pending'
+    await expect(automations.run(created.id, 'human')).rejects.toThrow('already queued or running')
+    expect(store.automations.get(created.id)).toMatchObject({ revision: before.revision, audit: before.audit })
+  })
+
+  it('orphans a record whose Host task vanished before the run and reports the refusal', async () => {
+    const created = await create()
+    schedule.runCode = 'schedule_not_found'
+    await expect(automations.run(created.id, 'human')).rejects.toThrow('reports schedule_not_found')
+    expect(store.automations.get(created.id)).toMatchObject({ orphaned: true, last_error: 'The Host task is missing; create a new automation only on an explicit human request' })
+  })
+
+  it('refuses to run a record with no Host task and orphans it', async () => {
+    const created = await create()
+    store.automations.save({ ...store.automations.get(created.id)!, dsh_task: null })
+    await expect(automations.run(created.id, 'human')).rejects.toThrow('has no Host task')
+    expect(store.automations.get(created.id)).toMatchObject({ orphaned: true, dsh_task: null })
+  })
+
+  it('deletes the Host task, the record, and its delivery history', async () => {
+    const created = await create()
+    store.automations.deliveries.record({ automation: created.id, at: AT, kind: 'delivered', scheduled_at: NEXT,
+      delivered_at: AT, message_id: 'm1', error: null })
+    expect(automations.history(created.id)).toHaveLength(1)
+    expect(await automations.remove(created.id, 'human')).toEqual({ id: created.id, deleted: true })
+    expect(store.automations.get(created.id)).toBeUndefined()
+    expect(schedule.tasks.has('schedule-1')).toBe(false)
+    expect(store.automations.deliveries.list(created.id)).toEqual([])
+    await expect(automations.remove(created.id, 'human')).rejects.toThrow('Unknown automation')
+  })
+
+  it('keeps the record when the Host refuses to delete its task', async () => {
+    const created = await create()
+    schedule.failDelete = true
+    await expect(automations.remove(created.id, 'human')).rejects.toThrow('was not deleted')
+    expect(store.automations.get(created.id)).toBeDefined()
+    expect(schedule.tasks.has('schedule-1')).toBe(true)
+  })
+})
+
 describe('tool surface and context', () => {
-  it('registers exactly the four main-Session automation tools, with no run or delete tool', () => {
+  it('registers exactly the six main-Session automation tools, including run and delete', () => {
     const tools = automationTools(automations, MASTER)
-    expect(tools.map(tool => tool.name)).toEqual(['automation_create', 'automation_list', 'automation_view', 'automation_edit'])
+    expect(tools.map(tool => tool.name)).toEqual(['automation_create', 'automation_list', 'automation_view', 'automation_edit',
+      'automation_run', 'automation_delete'])
     expect(tools.map(tool => tool.description)).toEqual(expect.arrayContaining([expect.stringContaining('explicit human request')]))
-    expect(tools.flatMap(tool => tool.description).join(' ')).not.toContain('automation_run')
+    expect(tools.flatMap(tool => tool.description).join(' ')).toContain('automation_run')
+    expect(tools.flatMap(tool => tool.description).join(' ')).toContain('automation_delete')
   })
 
   it('runs the tools against the service and describes the runtime-context contribution', async () => {

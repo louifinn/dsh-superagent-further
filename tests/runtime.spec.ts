@@ -2123,7 +2123,7 @@ it('ends the main Session\'s prompt with its Policy section, each rule on one li
   expect((tools.get(runtime.masterId)!.get('orchestrator_eval') as unknown as { description: string }).description).not.toMatch(/rules/)
 })
 
-it('registers the four installation automation tools and their runtime context only when the Host schedule service exists', async () => {
+it('registers the six installation automation tools and their runtime context only when the Host schedule service exists', async () => {
   const main = () => tools.get(runtime.masterId)!
   expect(main().has('automation_create')).toBe(false)
   const host = fakeSchedule()
@@ -2132,8 +2132,8 @@ it('registers the four installation automation tools and their runtime context o
   await next.ready
   await next.idle()
   expect(main().has('automation_create')).toBe(true)
-  expect(['automation_create', 'automation_list', 'automation_view', 'automation_edit'].every(name => main().has(name))).toBe(true)
-  expect(main().has('automation_run')).toBe(false)
+  expect(['automation_create', 'automation_list', 'automation_view', 'automation_edit', 'automation_run', 'automation_delete']
+    .every(name => main().has(name))).toBe(true)
   const context = (contexts.get(runtime.masterId) ?? []).find(entry => entry.name === AUTOMATION_CONTEXT)!
   expect(context.order).toBe(320)
   expect((context.text as () => string)()).toContain('## automations')
@@ -2152,6 +2152,12 @@ it('registers the four installation automation tools and their runtime context o
   expect(viewed.instruction).toBe('Review waiting tickets.')
   const edited = await runTool(runtime.masterId, 'automation_edit', { id: String(created.id), action: 'update', enabled: false }) as Record<string, unknown>
   expect(edited).toMatchObject({ id: created.id, enabled: false, host_status: 'paused' })
+  const ran = await runTool(runtime.masterId, 'automation_run', { id: String(created.id) }) as Record<string, unknown>
+  expect(ran).toMatchObject({ id: created.id, revision: 2 })
+  const removed = await runTool(runtime.masterId, 'automation_delete', { id: String(created.id) }) as Record<string, unknown>
+  expect(removed).toEqual({ id: created.id, deleted: true })
+  expect(host.tasks.size).toBe(0)
+  expect((await runTool(runtime.masterId, 'automation_list', {})) as { items: unknown[] }).toMatchObject({ items: [] })
 })
 
 it('keeps the Policy the main Session judges by in its prompt, after admission and the rest, as the latest save left it', async () => {

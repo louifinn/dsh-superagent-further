@@ -31,6 +31,13 @@ export class UnknownAutomationError extends Error {
 }
 /** The installation's automation limit, mapped to 400 by the management API. */
 export class AutomationLimitError extends Error {}
+/**
+ * A Host refusal to run one task now (already queued or running, or its task is gone). The panel turns it into a 409/404
+ * response instead of a server error.
+ */
+export class AutomationRunRefusedError extends Error {
+  constructor(message: string, readonly code: string) { super(message); this.name = 'AutomationRunRefusedError' }
+}
 
 /** One Host schedule task as the plugin reads it; only the fields this plugin uses are named. */
 export interface ScheduleTask {
@@ -334,6 +341,61 @@ export class Automations {
   history(id: string, limit = AUTOMATION_HISTORY_SHOWN): AutomationDeliveryView[] {
     this.required(id)
     return this.store.deliveries.list(id, limit).map(deliveryView)
+  }
+  /**
+   * Delivers one task immediately on the Host without consuming or moving its scheduled occurrence. The Host refuses while the
+   * same task is already queued or running; an admitted delivery shows up in the history on the next refresh.
+   */
+  async run(id: string, actor: string): Promise<AutomationSummary> {
+    const record = this.required(id)
+    if (record.dsh_task === null) {
+      this.orphan(record, actor, 'The record has no Host task; create a new automation only on an explicit human request')
+      throw new Error(`Automation ${record.id} has no Host task; it was not run`)
+    }
+    let admitted: ScheduleTask | ScheduleFailure
+    try {
+      admitted = await this.schedule.run({ id: record.dsh_task })
+    } catch (error) {
+      throw new Error(`The Host schedule service refused the run: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+    }
+    if (failed(admitted)) {
+      if (admitted.code === 'schedule_not_found') {
+        this.orphan(record, actor, 'The Host task is missing; create a new automation only on an explicit human request')
+        throw new AutomationRunRefusedError(`Automation ${record.id} was not run: the Host task reports ${admitted.code}`, admitted.code)
+      }
+      if (admitted.code === 'schedule_execution_pending') {
+        throw new AutomationRunRefusedError(`Automation ${record.id} is already queued or running on the Host; try again shortly`, admitted.code)
+      }
+      throw new AutomationRunRefusedError(`Automation ${record.id} was not run: the Host task reports ${admitted.code}`, admitted.code)
+    }
+    const at = this.clock().toISOString()
+    const entries = await this.observedDeliveries(record, admitted, at)
+    record.host_status = admitted.status
+    record.next_at = admitted.scheduledAt ?? record.next_at
+    record.dsh_updated_at = admitted.updatedAt ?? record.dsh_updated_at
+    record.last_delivery_at = admitted.lastDelivery?.deliveredAt ?? record.last_delivery_at
+    record.enabled = admitted.status === 'active'
+    record.orphaned = admitted.status === 'ended'
+    record.last_error = record.orphaned ? 'The Host task ended' : null
+    record.updated_at = at
+    record.revision += 1
+    this.audit(record, 'ran', actor, 'Delivered one run now without moving the schedule')
+    this.store.saveWithHistory(record, entries)
+    return summaryOf(record)
+  }
+  /** Deletes a record and its delivery history, and removes its Host task; an already absent Host task is fine. */
+  async remove(id: string, actor: string): Promise<{ id: string; deleted: true }> {
+    const record = this.required(id)
+    if (record.dsh_task !== null) {
+      const leftover = await this.removeHost(record.dsh_task)
+      if (leftover !== undefined) {
+        throw new Error(`Automation ${record.id} was not deleted: its Host task ${leftover} could not be removed`)
+      }
+    }
+    this.store.delete(record.id)
+    this.logger?.info('dsh-superagent-further deleted automation %s (Host task %s) on request by %s',
+      record.id, record.dsh_task ?? 'none', actor)
+    return { id: record.id, deleted: true }
   }
   /**
    * Reads the Host catalog once and records deliveries observed since the last read, without bumping a record revision or

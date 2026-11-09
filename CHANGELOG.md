@@ -4,6 +4,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [semantic versioning](https://semver.org/spec/v2.0.0.html). While it is a research prototype, `0.x` versions may change
 the settings schema and the state database; the upgrade steps in `docs/006-deployment.md` say how to migrate.
 
+## [Unreleased]
+
+### Added
+
+- Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
+  service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
+  `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both
+  are available from the Automations page (`Run now`, and `Delete` behind a confirmation dialog), through
+  `POST /orchestrator/api/automations/:id/run` and `DELETE /orchestrator/api/automations/:id`, and in the main Session's
+  tool list (six automation tools). A Host refusal to run or delete keeps the record and is reported; deleting an already
+  missing Host task is fine.
+
 ## [0.3.0] - 2026-11-09
 
 The package and every registration identity are now `dsh-superagent-further`: the npm package and bundle name, the

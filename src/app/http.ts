@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { record } from '../kv.ts'
 import { MEMORY_SORTS } from '../memory.ts'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
-import { AutomationCreateSchema, AutomationLimitError, AutomationUpdateSchema, UnknownAutomationError, UnknownProjectError,
+import { AutomationCreateSchema, AutomationLimitError, AutomationRunRefusedError, AutomationUpdateSchema, UnknownAutomationError, UnknownProjectError,
   type Automations } from './automations.ts'
 import type { AutomationsView } from './views/automations.ts'
 import { sourceSkills } from './context.ts'
@@ -100,6 +100,9 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UnknownProjectError) return [400, { error: error.message, code: 'projectNotRegistered' }]
   if (error instanceof UnknownAutomationError) return [404, { error: error.message }]
+  if (error instanceof AutomationRunRefusedError) {
+    return [error.code === 'schedule_not_found' ? 404 : 409, { error: error.message, code: error.code }]
+  }
   if (error instanceof AutomationLimitError) return [400, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
   if (error instanceof SettingsRevisionNotFound) return [404, { error: error.message }]
@@ -309,6 +312,15 @@ function routes(runtime: HttpHost): Routes {
       const result = await runtime.automations.edit({ id: params.id, action: 'update', ...update }, 'panel')
       if ('conflict' in result) throw new RouteError(409, result.warning)
       return result
+    },
+    // A manual run never re-targets or edits a task; the Host either admits one delivery or refuses it.
+    'POST automations/:id/run': async ({ params }) => {
+      if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+      return { ran: true, automation: await runtime.automations.run(params.id, 'panel') }
+    },
+    'DELETE automations/:id': async ({ params }) => {
+      if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+      return runtime.automations.remove(params.id, 'panel')
     },
   }
 }

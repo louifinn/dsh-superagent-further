@@ -408,7 +408,7 @@ export class Proposals {
 /** One audited change to an automation record, kept as the last `LIMITS.automationAudit` entries. */
 export interface AutomationAudit {
   at: string
-  kind: 'created' | 'updated' | 'deleted' | 'reconciled' | 'orphaned' | 'drifted'
+  kind: 'created' | 'updated' | 'deleted' | 'ran' | 'reconciled' | 'orphaned' | 'drifted'
   by: string
   detail: string
 }

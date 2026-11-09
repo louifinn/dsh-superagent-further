@@ -7,7 +7,7 @@ import { Button, Input, Switch, Tag } from './controls.tsx'
 import { usePanel } from './provider.tsx'
 import { Field, Fields } from './settings-kit.tsx'
 import { errorText, when, type T } from './text.ts'
-import { Hint, LoadState, Section } from './widgets.tsx'
+import { Hint, ConfirmButton, LoadState, Section } from './widgets.tsx'
 
 type AutomationsView = ApiResponse<'GET automations'>
 type Row = AutomationsView['items'][number]
@@ -56,6 +56,7 @@ export function TasksPage() {
   const [enabled, setEnabled] = useState(true)
   const [editing, setEditing] = useState<Row | null>(null)
   const [busy, setBusy] = useState(false)
+  const [acting, setActing] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const unavailable = error instanceof ApiError && error.status === 503
 
@@ -130,6 +131,37 @@ export function TasksPage() {
     } catch (problem) {
       setFailure(errorText(problem))
       await reload()
+    }
+  }
+
+  const runNow = async (row: Row) => {
+    setFailure(undefined)
+    setActing(row.id)
+    try {
+      await call('POST automations/:id/run', { id: row.id })
+      notify(t('automationRanNotice'))
+      await reload()
+    } catch (problem) {
+      setFailure(errorText(problem))
+      await reload()
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const removeRow = async (row: Row) => {
+    setFailure(undefined)
+    setActing(row.id)
+    try {
+      await call('DELETE automations/:id', { id: row.id })
+      if (editing?.id === row.id) startCreate()
+      notify(t('automationDeletedNotice'))
+      await reload()
+    } catch (problem) {
+      setFailure(errorText(problem))
+      await reload()
+    } finally {
+      setActing(null)
     }
   }
 
@@ -211,7 +243,15 @@ export function TasksPage() {
                     <td>{row.last_delivery_at ? when(row.last_delivery_at, t('lang')) : t('automationNever')}</td>
                     <td>{when(row.created_at, t('lang'))}</td>
                     <td>
-                      <Button size="sm" variant="outline" onClick={() => beginEdit(row)}>{t('automationEdit')}</Button>
+                      <div className="dt-actions">
+                        <Button size="sm" variant="outline" disabled={acting === row.id} onClick={() => void runNow(row)}>
+                          {t('automationRun')}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => beginEdit(row)}>{t('automationEdit')}</Button>
+                        <ConfirmButton label={t('automationDelete')} title={t('automationDeleteTitle')}
+                          message={t('automationDeleteMessage')} variant="outline"
+                          onConfirm={() => removeRow(row)} />
+                      </div>
                     </td>
                   </tr>)}
                 </tbody>

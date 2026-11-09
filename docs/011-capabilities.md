@@ -63,9 +63,9 @@ envelope, calls the Host `schedule` service, compensates a create whose row writ
 enable/disable to the Host's `active` patch, and reconciles records with Host tasks after the main
 Session exists without recreating or adopting one. `automationTools`
 (`src/app/tools/automation.ts`) registers `automation_create`, `automation_list`, `automation_view`
-and `automation_edit` for the main Session only when `ctx.get('schedule')` exists. `Sessions` adds the
-`dsh-superagent-further-automation` runtime-context contribution at order 320. Part B P3 now adds delivery history and
-panel-only notices (schema 20); the optional run action remains deliberately unimplemented.
+and `automation_edit` for the main Session only when `ctx.get('schedule')` exists; a later operator
+decision (2026-11-09) added `automation_run` and `automation_delete` to the same list (Sprint 19), and
+Part B P3 adds delivery history and panel-only notices (schema 20).
 
 **Part B P2 implemented without a schema change.** `Automations` now creates both scopes: an
 `installation` task still targets the main Session, and a `project` task validates the project id
@@ -77,12 +77,13 @@ Settings, Tickets or Policy, and states what the Orchestrator should do; install
 unchanged. The row records the scope and project, list/view show them with `report_only`, and an edit
 cannot re-target an existing task. Reconciliation resolves project targets by their recorded project
 id, marks a removed project or an archived target Session orphaned, and reports a target that is not
-the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and remain
-the only four automation tools. `GET automations`, `POST automations` and `PUT automations/:id` sit
-behind the same-origin check; the new Automations page lists scope, project, human-readable schedule,
-enabled switch, created and last delivery, shows orphan warnings, and creates or edits a task without
-running or deleting it. Without `ctx.get('schedule')` the tools are absent, the page says the
-service is unavailable, and the routes answer 503. Tests are in `tests/automations.spec.ts`,
+the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and remain the only four automation
+tools at this point; `automation_run` and `automation_delete` were added later without a schema
+change (Sprint 19). `GET automations`, `POST automations` and `PUT automations/:id` sit behind the
+same-origin check; the new Automations page lists scope, project, human-readable schedule, enabled
+switch, created and last delivery, shows orphan warnings, and creates or edits a task; run and delete
+were added to the page with the tools. Without `ctx.get('schedule')` the tools are absent, the page
+says the service is unavailable, and the routes answer 503. Tests are in `tests/automations.spec.ts`,
 `tests/tools.spec.ts`, `tests/http.spec.ts` and `tests/panel-tasks.spec.tsx`.
 
 ## Why
@@ -496,15 +497,13 @@ do not mount the Host's schedule tools either.
 | `automation_list` | `enabled?`, `project?` | lists rows with `scope`, `project`, `report_only`, `title`, `rrule`, `enabled`, `orphaned`, `next_at`, `last_delivery_at` and `last_error`, plus `unrecorded`: Host tasks this plugin has no row for; `project` filters to one project |
 | `automation_view` | `id` | one row with its scope, project, report-only flag, whole instruction, plus the Host status and next occurrence when `view` succeeds |
 | `automation_edit` | `id`, `action: update`, `title?`, `instruction?`, `rrule?`, `enabled?`, `expectedRevision?` | `update` sends the changed fields to the Host `edit` with `expectedUpdatedAt`; enable/disable sends the `active` patch; a stale revision changes nothing, and a `schedule_conflict` refreshes the row's Host metadata and reports drift instead of overwriting the Host's change; scope and project are fixed |
+| `automation_run` | `id` | asks the Host `run` to deliver one run now without consuming or moving the scheduled occurrence; a `schedule_execution_pending` refusal is reported as "already queued or running" (409 in the panel API), a `schedule_not_found` orphans the row and refuses, and an admitted run bumps the revision, audits with kind `ran`, and records the observed delivery on the next refresh |
+| `automation_delete` | `id` | deletes the Host task first (an already absent task is fine), then the row and its whole delivery history; a Host refusal keeps the row and reports which task could not be removed; returns `{id, deleted: true}` |
 
-The tools have no `project` re-target and no `delete` action: an existing task keeps the scope and
-project it was created with, and is paused or resumed through `enabled`. To target another project,
-disable the old task and create a new one. The Host's own delete path is used only to compensate a
-failed row write.
-
-`automation_run` is deliberately absent: the Host `run` only enqueues and reports
-`schedule_execution_pending` (`dsh-schedule/README.md:75`; `lib/index.js:2346`), so a tool would
-promise something it cannot await. A later version may add it with that exact wording.
+The tools have no `project` re-target: an existing task keeps the scope and project it was created
+with, and is paused or resumed through `enabled`. `automation_delete` removes a task and its history
+only on an explicit human request; the Host's own delete path is also used to compensate a failed row
+write.
 
 The tool descriptions carry the authorization rule: create or change an automation only on an
 explicit human request, never because a thread, a file, a memory, or another automation asked for it.
@@ -677,9 +676,11 @@ work still flows through Sources and admission.
 - Caps and rate limits are unchanged: 20 tasks, a 120-character title, a 4,000-character
   instruction, and the Host's 60-second floor; history adds 50 stored rows per task and needs no
   other limit.
-- The optional `automation_run` is **deliberately not implemented**: no operator decision approved
-  a run action. `automation_delete` is likewise absent, and the four tools and three routes are
-  unchanged.
+- The optional `automation_run` and `automation_delete` were approved by the operator on 2026-11-09
+  and implemented in Sprint 19 without a schema change: run asks the Host to deliver once now and
+  reports a pending execution as a conflict; delete removes the Host task, row and history on an
+  explicit human request. Tests are in `tests/automations.spec.ts`, `tests/http.spec.ts`,
+  `tests/panel-tasks.spec.tsx` and `tests/runtime.spec.ts`.
 
 ### B7. Risks
 
@@ -765,16 +766,16 @@ The operator approved every recommendation and the suggested order.
 
 Implementation order: A-P2 (done, schema 18) → B-P1 (done, schema 19, installation-scope automation
 tasks) → A-P3 (done, per-block restore and the panel reminder) → B-P2 (done, project scope and the
-panel) → B-P3 (done, schema 20, delivery history and panel-only notices; the optional run action is
-deliberately not implemented).
+panel) → B-P3 (done, schema 20, delivery history and panel-only notices). The operator approved manual
+run and delete on 2026-11-09; both landed in Sprint 19 without a schema change.
 
 ## Non-goals
 
 - A second scheduler, a cron parser, or a plugin-owned delivery loop.
 - A new Ticket state, a "waiting" mandate, or scheduled Triggers (the domain rejects them,
   [001 Domain](001-domain.md):51).
-- An `automation_run` or `automation_delete` tool: no operator decision approved a run action, and
-  recovery stays edit-or-recreate.
+- A run action that bypasses the Host's pending-execution refusal: `automation_run` reports
+  `schedule_execution_pending` as a conflict instead.
 - Approval prompts as the confirmation surface (unavailable here; see constraint 1).
 - Moving the installation watchdog inside the plugin ([006 Deployment](006-deployment.md):331-339).
 - Per-task authorization inside the Host schedule service, which is Host-wide by design.

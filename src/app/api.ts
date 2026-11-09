@@ -69,6 +69,8 @@ export interface Api {
   'GET automations': { response: AutomationsView }
   'POST automations': { body: AutomationCreateInput; response: AutomationSummary }
   'PUT automations/:id': { body: AutomationUpdate; response: AutomationSummary }
+  'POST automations/:id/run': { response: { ran: true; automation: AutomationSummary } }
+  'DELETE automations/:id': { response: { id: string; deleted: true } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

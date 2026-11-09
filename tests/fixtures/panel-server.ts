@@ -126,6 +126,8 @@ export interface PanelServer {
   automationService: boolean
   /** Automation rows the Automations page lists and edits. */
   automations: ApiResponse<'GET automations'>['items']
+  /** Which automation the fake Host reports as already queued or running, so the run route can answer 409. */
+  automationBusy?: string
 }
 export let server: PanelServer
 
@@ -422,6 +424,29 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     }
     server.automations = server.automations.map(item => item.id === params.id ? updated : item)
     return updated
+  } },
+  'POST automations/:id/run': { answer: ({ params }) => {
+    if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
+    const row = server.automations.find(item => item.id === params.id)
+    if (!row) return refuse(404, `Unknown automation ${params.id}`)
+    if (server.automationBusy === params.id) {
+      return refuse(409, `Automation ${params.id} is already queued or running on the Host; try again shortly`,
+        { code: 'schedule_execution_pending' })
+    }
+    const at = new Date().toISOString()
+    const updated: ApiResponse<'GET automations'>['items'][number] = {
+      ...row, revision: row.revision + 1, last_delivery_at: at, updated_at: at,
+      history: [{ at, kind: 'delivered' as const, scheduled_at: null, delivered_at: at, message_id: 'message-run', error: null },
+        ...row.history].slice(0, 10),
+    }
+    server.automations = server.automations.map(item => item.id === params.id ? updated : item)
+    return { ran: true, automation: updated }
+  } },
+  'DELETE automations/:id': { answer: ({ params }) => {
+    if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
+    if (!server.automations.some(item => item.id === params.id)) return refuse(404, `Unknown automation ${params.id}`)
+    server.automations = server.automations.filter(item => item.id !== params.id)
+    return { id: params.id, deleted: true }
   } },
   'POST memory/forget': { body: true, answer: ({ body }) => {
     const before = server.memories.length

@@ -40,7 +40,7 @@ it('lists installation and project tasks with scope, schedule, orphan warning an
   expect(text()).toContain(zh.automationOrphaned)
   expect(text()).toContain('The Host task is missing')
   expect(text()).toContain(zh.automationNever)
-  // Only the panel can create or edit; running and deleting stay Host-side and are not offered here.
+  // The panel offers run, edit and delete; enabled stays a switch, not a button.
   expect(all('[data-automations] button').map(button => button.textContent)).not.toContain(zh.automationEnabled)
 })
 
@@ -127,4 +127,39 @@ it('reports that the Host schedule service is unavailable instead of failing', a
   expect(text()).toContain(zh.automationUnavailable)
   expect(all('[data-automations]')).toHaveLength(0)
   expect(text()).not.toContain(zh.automationCreateTitle)
+})
+
+it('runs one task now, records the delivery, and surfaces a Host refusal as a page error', async () => {
+  server.automations = [row('auto-00000001'), row('auto-00000002')]
+  server.automationBusy = 'auto-00000002'
+  await mount()
+  await click(tab(zh['tab.tasks']))
+  const runs = () => all('[data-automation] button').filter(button => button.textContent === zh.automationRun)
+  expect(runs()).toHaveLength(2)
+  await click(runs()[0]!)
+  expect(server.requests.some(request => request.method === 'POST' && request.path === 'automations/auto-00000001/run'))
+    .toBe(true)
+  expect(text()).toContain(zh.automationRanNotice)
+  expect(server.automations[0]!.last_delivery_at).not.toBeNull()
+  expect(server.automations[0]!.history[0]).toMatchObject({ kind: 'delivered', message_id: 'message-run' })
+  await click(runs()[1]!)
+  expect(text()).toContain('already queued or running')
+  expect(server.automations[1]!.last_delivery_at).toBeNull()
+})
+
+it('deletes a task only after the confirmation dialog and reports it', async () => {
+  server.automations = [row('auto-00000001')]
+  await mount()
+  await click(tab(zh['tab.tasks']))
+  const deletes = all('[data-automation] button').filter(button => button.textContent === zh.automationDelete)
+  expect(deletes).toHaveLength(1)
+  await click(deletes[0]!)
+  expect(text()).toContain(zh.automationDeleteMessage)
+  expect(server.automations).toHaveLength(1)
+  await click(zh.confirm)
+  expect(server.requests.some(request => request.method === 'DELETE' && request.path === 'automations/auto-00000001'))
+    .toBe(true)
+  expect(server.automations).toHaveLength(0)
+  expect(all('[data-automation]')).toHaveLength(0)
+  expect(text()).toContain(zh.automationDeletedNotice)
 })

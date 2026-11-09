@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
-import { AutomationLimitError, UnknownAutomationError, UnknownProjectError } from '../src/app/automations.ts'
+import { AutomationLimitError, AutomationRunRefusedError, UnknownAutomationError, UnknownProjectError } from '../src/app/automations.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
@@ -266,7 +266,7 @@ it('serves the Automations page from one service path, with same-origin, validat
       message_id: null, error: 'The Host task is missing' }],
   }
   let refreshed = false
-  const creates: unknown[][] = [], edits: unknown[][] = []
+  const creates: unknown[][] = [], edits: unknown[][] = [], runs: unknown[][] = [], removals: unknown[][] = []
   const automations = {
     refresh: async () => { refreshed = true; return { checked: 2, observed: 1 } },
     list: async () => ({ items: [summary, flagged], unrecorded: [] }),
@@ -283,6 +283,18 @@ it('serves the Automations page from one service path, with same-origin, validat
         warning: 'The Host task changed outside this plugin; review its schedule before editing again' }
       edits.push([input, actor])
       return summary
+    },
+    run: async (id: string, actor: string) => {
+      if (id === 'gone') throw new UnknownAutomationError('gone')
+      if (id === 'busy') throw new AutomationRunRefusedError('Automation busy is already queued or running on the Host; try again shortly',
+        'schedule_execution_pending')
+      runs.push([id, actor])
+      return summary
+    },
+    remove: async (id: string, actor: string) => {
+      if (id === 'gone') throw new UnknownAutomationError('gone')
+      removals.push([id, actor])
+      return { id, deleted: true as const }
     },
   }
   const store = { settings: () => ({ executor: { projects: [{ id: 'default', name: 'Default' }] } }) }
@@ -305,6 +317,15 @@ it('serves the Automations page from one service path, with same-origin, validat
     body: { error: 'The Host task changed outside this plugin; review its schedule before editing again' } })
   expect(await call('PUT', 'automations/gone', { enabled: false })).toEqual({ status: 404, body: { error: 'Unknown automation gone' } })
   expect((await call('PUT', 'automations/auto-1', {})).status).toBe(400)
+  // A manual run answers with the refreshed record; a Host refusal is a 409, not a server error.
+  expect(await call('POST', 'automations/auto-1/run')).toEqual({ status: 200, body: { ran: true, automation: summary } })
+  expect(runs[0]).toEqual(['auto-1', 'panel'])
+  expect(await call('POST', 'automations/busy/run')).toEqual({ status: 409, body: {
+    error: 'Automation busy is already queued or running on the Host; try again shortly', code: 'schedule_execution_pending' } })
+  expect(await call('POST', 'automations/gone/run')).toEqual({ status: 404, body: { error: 'Unknown automation gone' } })
+  expect(await call('DELETE', 'automations/auto-1')).toEqual({ status: 200, body: { id: 'auto-1', deleted: true } })
+  expect(removals[0]).toEqual(['auto-1', 'panel'])
+  expect(await call('DELETE', 'automations/gone')).toEqual({ status: 404, body: { error: 'Unknown automation gone' } })
   // Only the panel's same-origin header reaches the route.
   expect(await call('GET', 'automations', undefined, { 'x-orchestrator-request': undefined }))
     .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
@@ -314,4 +335,6 @@ it('serves the Automations page from one service path, with same-origin, validat
     body: { error: 'The Host schedule service is not installed' } })
   expect((await unavailable('POST', 'automations', body)).status).toBe(503)
   expect((await unavailable('PUT', 'automations/auto-1', { enabled: false })).status).toBe(503)
+  expect((await unavailable('POST', 'automations/auto-1/run')).status).toBe(503)
+  expect((await unavailable('DELETE', 'automations/auto-1')).status).toBe(503)
 })
