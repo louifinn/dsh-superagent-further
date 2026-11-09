@@ -62,6 +62,7 @@ const at = new Date().toISOString()
 const live = (id: string) => store.tickets.save({ id, title: id, decisionId: 'd', channels: [], undelivered: [], createdAt: at,
   updatedAt: at,
   mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'feishu', id: 'ou_alice' }, scope: '' },
+  deliverable: 'change',
   origin: { triggerId: 'e0', triggerIds: ['e0'] }, assignments: [], inputs: [] })
 const message = (id: string, actor: { source: string; id: string }, human = true) => ({ id, source: actor.source,
   threads: [{ source: 'feishu', id: 'oc_1:om_root' }], actor, human, at, text: `message ${id}`, meta: {} })
@@ -118,6 +119,7 @@ it('follows the Ticket\'s stage: a blocked Ticket a person answered since is wor
   const ticket = { id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at,
     mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
       id: 'ou_alice' }, scope: '' },
+    deliverable: 'change' as const,
     origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [{ id: 'a1', state: 'running' as const, createdAt: at, startedAt: at,
       report: blocked }],
     inputs: [] as { id: string; kind: 'trigger'; triggerId: string; at: string; human?: true }[] }
@@ -131,6 +133,20 @@ it('follows the Ticket\'s stage: a blocked Ticket a person answered since is wor
   expect(answered).toMatchObject({ stage: 'working', actions: { retry: false } })
   expect(answered).not.toHaveProperty('note')
   expect(ticketDetail(host, 't1')!.assignments[0]).not.toHaveProperty('turnEndedAt')
+})
+
+it('summaries carry the deliverable contract, and only an answer Ticket reads as answered', () => {
+  const host = views()
+  const base = { id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at,
+    mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
+      id: 'ou_alice' }, scope: '' },
+    origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [], inputs: [] }
+  store.tickets.save({ ...base, deliverable: 'answer', ended: { at, by: 'executor' as const, outcome: 'completed' as const } })
+  expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'answer', answered: true, stage: 'ended' })
+  store.tickets.save({ ...base, deliverable: 'change', ended: { at, by: 'executor' as const, outcome: 'merged' as const } })
+  expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'change', answered: false })
+  expect(ticketSummary(store.tickets.get('t1')!)).not.toMatchObject({ answered: true })
+  void host
 })
 
 it('does not show a follow-up that reached a ticket as waiting for an Eval, though an older version queued it', () => {
@@ -266,6 +282,7 @@ it('shows a follow-up that reached a ticket as delivered, the tickets that hande
   expect(threadDetail(host, 'github:7', undefined, 50)?.context).toEqual(['t1'])
   store.tickets.save({ id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at,
     mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'feishu', id: 'ou_alice' }, scope: '' },
+    deliverable: 'change',
     origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [],
     inputs: [{ id: 'i1', kind: 'trigger', triggerId: 'f1', at }, { id: 'i2', kind: 'trigger', triggerId: 'f2', at }] })
   const page = ticketDetail(host, 't1')!
@@ -281,7 +298,7 @@ it('names a bot\'s Mandate as a bot once the Policy no longer lists it', () => {
   const mandate = { strength: 'inferred' as const, policyVersion: 'v', basis: { via: 'bot' as const,
     observation: { mode: 'auto' as const } },
     actor: { source: 'feishu', id: 'cli_removed' }, scope: '' }
-  store.tickets.save({ id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at, mandate,
+  store.tickets.save({ id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at, mandate, deliverable: 'change',
     origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [], inputs: [] })
   expect(ticketDetail(host, 't1')!.mandate.actor).toEqual({ source: 'feishu', id: 'cli_removed', name: feishuKind.policy!.unnamed!.bot })
 })

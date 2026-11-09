@@ -582,7 +582,7 @@ describe('a worker whose work runs in the background', () => {
     expect(h.subagents.live(child)).toBe(false)
   })
   it('cancels no worker for a subagent that ended before, and cancels the turn a release woke also when the release fails', async () => {
-    const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
+    const one = await h.acceptedTicket(feishu('1', '@bot 修一'), 'answer')
     const agent = h.agents.get(one.sessionId)!
     h.subagents.settle(h.subagents.spawn(one.sessionId))
     // Its ready report ends the ticket, and it ends its own turn.
@@ -635,7 +635,7 @@ describe('what a worker read', () => {
   const later = () => new Promise(resolve => setTimeout(resolve, 5))
   /** A ticket its worker completed, and a person's thanks on its thread, which resumes it once received. */
   async function completed() {
-    const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
+    const one = await h.acceptedTicket(feishu('1', '@bot 修一'), 'answer')
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done' }); await h.runtime.idle()
     idle(one.sessionId)
     await later()
@@ -822,7 +822,7 @@ it('resumes an ended ticket a person wrote to during a pause once it lifts, unde
     try { await h.runtime.pump(); await h.runtime.idle() } finally { vi.useRealTimers() }
   }
   const ended = async (id: string) => {
-    const { ticket, sessionId } = await h.acceptedTicket(feishu(id, `@bot 修${id}`, { root_id: `om_${id}` }))
+    const { ticket, sessionId } = await h.acceptedTicket(feishu(id, `@bot 修${id}`, { root_id: `om_${id}` }), 'answer')
     await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
     return ticket.id
   }
@@ -900,7 +900,7 @@ describe('the Executor\'s parts', () => {
   it('words an assignment, and the limits an inferred mandate sets, from the ticket alone', () => {
     const settings = SettingsSchema.parse({ policy: { rules: [{ id: 'copy', name: 'Copy fixes', enabled: true,
       instruction: 'Fix typos only.' }] } })
-    const ticket = { id: 'ticket-0123456789abcdef', origin: { triggerId: 'tr1', triggerIds: [] },
+    const ticket = { id: 'ticket-0123456789abcdef', deliverable: 'change', origin: { triggerId: 'tr1', triggerIds: [] },
       mandate: { strength: 'inferred', policyVersion: 'v1', basis: { rules: ['copy'] }, actor: { source: 'github', id: 'alice' },
         scope: '' } } as unknown as Ticket
     const execution = ticketExecution(ticket, { kind: 'accept', title: 'Fix', scope: 'the typo', reason: 'r', name: 'fix-typo' } as never,
@@ -921,7 +921,7 @@ describe('the Executor\'s parts', () => {
   it('keeps a project ticket under its project, and makes its worktree in that project clone', () => {
     const settings = SettingsSchema.parse({ executor: { projects: [{ id: 'napkid', name: 'Napkid', workspace: '/src/napkid',
       repository: 'louifinn/Napkid-Derivate', branch: 'main' }] } })
-    const ticket = { id: 'ticket-0123456789abcdef', project: 'napkid', origin: { triggerId: 'tr1', triggerIds: [] },
+    const ticket = { id: 'ticket-0123456789abcdef', deliverable: 'change', project: 'napkid', origin: { triggerId: 'tr1', triggerIds: [] },
       mandate: { strength: 'explicit', policyVersion: 'v1', basis: {}, actor: { source: 'github', id: 'alice' } } } as unknown as Ticket
     const execution = ticketExecution(ticket, { kind: 'accept', title: 'Fix', scope: 'Fix', reason: 'r', name: 'fix-login' } as never, settings, '/state')
     expect(execution.directory).toBe(join('/state', 'work', 'napkid', execution.name))
@@ -931,6 +931,17 @@ describe('the Executor\'s parts', () => {
     expect(ticketExecution({ ...ticket, project: undefined } as Ticket, { kind: 'accept', title: 'Fix', scope: 'Fix', reason: 'r',
       name: 'fix-login' } as never, settings, '/state').directory).toBe(join('/state', 'work', execution.name))
   })
+  it('makes an answer ticket read its project clone in place, without a worktree or branch', () => {
+    const settings = SettingsSchema.parse({ executor: { projects: [{ id: 'napkid', name: 'Napkid', workspace: '/src/napkid',
+      repository: 'louifinn/Napkid-Derivate', branch: 'main' }] } })
+    const ticket = { id: 'ticket-0123456789abcdef', deliverable: 'answer', project: 'napkid', origin: { triggerId: 'tr1', triggerIds: [] },
+      mandate: { strength: 'explicit', policyVersion: 'v1', basis: {}, actor: { source: 'github', id: 'alice' } } } as unknown as Ticket
+    const execution = ticketExecution(ticket, { kind: 'accept', title: 'Answer', scope: 'Answer', reason: 'r', name: 'ignored-name' } as never, settings, '/state')
+    // The live checkout is read as it is: no branch, no worktree directory, and the name the assessment gave is not used.
+    expect(execution).toEqual(expect.objectContaining({ name: '', directory: '/src/napkid' }))
+    expect(execution.assignment).not.toContain('worktree')
+  })
+
   it('renders each kind of Input as its worker reads it, inline, and no reopen Input', () => {
     const asked = { id: 'tr1', source: 'feishu', threads: [{ source: 'feishu', id: 'oc:om_1' }], actor: { source: 'feishu', id: 'ou_a' }, human: true,
       at: '2026-09-01T00:00:00Z', text: 'Which page?', meta: {} } as Trigger
@@ -971,3 +982,4 @@ describe('the Executor\'s parts', () => {
     expect(JSON.parse(ready.text)).toMatchObject({ kind: 'worker_report', ticket: { ticket_id: 't1' }, trigger_id: 'tr1', state: 'ready', answer_to: 'tr9', summary: 'Done' })
   })
 })
+

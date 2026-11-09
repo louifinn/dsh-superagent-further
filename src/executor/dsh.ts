@@ -4,7 +4,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
+import { canComplete, key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
@@ -98,7 +98,10 @@ export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string 
 /** Builds a newly accepted ticket's Execution metadata: its worktree name, workspace directory, and assignment text. */
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,
   stateDir: string): Execution {
-  const name = ticketWorktreeName(outcome.name ?? '', ticket.id)
+  // An answer ticket reads its project's live checkout and owns no branch or worktree; a change ticket gets its own worktree.
+  const project = projectOf(settings.executor.projects, ticket.project)
+  const answer = canComplete(ticket.deliverable)
+  const name = answer ? '' : ticketWorktreeName(outcome.name ?? '', ticket.id)
   const source = ticket.origin.triggerId
   const note = outcome.note ? `\nRouting note (not the source request): ${outcome.note}` : ''
   const ruleIds = ticket.mandate.basis.rules
@@ -110,7 +113,7 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
     ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
     : note.trim()
   // A ticket of a registered project keeps its worktree inside that project's namespace, so two projects can both use `add-login`.
-  const directory = join(executionRoot(settings, stateDir), ...ticket.project ? [ticket.project] : [], name)
+  const directory = answer ? project?.workspace ?? '' : join(executionRoot(settings, stateDir), ...ticket.project ? [ticket.project] : [], name)
   return { name, directory, assignment }
 }
 /**
@@ -306,6 +309,7 @@ export class DshExecutor implements Executor {
    * @throws PrepareFailed with the command's output when the prepare command fails.
    */
   private async prepareDirectory(ticket: Ticket): Promise<void> {
+    if (canComplete(ticket.deliverable)) throw new Error('An answer ticket reads its project\'s live checkout; it has no worktree to prepare')
     const directory = ticket.execution?.directory ?? ''
     await mkdir(dirname(directory), { recursive: true })
     const settings = this.host.store.settings()
@@ -509,8 +513,14 @@ export class DshExecutor implements Executor {
     const source = sourceTrigger(this.host, ticket)
     const workspace = ticket.execution?.directory ?? ''
     if (!current()) return
-    // Prepare the workspace directory once; an existing directory counts as already prepared, including worktrees created before `prepare` commands existed.
-    if (!await stat(workspace).then(() => true, () => false)) {
+    // An answer ticket reads the project's live checkout: no branch, worktree, prepare command or cleanup; a change ticket
+    // prepares its own worktree once, and an existing directory counts as already prepared (including worktrees created
+    // before `prepare` commands existed).
+    if (canComplete(ticket.deliverable)) {
+      if (!await stat(workspace).then(() => true, () => false)) {
+        throw new Error(`The workspace ${workspace || '(unset)'} of this answer ticket is missing; it must be the project's live checkout`)
+      }
+    } else if (!await stat(workspace).then(() => true, () => false)) {
       await this.prepareDirectory(ticket)
       if (!current()) return
     }

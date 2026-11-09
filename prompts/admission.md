@@ -36,7 +36,7 @@ Rule order has no priority.
 Every decision, including ignore and unavailable, must provide direction: implementation_requested, target_basis, requires_design_decision and evidence.
 Evidence must identify the source statements and any established target/reference; do not invent evidence to make the booleans pass.
 Accept only when implementation was requested, target_basis is specified or existing-standard, and no product/design decision remains.
-For a review or read-only research/report category, the requested review, report or answer is that deliverable: set implementation_requested true, and let target_basis name the pull request, branch, commit, repository, question or documented standard the work is measured against.
+For a review or read-only research/report category, the requested review, report or answer is that deliverable; set implementation_requested true, and let target_basis name the pull request, branch, commit, repository, question or documented standard the work is measured against.
 These declarations are your semantic judgments, not proof supplied by the schema.
 
 For visual feedback, locating a component, identifying a CSS file or estimating a few changed lines does not establish a small or authorized change.

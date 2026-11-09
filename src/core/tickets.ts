@@ -54,7 +54,7 @@ export class Tickets extends EnginePart {
     this.repo.requests.save(request)
     units.forEach((unit, index) => {
       const waits = (unit.after ?? []).filter(waited => waited >= 0 && waited < index)
-      let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, requestId: request.id,
+      let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, deliverable: outcome.deliverable ?? 'change', requestId: request.id,
         ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}),
         channels: channels.map(channel => ({ ...channel })), assignments: [], inputs: [], undelivered: [],
         createdAt: at, updatedAt: at, origin }

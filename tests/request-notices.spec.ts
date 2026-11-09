@@ -8,7 +8,7 @@ const mandate: Mandate = { strength: 'explicit', policyVersion: 'v1', basis: { v
   actor: { source: 'feishu', id: 'ou_alice' }, scope: 'fix' }
 
 const ticket = (id: string, overrides: Partial<Ticket> = {}): Ticket => ({
-  id, title: `Ticket ${id}`, decisionId: `decision-${id}`, mandate, channels: [feishu('om_1')],
+  id, title: `Ticket ${id}`, decisionId: `decision-${id}`, mandate, deliverable: 'change', channels: [feishu('om_1')],
   assignments: [], inputs: [], undelivered: [],
   createdAt: '2026-11-10T09:00:00.000Z', updatedAt: '2026-11-10T09:00:00.000Z',
   origin: { triggerId: 'trigger-1', triggerIds: ['trigger-1'] }, ...overrides,

@@ -60,13 +60,15 @@ function harness(policyOverrides: Partial<Policy> = {}, { emit, prepareTicket }:
   /** Simulate the worker's Session taking the delivered Trigger Inputs it has not yet read into a step. */
   const read = (ticketId: string) => engine.inputsRead(ticketId, repo.tickets.get(ticketId)!.inputs.flatMap(input =>
     input.kind === 'trigger' && input.readAt === null ? [input.id] : []))
-  const decide = (candidate: Candidate, outcome: Outcome) => engine.decide(candidate.triggers[0]!.id, { ...outcome, evalId: candidate.evalId })
+  // These tests exercise the lifecycle; answer delivery is the one that ends on a ready report, so default to it and let a test opt into a change.
+  const decide = (candidate: Candidate, outcome: Outcome, deliverable: 'change' | 'answer' = 'answer') => engine.decide(candidate.triggers[0]!.id,
+    { ...outcome, ...(outcome.kind === 'accept' ? { deliverable } : {}), evalId: candidate.evalId })
   return { repo, engine, outbox, withdrawn, requests, assessor, executor, delivered, settle, pump, read, decide,
     setVersion: (value: string) => { version = value }, setPaused: (value: boolean) => { paused = value }, tick: (seconds: number) => { clock += seconds } }
 }
-function accepted(h: ReturnType<typeof harness>, id = '1', thread = 't1') {
+function accepted(h: ReturnType<typeof harness>, id = '1', thread = 't1', deliverable: 'change' | 'answer' = 'answer') {
   h.engine.receive(trigger(id, { threads: [{ source: 'chat', id: thread }] })); h.pump()
-  const decision = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'requested', acknowledgement: 'ok' })
+  const decision = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'requested', acknowledgement: 'ok' }, deliverable)
   h.settle()
   return decision
 }
@@ -116,7 +118,7 @@ describe('eval', () => {
     const h = harness()
     const decision = accepted(h)
     const ticket = h.repo.tickets.get(decision.ticketId!)!
-    expect(ticket).toMatchObject({ title: 'Fix', mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: member, scope: 'small' }, channels: [trigger('1').channel],
+    expect(ticket).toMatchObject({ title: 'Fix', deliverable: 'answer', mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: member, scope: 'small' }, channels: [trigger('1').channel],
       origin: { triggerId: '1', triggerIds: ['1'] } })
     expect(ticket).not.toHaveProperty('ended')
     expect(ticket.assignments).toEqual([expect.objectContaining({ state: 'running', startedAt: expect.any(String) })])
@@ -542,7 +544,7 @@ describe('follow-up owners', () => {
     () => {
     for (const taken of [true, false]) {
       const h = harness()
-      const ticketId = accepted(h).ticketId!
+      const ticketId = accepted(h, '1', 't1', 'change').ticketId!
       h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-9' }, true)
       h.engine.report(ticketId, { state: 'ready', summary: 'PR ready' })
       // A person asks for one more change, which the worker takes up or has not yet, and the pull request merges meanwhile.
@@ -793,9 +795,9 @@ describe('worker reports', () => {
     expect(h.withdrawn).toEqual([key('attention-reply', asked.attention!.id), key('attention-reply', replaced.attention!.id)])
   })
   it('ends the ticket on a final report: dropped drops it, ready completes it unless it follows a Source\'s Thread that is open', () => {
-    const outcome = (state: 'ready' | 'dropped' | 'failed', follows: boolean, closed = false) => {
+    const outcome = (state: 'ready' | 'dropped' | 'failed', follows: boolean, closed = false, deliverable: 'change' | 'answer' = 'change') => {
       const h = harness()
-      const ticketId = accepted(h).ticketId!
+      const ticketId = accepted(h, '1', 't1', deliverable).ticketId!
       h.engine.report(ticketId, { state: 'progress', summary: 'asking', question: 'Merge it?' })
       if (follows) h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-9' }, false)
       if (follows) h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-10' }, true)
@@ -809,8 +811,8 @@ describe('worker reports', () => {
     }
     expect(outcome('dropped', true)).toMatchObject({ ended: { by: 'executor', outcome: 'dropped' } })
     expect(outcome('dropped', true).ended).not.toHaveProperty('reason')
-    expect(outcome('ready', false)).toMatchObject({ ended: { outcome: 'completed' } })
-    expect(outcome('ready', false)).not.toHaveProperty('attention')
+    expect(outcome('ready', false, false, 'answer')).toMatchObject({ ended: { outcome: 'completed' } })
+    expect(outcome('ready', false, false, 'answer')).not.toHaveProperty('attention')
     expect(outcome('ready', true)).toMatchObject({ follows: [{ thread: 'gh:pr-9', own: false }, { thread: 'gh:pr-10', own: true }],
       assignments: [expect.objectContaining({ report: expect.objectContaining({ state: 'ready' }) })] })
     expect(outcome('ready', true)).not.toHaveProperty('ended')
@@ -837,6 +839,20 @@ describe('worker reports', () => {
     const ticketId = accepted(h).ticketId!
     h.engine.stopTicket(ticketId)
     expect(() => h.engine.report(ticketId, { state: 'progress', summary: 'x' })).toThrow(new UserError('ticketEnded'))
+  })
+  it('ends a change ticket only through a followed pull request, and keeps the pointer its ready report names', () => {
+    const h = harness()
+    const ticketId = accepted(h, '1', 't1', 'change').ticketId!
+    // A change with no pull request cannot end as completed: the worker names how it will be delivered first.
+    expect(() => h.engine.report(ticketId, { state: 'ready', summary: 'done' })).toThrow(new UserError('changeNeedsPullRequest'))
+    expect(h.repo.tickets.get(ticketId)).not.toHaveProperty('ended')
+    h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-9' }, false)
+    h.engine.report(ticketId, { state: 'ready', summary: 'opened', pull_request: 'https://github.com/acme/widgets/pull/9' })
+    expect(h.repo.tickets.get(ticketId)!.assignments.at(-1)!.report).toMatchObject({ state: 'ready',
+      pullRequest: 'https://github.com/acme/widgets/pull/9' })
+    // Work resumed after the pull request closes ends with its ready report, using the close outcome.
+    h.engine.threadClosed({ source: 'gh', id: 'pr-9' }, 'merged', '2026-09-23T00:00:02Z')
+    expect(h.repo.tickets.get(ticketId)).toMatchObject({ ended: { outcome: 'merged' } })
   })
 })
 describe('outcomes', () => {
@@ -1052,7 +1068,7 @@ describe('replies', () => {
 describe('ticket commands', () => {
   it('ends a ticket by the same rule on a close and on a ready report: once no PR it opened is open, as the latest of them ended', () => {
     const h = harness()
-    const ticketId = accepted(h).ticketId!
+    const ticketId = accepted(h, '1', 't1', 'change').ticketId!
     // It started from someone's PR and opened its own.
     h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-5' }, false)
     h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-7' }, true)
@@ -1067,7 +1083,7 @@ describe('ticket commands', () => {
     h.engine.threadClosed({ source: 'gh', id: 'pr-5' }, 'closed', '2026-09-23T00:00:30Z')
     expect(h.repo.tickets.get(ticketId)!.ended).toMatchObject({ outcome: 'merged' })
     // A ticket that opened no PR ends when the one it follows closes, as it did.
-    const other = accepted(h, '3', 't3').ticketId!
+    const other = accepted(h, '3', 't3', 'change').ticketId!
     h.engine.bindThread(other, { source: 'gh', id: 'pr-8' }, false)
     h.engine.report(other, { state: 'ready', summary: 'Pushed to their branch' })
     expect(h.repo.tickets.get(other)).not.toHaveProperty('ended')
@@ -1086,7 +1102,7 @@ describe('ticket commands', () => {
   })
   it('follows a Source\'s Threads, and ends once no Thread of its own is open, unless resumed work has not finished', () => {
     const h = harness()
-    const ticketId = accepted(h).ticketId!
+    const ticketId = accepted(h, '1', 't1', 'change').ticketId!
     const close = (id: string, outcome: 'merged' | 'closed', at: string) => {
       const open = h.repo.tickets.open().map(ticket => ticket.id)
       h.engine.threadClosed({ source: 'gh', id }, outcome, at)
@@ -1105,7 +1121,7 @@ describe('ticket commands', () => {
     expect(close('pr-10', 'merged', '2026-09-23T00:00:01Z')).toEqual([])
     expect(() => h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-11' }, true)).toThrow(new UserError('ticketEnded'))
     // A ticket retried after its PR closed but before the close was reported works on until it reports ready.
-    const other = accepted(h, '2', 't2').ticketId!
+    const other = accepted(h, '2', 't2', 'change').ticketId!
     h.engine.bindThread(other, { source: 'gh', id: 'pr-12' }, true)
     h.engine.report(other, { state: 'failed', summary: 'tests fail' })
     h.tick(10); h.engine.retryTicket(other)

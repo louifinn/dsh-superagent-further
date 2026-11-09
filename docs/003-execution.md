@@ -93,11 +93,12 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 
 ## How a Ticket ends
 
-- **Ready without a pull request:** a `ready` Report ends the Ticket as completed.
+- **Ready on an answer:** a `ready` Report ends an `answer` Ticket as completed; it reads the project's live checkout and opens no branch or pull request.
+- **Ready on a change without a pull request:** a `change` Ticket is refused with `changeNeedsPullRequest`; it names the pull request in its report and ends only through the Threads it follows.
 - **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a person's later message on its Threads resumes it.
 ### Pull requests
 
-A Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
+A `change` Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
 
 The Ticket is done when none of the pull requests it opened remain open. If it opened none, all pull requests it follows must be closed. It then ends with the outcome of the last relevant close and keeps its Subscriptions, allowing a later human comment to resume it.
 
@@ -105,7 +106,7 @@ A close does not end the Ticket while resumed, retried or recovered work is unfi
 
 Chat Channels receive one final notice about the pull-request outcome, and a root project Request adds one aggregate report across its Tickets and derived requests when its Lead completes it. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
 
-"Awaiting review" therefore means a `ready` Report with a pull request.
+"Awaiting review" therefore means a `ready` Report with a pull request on a `change` Ticket.
 
 ### Project requests
 

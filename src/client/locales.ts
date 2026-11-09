@@ -430,6 +430,7 @@ const TEXT = {
   resumeWhere: ['在执行状态中恢复', 'Resume in the Execution status'],
   // Execution
   'outcome.completed': ['已完成', 'Completed'],
+  'outcome.answered': ['已回答', 'Answered'],
   'outcome.merged': ['PR 已合并', 'Pull request merged'],
   'outcome.closed': ['PR 已关闭（未合并）', 'Pull request closed unmerged'],
   'outcome.dropped': ['无需处理', 'Nothing to do'],
@@ -936,6 +937,7 @@ const TEXT = {
   'userError.workerDecides': ['这条消息已通过所在线程送达工单 {tickets}：由工单的执行器判断它是否属于这个工单，不属于的会被交回，之后作为候选到达。只有停止例外，用 orchestrator_route 并把 kind 设为 stop。', USER_ERRORS.workerDecides[1]],
   'userError.ackNoChannel': ['确认需要一条已派给这个执行器、由人发出的原始消息。', USER_ERRORS.ackNoChannel[1]],
   'userError.ackNotPerson': ['请使用最初那条人发的触发，而不是机器人、CI 或执行器的报告。', USER_ERRORS.ackNotPerson[1]],
+  'userError.changeNeedsPullRequest': ['变更类工单只能通过已关注的 Pull Request 收尾：请为变更打开 PR 并让它被关注，或上报 blocked 说明无法打开的原因；只读回答请用 answer 类工单。', USER_ERRORS.changeNeedsPullRequest[1]],
   'userError.notReady': ['工单还不能交付。进展只在内部保留，等待经过验证的就绪报告；不要把进展当作回答，也不要通过其他渠道发送。', USER_ERRORS.notReady[1]],
   'userError.notAttention': ['待人工决定的消息需要在 human_action 中写明工单当前待人工决定的问题。日常未完成的工作只在内部保留。', USER_ERRORS.notAttention[1]],
   'userError.notQuestion': ['回答必须针对最初由人提出的问题，而不是执行器报告或自动触发。', USER_ERRORS.notQuestion[1]],

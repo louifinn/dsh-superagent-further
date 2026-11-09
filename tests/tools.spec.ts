@@ -273,7 +273,7 @@ it('ignores a proactive candidate from its card beside other decisions, marked s
 })
 
 it('returns where a reply stands: sent, or dropped when its conversation can no longer receive it', async () => {
-  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
   const reply = (text: string) => h.runTool(h.runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text })
   expect(await reply('修好了。')).toEqual({ status: 'sent' })
@@ -373,7 +373,7 @@ it('releases the tools it registered for a Session once its agent is disposed, a
 })
 
 it('reads a thread by the key cards show: its label, tickets, latest decisions and triggers, newest first, also for its own worker', async () => {
-  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   const key = `feishu:${CHAT}:om_1`
   const threads = await read('threads') as { items: { thread: string; label: string; read: string }[] }
   expect(threads.items[0]).toMatchObject({ thread: key, label: '@bot 修一下回归', read: `thread/${key}` })
@@ -471,7 +471,7 @@ it('shows a candidate with its thread\'s tickets open first, the tickets it reac
 }, 30_000)
 
 it('relays a worker\'s report with its ticket card and the start of its summary, and a question with the card alone', async () => {
-  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   await h.runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'Needs a decision.', human_action: 'Desktop too?' })
   await h.runtime.idle()
   expect(relaysOf('worker_attention').at(-1)).toEqual({ kind: 'worker_attention', state: 'progress', read: `ticket/${ticket.id}/result`,
@@ -517,7 +517,7 @@ it('answers a policy sync with the counts and what changed, not the whole list',
 })
 
 it('shows an Executor Session no id it cannot read: no Decision, no other ticket, no Trigger its ticket did not reach', async () => {
-  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   const another = feishu('2', '@bot 再修一个', { root_id: 'om_1' })
   h.runtime.receive(another); await h.runtime.idle()
   await h.runTool(sessionId, 'orchestrator_trigger_handback', { trigger_id: another.id, reason: 'Another fix.' })
@@ -626,3 +626,4 @@ it('asks the root thread to approve an architecture design and creates the imple
   expect(h.deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === `worker-${ticket.id}`)
     .some(call => call.text.includes('Approved; implement the staged plan.'))).toBe(true)
 })
+

@@ -1,5 +1,5 @@
 /** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
-import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
+import type { Assignment, ChannelRef, Decision, DecisionKind, Deliverable as TicketDeliverable, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
   from './model.ts'
 import type { Reason } from './reasons.ts'
 
@@ -38,7 +38,7 @@ export interface Candidate {
 }
 
 /** One delivery unit of an accepted ask: a Request creates one Ticket for each, in its own project, ordered by `after`. */
-export interface Deliverable {
+export interface DeliveryUnit {
   /** The registered project whose checkout and repository deliver this Ticket. */
   project?: string
   /** A short label for this Ticket; the accept's title when omitted. */
@@ -49,9 +49,9 @@ export interface Deliverable {
 export type AssessmentOutcome =
   | { kind: 'ignore'; reason: string | Reason; audit?: Record<string, unknown> }
   | { kind: 'unavailable'; reason: string | Reason; audit?: Record<string, unknown> }
-  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `project` the registered project whose checkout the work uses, and `note` a routing note for its worker. */
+  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `project` the registered project whose checkout the work uses, `note` a routing note for its worker, and `deliverable` what the accepted Tickets owe (default `change`). */
   | { kind: 'accept'; title: string; scope: string; reason: string | Reason; acknowledgement?: string; rules?: string[]; audit?: Record<string, unknown>;
-    name?: string; project?: string; note?: string; deliverables?: Deliverable[] }
+    name?: string; project?: string; note?: string; deliverables?: DeliveryUnit[]; deliverable?: TicketDeliverable }
   | { kind: 'stop'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
 
 /** Semantic judgement. `request` queues the assessment, idempotently per `evalId`; the outcome returns through `Engine.decide`. */

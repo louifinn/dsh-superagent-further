@@ -1,5 +1,5 @@
 /** One outbound notice for a Request whose delivery spans several Tickets, and the aggregate report of a project request. */
-import { key, type ChannelRef, type OutboundMessage, type ProjectRequest, type ProjectRequestStatus, type Request, type Ticket, type Trigger }
+import { canComplete, key, type ChannelRef, type OutboundMessage, type ProjectRequest, type ProjectRequestStatus, type Request, type Ticket, type Trigger }
   from '../core/index.ts'
 import { githubPage, githubThreadRef, SOURCE } from '../sources/github-trigger.ts'
 
@@ -52,7 +52,8 @@ function ticketLine(ticket: Ticket, chinese: boolean, repository: string): strin
   const pull = closedPull(ticket)
   const link = pull ? `[PR #${pull.number}](${githubPage(pull.repository || repository, pull.number, true)})` : ticket.title
   const state = ticket.ended?.outcome ?? 'open'
-  const words = chinese ? ZH[state as keyof typeof ZH] ?? state : state
+  const words = ticket.ended?.outcome === 'completed' && canComplete(ticket.deliverable)
+    ? (chinese ? '已回答' : 'answered') : chinese ? ZH[state as keyof typeof ZH] ?? state : state
   return `- ${ticket.project ?? (chinese ? '部署仓库' : 'deployment')}: ${link} ${words}`.trim()
 }
 

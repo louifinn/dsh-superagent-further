@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { delimiter, join } from 'node:path'
@@ -154,6 +154,8 @@ function seed(store: Store, accounts: Accounts = {}): void {
   const { feishu: _feishu, ...others } = settings.sources
   const feishu = accounts.feishu === null ? undefined : { ...settings.sources.feishu?.config, cli: BOT(), ...accounts.feishu }
   const projects = settings.executor.projects.some(project => project.id === 'default') ? settings.executor.projects : [{ id: 'default', name: 'Default', workspace: join(directory, 'default'), repository: 'acme/widgets', branch: '' }, ...settings.executor.projects]
+  // Answer tickets read an existing live checkout, so every seeded project needs its workspace directory.
+  for (const project of projects) mkdirSync(project.workspace, { recursive: true })
   store.saveSettings(SettingsSchema.parse({ ...settings, executor: { ...settings.executor, projects }, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
 }
 let restarts: ReturnType<typeof vi.fn<() => void>>
@@ -182,13 +184,20 @@ async function route(item: Record<string, unknown>): Promise<Record<string, unkn
   if (results[0]!.refused) throw new Error(String(results[0]!.refused))
   return results[0]!
 }
-async function acceptedTicket(trigger = feishu('1', '@bot 修一下回归')) {
+async function acceptedTicket(trigger = feishu('1', '@bot 修一下回归'), deliverable: 'change' | 'answer' = 'change') {
   await receive(trigger)
   expect(relays(runtime.masterId).some(item => item.trigger_id === trigger.id)).toBe(true)
   const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复回归',
-    worktree_name: worktreeName, acknowledgement: '收到，修复回归。' })
+    worktree_name: worktreeName, deliverable, acknowledgement: '收到，修复回归。' })
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   return { trigger, ticket, sessionId: `worker-${ticket.id}` }
+}
+const pullThread = (ticketId: string) => ({ source: 'github', id: `pull-${ticketId}` })
+/** Follows a change Ticket's pull request while it is open. */
+function followWithPull(ticketId: string) { runtime.engine.bindThread(ticketId, pullThread(ticketId), true) }
+/** Ends a change Ticket the way its own merged pull request does, so its ready report may finish it. */
+function mergeWithPull(ticketId: string) {
+  runtime.engine.threadClosed(pullThread(ticketId), 'merged', new Date().toISOString())
 }
 beforeEach(async () => {
   // The runtime applies the worker environment to the whole process, and a host that embeds the
@@ -534,7 +543,7 @@ it('shows a message that carries JSON, with or without a label, as its label and
 })
 
 it('ends a review or read-only ticket on ready with no PR, and delivers its findings as the result', async () => {
-  const { ticket, sessionId } = await acceptedTicket()
+  const { ticket, sessionId } = await acceptedTicket(undefined, 'answer')
   const findings = '审查完成：未发现阻塞问题。'
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: findings })
   expect(runtime.store.tickets.get(ticket.id)).toMatchObject({ ended: expect.objectContaining({ outcome: 'completed' }) })
@@ -1532,7 +1541,7 @@ it('tells the main Session of each requeue of the same Trigger', async () => {
 })
 
 it('keeps replies and acknowledgements to an IM conversation within the IM limit', async () => {
-  const { ticket, trigger, sessionId } = await acceptedTicket()
+  const { ticket, trigger, sessionId } = await acceptedTicket(undefined, 'answer')
   const long = Array.from({ length: IM_WORDS + 1 }, () => 'word').join(' ')
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed' })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: long })).rejects.toThrow(`maximum is ${IM_WORDS}`)
@@ -1649,7 +1658,7 @@ it('restarts a worker that was mid-work when the host stopped with the recovery 
 
 it('keeps the report of a blocked, failed or ready worker whose turn ends, and relays nothing more', async () => {
   for (const state of ['blocked', 'failed', 'ready'] as const) {
-    const { ticket, sessionId } = await acceptedTicket(feishu(String(20 + ['blocked', 'failed', 'ready'].indexOf(state)), `@bot 修 ${state}`, { root_id: undefined }))
+    const { ticket, sessionId } = await acceptedTicket(feishu(String(20 + ['blocked', 'failed', 'ready'].indexOf(state)), `@bot 修 ${state}`, { root_id: undefined }), 'answer')
     await runTool(sessionId, 'orchestrator_report', { state, summary: `${state} report` })
     const relayed = relays(runtime.masterId).length
     const agent = agents.get(sessionId)! as { status: string }
@@ -1845,6 +1854,7 @@ it('launches a queued Assignment once when the host resumes, and gives a failed 
 it('checks out a Feishu request in the project its assessment names', async () => {
   runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor,
     projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  mkdirSync(join(directory, 'app'), { recursive: true })
   const trigger = feishu('60', '@bot 修 app', { root_id: undefined })
   await receive(trigger)
   expect(relays(runtime.masterId).some(item => item.trigger_id === trigger.id)).toBe(true)
@@ -1893,10 +1903,11 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   const settings = runtime.store.settings()
   runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, 
     projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  mkdirSync(join(directory, 'app'), { recursive: true })
   const trigger = feishu('62', '@bot 修 lead', { root_id: undefined })
   await receive(trigger)
   const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复 lead', worktree_name: 'fix-lead',
-    project: 'app', acknowledgement: '收到。' })
+    project: 'app', deliverable: 'answer', acknowledgement: '收到。' })
   await runtime.idle()
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   const childId = `worker-${ticket.id}`
@@ -1929,6 +1940,7 @@ it('splits an accept into one Ticket per project, and starts the second once the
   runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [
     { id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' },
     { id: 'lib', name: 'Lib', workspace: join(directory, 'lib'), repository: 'acme/lib', branch: '' }] } })
+  mkdirSync(join(directory, 'app'), { recursive: true }); mkdirSync(join(directory, 'lib'), { recursive: true })
   const trigger = feishu('64', '@bot 两个项目', { root_id: undefined })
   await receive(trigger)
   const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '两个项目', worktree_name: 'two-projects',
@@ -1947,15 +1959,19 @@ it('splits an accept into one Ticket per project, and starts the second once the
   const secondChild = `worker-${second!.id}`
   expect(agents.has(secondChild)).toBe(false)
   const firstChild = `worker-${first!.id}`
+  followWithPull(first!.id)
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(firstChild) } as never)
   await runTool(firstChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
+  mergeWithPull(first!.id)
   await runtime.idle()
   expect(runtime.store.tickets.get(second!.id)!.assignments).toHaveLength(1)
   expect(agents.has(secondChild)).toBe(true)
   const sent: { id: string; kind: string; text: string }[] = []
   const outbox = vi.spyOn(runtime.outbox, 'send').mockImplementation((message) => { sent.push(message) })
+  followWithPull(second!.id)
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(secondChild) } as never)
   await runTool(secondChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
+  mergeWithPull(second!.id)
   await runtime.idle()
   expect(runtime.store.requests.get(request.id)!.ended).toMatchObject({ outcome: 'done' })
   // A Request delivered by several Tickets reports once, when the Request ends, instead of once per Ticket.
@@ -1969,10 +1985,11 @@ it('adopts a Lead-hosted child after a restart instead of starting a new Session
   const settings = runtime.store.settings()
   runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, 
     projects: [{ id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' }] } })
+  mkdirSync(join(directory, 'app'), { recursive: true })
   const trigger = feishu('63', '@bot 修 adopt', { root_id: undefined })
   await receive(trigger)
   const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复 adopt', worktree_name: 'fix-adopt',
-    project: 'app', acknowledgement: '收到。' })
+    project: 'app', deliverable: 'answer', acknowledgement: '收到。' })
   await runtime.idle()
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   const childId = `worker-${ticket.id}`
@@ -2222,3 +2239,5 @@ it('reports a completed root project request once through the Channel its chain 
   await runtime.idle()
   expect(runtime.store.receipts.waiting().filter(item => item.kind === 'notice')).toEqual([])
 })
+
+

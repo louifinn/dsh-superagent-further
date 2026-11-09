@@ -121,6 +121,11 @@ it('writes a schema 10 database in its current shape once, so nothing reads an o
   expect(store.get('settings-version:3')).toMatchObject({ source: 'panel', settings: { executor: { maxWorkers: 'many' } } })
   const migrated = store.tickets.get('t1')!
   expect(migrated).not.toHaveProperty('meta')
+  expect(migrated).toMatchObject({ deliverable: 'change' })
+  // A Ticket that ended without a followed pull request is an answer: it never had a branch to merge.
+  expect(store.tickets.get('t2')).toMatchObject({ deliverable: 'answer' })
+  expect(store.tickets.get('t3')).toMatchObject({ deliverable: 'answer' })
+  expect(store.tickets.get('t4')).toMatchObject({ deliverable: 'change' })
   expect(store.keys('github-ended:')).toEqual([])
   expect(store.decisions.get('d3')).toMatchObject({ kind: 'unavailable', dismissed: true })
   expect(store.keys('problem-dismissed:')).toEqual([])

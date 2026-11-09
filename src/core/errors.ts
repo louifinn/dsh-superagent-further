@@ -29,6 +29,7 @@ export const USER_ERRORS = {
   workerDecides: ['refused', 'This message reached ticket {tickets} on its thread: its worker decides whether it belongs there and hands back what does not, which then arrives as a candidate. Only a stop goes through orchestrator_route, with kind stop'],
   ackNoChannel: ['refused', 'Acknowledgement requires an assigned human source message'],
   ackNotPerson: ['refused', 'Use the original human trigger, not a bot, CI or worker report'],
+  changeNeedsPullRequest: ['refused', 'A change ticket ends only through a followed pull request. Open a pull request for the change and let its Thread be followed, or report blocked explaining what prevents it; answer-only work belongs on a ticket accepted as answer.'],
   notReady: ['refused', 'Ticket is not ready for delivery. Keep progress internal and wait for a verified ready report; do not relabel progress as an answer or send it through another channel.'],
   notAttention: ['refused', 'Attention requires the ticket\'s current attention question in human_action. Routine unfinished work stays internal.'],
   notQuestion: ['refused', 'An answer must target the original human question, not a worker report or automated trigger'],

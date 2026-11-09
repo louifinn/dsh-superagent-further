@@ -36,6 +36,7 @@ function endedTicket(id: string, directory: string, at: string): Ticket {
   return {
     id, title: 'one', decisionId: 'd',
     mandate: { strength: 'explicit', policyVersion: '', basis: { via: 'listed' }, actor: { source: 'feishu', id: 'ou_person' }, scope: 'add one' },
+    deliverable: 'change',
     channels: [], assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at,
     execution: { name: 'add-one', directory, assignment: 'work' },
     origin: { triggerId: 'x', triggerIds: [] },

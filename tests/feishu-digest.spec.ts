@@ -9,7 +9,7 @@ import type { Health, SourceContext } from '../src/sources/host.ts'
 /** A local noon, so a digest hour of 12 is inside the hour and 13 is not, whatever the machine's zone is. */
 const noon = () => new Date(2026, 10, 7, 12, 30, 0, 0)
 const ticket = (overrides: Partial<Ticket>): Ticket => ({
-  id: 'ticket-1', title: 'Fix it', decisionId: 'decision-1', mandate: {} as Ticket['mandate'], channels: [],
+  id: 'ticket-1', title: 'Fix it', decisionId: 'decision-1', mandate: {} as Ticket['mandate'], deliverable: 'change', channels: [],
   createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', origin: { triggerId: 'trigger-1', triggerIds: ['trigger-1'] },
   assignments: [], inputs: [], undelivered: [], ...overrides,
 })

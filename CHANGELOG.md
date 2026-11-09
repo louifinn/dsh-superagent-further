@@ -25,6 +25,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   it. An independent DSH Session can submit work through the `session` Source kind and the global `superagent_submit`
   tool; every outcome is answered on that Session, and a completed Request reports back to it.
 
+- A Ticket deliverable contract (schema 22): `deliverable` is `change` or `answer`. A change Ticket ends only through
+  the pull requests it names or follows: its ready report without a pull request is refused with
+  `changeNeedsPullRequest`, records the pull request it names, and it is prepared in its own branch. An answer Ticket
+  reads the project's live checkout read-only — no branch, worktree, prepare command or write access — and its ready
+  report ends it as `completed`, shown as Answered. The accept names the deliverable (`deliverable` defaults to
+  `change`; only a change requires `worktree_name`). Migration to schema 22 records `change` for open Tickets and for
+  ended Tickets with a followed pull request, and `answer` for any other ended Ticket.
+
 - Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
   service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
   `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both

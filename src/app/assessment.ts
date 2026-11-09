@@ -1,7 +1,7 @@
 /** Proactive candidate assessment for the main Session: relays candidate cards, serves bounded context reads, and records outcomes. */
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
-import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
+import { reasonText, requiresPullRequest, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
   type Trigger } from '../core/index.ts'
 import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
@@ -27,6 +27,7 @@ export const AssessmentSchema = z.object({
   direction: AdmissionDirectionSchema.describe('Required for every decision.'),
   title: z.string().min(1).max(160),
   worktree_name: WorktreeNameSchema.optional(),
+  deliverable: z.enum(['change', 'answer']).default('change').describe('What the accepted work owes: a reviewable change that delivers through a pull request, or a read-only answer that never creates a branch or worktree.'),
   project: z.string().trim().min(1).max(40).optional().describe('The registered Execution project that owns the work, when the Trigger names no repository; omit otherwise.'),
   deliverables: z.array(z.object({
     project: z.string().trim().min(1).max(40).optional(),
@@ -38,7 +39,7 @@ export const AssessmentSchema = z.object({
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),
   reason: z.string().min(1).max(500),
 }).strict().refine(value => value.decision !== 'accept' || !directionAllowed(value.direction) || !value.rule_assessments.some(rule => rule.matched)
-  || !!value.worktree_name, { message: 'Accepted work requires a short English worktree_name', path: ['worktree_name'] })
+  || !requiresPullRequest(value.deliverable) || !!value.worktree_name, { message: 'Accepted change work requires a short English worktree_name', path: ['worktree_name'] })
 
 /** Character limits in the initial thread window: for the trigger itself, its two nearest neighbours, other window messages, and stub previews. */
 const TRIGGER_CHARS = 4000, NEAR_CHARS = 1200, WINDOW_CHARS = 400, STUB_CHARS = 50

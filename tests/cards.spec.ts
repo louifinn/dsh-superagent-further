@@ -123,6 +123,7 @@ const trigger: Trigger = { id: 'request-1', source: 'github', threads: [{ source
 const SUMMARY = 'The focused check passed.\n' + 'Detailed evidence. '.repeat(20)
 const ticket: Ticket = { id: 'ticket-1', title: 'Inspect failing check', decisionId: 'd1', channels: [], inputs: [], undelivered: [],
   mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed', sender: 'Alice' }, actor: trigger.actor, scope: 'small' },
+  deliverable: 'change',
   assignments: [{ id: 'a1', state: 'running', createdAt: '2026-09-09T00:00:00Z', startedAt: '2026-09-09T00:00:00Z', report: { state: 'ready', summary: SUMMARY, at: '' } }],
   createdAt: '2026-09-09T00:00:00Z', updatedAt: '2026-09-09T00:00:00Z',
   origin: { triggerId: 'request-1', triggerIds: ['request-1'] },

@@ -120,7 +120,7 @@ export function TicketPage({ id }: { id: string }) {
   const failed = data.stage === 'person' && data.action === 'failed'
   const opening = data.threads.find(thread => thread.url)
   const ended = data.ended && (() => {
-    const outcome = valueLabel(t, 'outcome', data.ended.outcome), reason = reasonLabel(t, data.ended.reason), time = when(data.ended.at,
+    const outcome = data.answered ? t('outcome.answered') : valueLabel(t, 'outcome', data.ended.outcome), reason = reasonLabel(t, data.ended.reason), time = when(data.ended.at,
       t('lang'))
     return reason ? t('endedAt', { time, outcome, reason }) : t('endedAtShort', { time, outcome })
   })()

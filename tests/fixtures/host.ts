@@ -3,7 +3,7 @@
  * allowed member Alice (`ou_alice`), listened chat `oc_team`, and `auto` eval mode. Stop it with `stop()`.
  */
 import { Context } from '@deepseek-ai/cordis'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
@@ -303,6 +303,8 @@ export async function startRuntime(seed?: (store: Store) => void) {
     seeded.saveSettings({ ...settled, executor: { ...settled.executor,
       projects: [{ id: 'default', name: 'Default', workspace: join(directory, 'default'), repository: 'acme/widgets', branch: '' }] } })
   }
+  // An answer ticket reads an existing live checkout, so every seeded project needs its workspace directory.
+  for (const project of seeded.settings().executor.projects) mkdirSync(project.workspace, { recursive: true })
   seeded.close()
   const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())
   await runtime.ready
@@ -330,13 +332,20 @@ export async function startRuntime(seed?: (store: Store) => void) {
     if (results[0]!.refused) throw new Error(String(results[0]!.refused))
     return results[0]!
   }
-  async function acceptedTicket(trigger: Trigger) {
+  async function acceptedTicket(trigger: Trigger, deliverable: 'change' | 'answer' = 'change') {
     runtime.receive(trigger)
     await runtime.idle()
-    const result = await route({ kind: 'accept', trigger_id: trigger.id, title: `Fix ${trigger.id}`, worktree_name: 'fix-regression', acknowledgement: '收到，修复回归。' })
+    const result = await route({ kind: 'accept', trigger_id: trigger.id, title: `Fix ${trigger.id}`, worktree_name: 'fix-regression',
+      deliverable, acknowledgement: '收到，修复回归。' })
     await runtime.idle()
     const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
     return { trigger, ticket, sessionId: `worker-${ticket.id}` }
+  }
+  /** Ends a change Ticket the way its own merged pull request does, so its ready report may finish it. */
+  function mergeWithPull(ticketId: string) {
+    const thread = { source: 'github', id: `pull-${ticketId}` }
+    runtime.engine.bindThread(ticketId, thread, true)
+    runtime.engine.threadClosed(thread, 'merged', new Date().toISOString())
   }
   async function api(method: string, path: string, json?: unknown) {
     let status = 0, text = ''
@@ -350,7 +359,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, controller, subprocess, hooks, resolveDefault, stop,
+  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
     jobs, subagents, step, claim }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

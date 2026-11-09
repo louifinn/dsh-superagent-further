@@ -6,7 +6,7 @@ import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
-import { key, liveTicket, type Ticket } from '../core/index.ts'
+import { canComplete, key, liveTicket, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
@@ -84,6 +84,9 @@ declare module '@deepseek-ai/cordis' {
  */
 const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
   'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
+/** Tools an answer ticket never keeps: it reads the project's live checkout and writes nothing, runs no shell, and starts no further work. */
+const ANSWER_DENIED = ['write', 'edit', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'subagent', 'send_message', 'list_agents',
+  'interrupt_agent', 'todo_write', 'list_subagent_models']
 /**
  * The profile's shell tool: the Windows configuration mounts `tool-pwsh` and disables `tool-bash`, while elsewhere the profile
  * mounts `tool-bash`; a main Session allowed only the other name would have no shell at all.
@@ -315,6 +318,8 @@ export class Sessions {
     if (!master && !project && !ticket) { this.limitSubagent(agent); return }
     const binding: SessionBinding = { disposers: [] }
     this.bindings.set(agent, binding)
+    // An answer ticket reads the live checkout under a read-only profile; a change ticket works inside its own worktree.
+    if (ticket) this.ctx.permissionPresets.set(agent.session, canComplete(ticket.deliverable) ? 'read-only' : 'danger-full-access')
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
     this.updateModelHealth()
@@ -324,7 +329,10 @@ export class Sessions {
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = project ? composeLeadPrompt(version.config, project)
         : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      return `[dsh-superagent-further prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      const delivery = current && canComplete(current.deliverable)
+        ? '\nThis Ticket accepts an ANSWER: read the live checkout and never modify it. Do not create branches, commits, or pull requests; deliver the answer in your ready report.'
+        : ''
+      return `[dsh-superagent-further prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}${delivery}`
     }, ...(master ? { complete: true } : {}) }))
     // Memory is volatile: a write or an ended Ticket changes it. It travels in the runtime-context snapshot, which DSH
     // appends as a small user message after the cached history when it changes, instead of the system prompt, whose change
@@ -411,7 +419,9 @@ export class Sessions {
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     const store = this.host.store
     const parent = scopeParentOf(agent)
-    const allow = WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
+    const ticket = store.tickets.get(ticketId)
+    const denied = ticket && canComplete(ticket.deliverable) ? ANSWER_DENIED : []
+    const allow = WORK_TOOLS.filter(name => !denied.includes(name) && agent.ctx.tools.get(name, parent))
     return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
       const current = store.tickets.get(ticketId)
       return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined

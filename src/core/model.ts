@@ -224,7 +224,8 @@ export interface Assignment {
   startedAt?: string
   endedAt?: string
   endedReason?: string
-  report?: { state: ReportState; summary: string; at: string }
+  /** The worker's last report; pullRequest is the pull request a change deliverable opened, the delivery pointer its ending needs. */
+  report?: { state: ReportState; summary: string; at: string; pullRequest?: string }
   /** When Inputs last reached the worker; one at or after `report.at` means the worker has been busy with Inputs since that report. */
   deliveredAt?: string
   /**
@@ -273,6 +274,19 @@ export interface PolicyEffect {
 export type TicketEndBy = 'executor' | 'human'
 /** How a ticket ended: with its result, with its pull request merged or closed unmerged, with nothing to do, or stopped by a person. */
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
+/**
+ * What a Ticket owes when it ends: a `change` delivers through a pull request (its followed Threads decide merged or
+ * closed), while an `answer` delivers a written answer and never creates a branch or worktree. The contract is declared at
+ * acceptance and immutable; it is the only source of truth for these rules, exposed through the capability helpers below
+ * rather than compared across the app layer.
+ */
+export type Deliverable = 'change' | 'answer'
+/** Whether Tickets with this deliverable deliver through a pull request, so they can never end `completed`. */
+export const requiresPullRequest = (deliverable: Deliverable): boolean => deliverable === 'change'
+/** Whether the outcome vocabulary of this deliverable includes `merged`/`closed` through a followed pull request. */
+export const canMerge = (deliverable: Deliverable): boolean => deliverable === 'change'
+/** Whether `completed` is a successful ending for this deliverable: only an answer ticket's report is its deliverable. */
+export const canComplete = (deliverable: Deliverable): boolean => !requiresPullRequest(deliverable)
 /** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
 export interface Attention { id: string; question: string; triggerId?: string }
 /**
@@ -423,6 +437,8 @@ export interface Ticket {
   title: string
   decisionId: string
   mandate: Mandate
+  /** What the ticket owes: a reviewable change or an answer. Set at acceptance from the accept outcome; immutable afterwards. */
+  deliverable: Deliverable
   /** The Request it belongs to; absent only on records from before schema 14 until the upgrade fills it in. */
   requestId?: string
   /** Tickets of the same Request it waits on; the Orchestrator dispatches it only after they end. */

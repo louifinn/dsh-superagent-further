@@ -189,7 +189,7 @@ it('takes the message a follow-up answers from its Source kind, whichever kind i
 
 it('tells the main Session of a follow-up to an ended ticket once the ticket resumes, and not when it cannot', async () => {
   h = await startRuntime()
-  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done' })
   expect(h.runtime.store.tickets.get(ticket.id)!.ended).toBeDefined()
   // While processing is paused the message waits for the ticket, which has not resumed: the main Session hears nothing yet.
@@ -301,3 +301,4 @@ it('tells a worker it may hand back a message beyond its ticket or for another o
   expect((h.tools.get(sessionId)!.get('orchestrator_trigger_handback') as unknown as { description: string }).description)
     .toContain('beyond this ticket or for another one')
 })
+

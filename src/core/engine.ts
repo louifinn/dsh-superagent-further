@@ -394,7 +394,7 @@ export class Engine {
     const mandate = this.leadMandate(request, trigger)
     const outcome = this.leadOutcome(request, 'design')
     let ticket: Ticket = {
-      id, title: request.title, decisionId, mandate,
+      id, title: request.title, decisionId, mandate, deliverable: 'answer',
       channels: trigger.channel ? [{ ...trigger.channel }] : [],
       assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at,
       origin: { triggerId: trigger.id, triggerIds: [trigger.id] }, project: request.project,

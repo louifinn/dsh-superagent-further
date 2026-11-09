@@ -1,13 +1,13 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
 import { z } from 'zod'
-import { isoTime, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
-  type Reason, type Request, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
+import { isoTime, said, threadKey, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
+  type Reason, type Request, type Thread, type Ticket, type TicketInput, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { projectByRepository } from '../projects.ts'
 import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 21
+export const SCHEMA_VERSION = 22
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -217,6 +217,27 @@ export function migrateTo20(_store: Store): void {}
  * rewrite that belongs to project requests has one place to live.
  */
 export function migrateTo21(_store: Store): void {}
+/**
+ * Schema 22 declares every Ticket's `deliverable` (Issue #1): an open Ticket keeps its existing worktree and
+ * branch, so it becomes `change`; an ended Ticket that followed a pull request delivers that change, while one that never
+ * followed a pull request could only have delivered an answer. Pull request Threads are recognised by the `isPr` metadata
+ * of their recorded Triggers. No other field changes, and the rewrite keeps every record otherwise identical.
+ */
+export function migrateTo22(store: Store): void {
+  step('the tickets', () => {
+    const pullThreads = new Set<string>()
+    for (const row of store.db.prepare("SELECT value FROM trigger WHERE value ->> '$.meta.isPr' = 1").all()) {
+      const trigger = JSON.parse(String(row.value)) as Trigger
+      for (const thread of trigger.threads) pullThreads.add(threadKey(thread))
+    }
+    for (const ticket of store.tickets.list()) {
+      const deliverable = ticket.ended === undefined ? 'change'
+        : (ticket.follows ?? []).some(follow => pullThreads.has(follow.thread)) ? 'change' : 'answer'
+      if (ticket.deliverable === deliverable) continue
+      store.tickets.save({ ...ticket, deliverable })
+    }
+  })
+}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).
@@ -742,3 +763,4 @@ function assessmentTriggers(store: Store): void {
       .run(evaluation.id, JSON.stringify({ triggerId: evaluation.triggerIds[0] }), ++seq, Date.now(), new Date().toISOString())
   }
 }
+

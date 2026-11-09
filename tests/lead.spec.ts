@@ -19,7 +19,7 @@ const leadTexts = (): string[] => h.deliveries.mock.calls.map(([call]) => call)
 
 /** A setup with one accepted ticket whose worker raises `title`. */
 const raised = async (title = 'Add a project status page') => {
-  const accepted = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const accepted = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   const request = await h.runTool(accepted.sessionId, 'request_create', {
     title, instruction: 'Build a page that lists each project\'s open work.', evidence: 'The overview only shows tickets.',
   }) as { id: string; status: string }
@@ -132,3 +132,4 @@ it('reminds the Lead twice at the activation boundary, then marks the request ne
   await h.runTool('lead-default', 'lead_request_decide', { id: request.id, action: 'reject', reply: 'Not in this project.' })
   expect(h.runtime.store.leads.getByRequest('lead', `lead-attention:${request.id}`)?.ackAt).toBeDefined()
 })
+

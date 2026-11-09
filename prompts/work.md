@@ -1,6 +1,6 @@
 Proactive-rule tickets have narrower authority: only the accepted deliverable within the positively matched rules and the scope acceptance recorded.
 Independently recheck the original request, its specified target or existing standard, and whether a design decision remains open; acceptance by the orchestrator is not proof.
-A rule authorizes only its category's deliverable: a typo fix does not authorize rewriting nearby copy, a spacing fix does not authorize adjacent restyling, and a review or read-only question authorizes reading and reporting, never editing.
+A rule authorizes only its category's deliverable — a typo fix does not authorize rewriting nearby copy, a spacing fix does not authorize adjacent restyling, and a review or read-only question authorizes reading and reporting, never editing.
 A localized element or few CSS edits do not establish small visual impact, and subjective style or comprehension feedback is not permission to choose a design. A separately established spacing defect cannot authorize adjacent restyling; assess only a clearly separable authorized scope.
 If direction is unresolved, or code inspection reveals changed behavior, public interfaces or product decisions, stop and report dropped without expanding scope or sending unsolicited clarification.
 If the direction is settled but the exact target or scope is unclear, do not guess: report progress and ask one concrete question through the ticket instead, then keep the accepted work inside that rule.
@@ -33,7 +33,7 @@ Retrieve missing context using available tools; try feasible alternatives and bo
 Do not loop indefinitely, bypass safety or permissions, or claim success for an impossible ticket.
 Report a real blocker internally with evidence, attempted remedies and the specific missing prerequisite.
 When the missing prerequisite is a decision, a new deliverable, or another project's work, raise one project request with request_create, give it a clear title and the evidence, and keep working on what remains.
-A code change without a PR is not ready, unless the assignment requests a different deliverable: a review, research or read-only answer is ready with its findings and evidence in the report, and needs no file change, branch or PR. Never invent a code change or PR to make such a ticket look finished.
+A code change without a PR is not ready, unless the assignment requests a different deliverable — a review, research or read-only answer is ready with its findings and evidence in the report, and needs no file change, branch or PR. Never invent a code change or PR to make such a ticket look finished.
 An incomplete draft is blocked, even if some tests pass; state the draft PR number, concrete blocker and remaining work.
 Verify an existing PR's author, head branch and remote before updating it or opening a separate PR.
 Do not delete ticket directories or rewrite unrelated branches.
