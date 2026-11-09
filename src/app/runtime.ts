@@ -229,6 +229,8 @@ export class Runtime extends Service implements SourceHost {
             ctx.logger.warn('dsh-superagent-further could not remember a finished item: %s', String(error))
           }
         } })
+      // The Lead tools and the reply enforcement act through the Engine; attach it once the composition is complete.
+      sessions.attachEngine(engine)
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
       const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
@@ -342,6 +344,13 @@ export class Runtime extends Service implements SourceHost {
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
+    // A Lead turn that ended while the Host was down may have left requests or worker reports unanswered: prompt it for
+    // each one now, so a restart does not silently drop a request.
+    try {
+      await this.sessions.lead.reconcile()
+    } catch (error) {
+      this.ctx.logger.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
+    }
     // Reconcile only after the main Session exists, because every Host target names it. A missing or changed Host task is
     // recorded as orphaned or drifted; it is never recreated silently (docs/011 B4).
     try {

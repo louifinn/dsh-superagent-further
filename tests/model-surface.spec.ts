@@ -45,7 +45,9 @@ interface Skill { name: string; description: string; content: string }
 // Feishu file delivery approved on 2026-11-09; deleting that capability would let the budget drop back.
 // The worker budget rose from 40,500 with the 0.3.0 rename: the package name appears in the preset, skill and
 // tool text the model reads, and the longer registration ids add about 30 characters at this size.
-const BUDGET: Record<Role, number> = { orchestrator: 64_500, worker: 40_600 }
+// It rose from 40,600 with request_create, which adds a schema and the rule for raising a project request (docs/012 D4);
+// the capability is the point of the change, so the budget grows with it.
+const BUDGET: Record<Role, number> = { orchestrator: 64_500, worker: 43_800 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -392,8 +394,7 @@ function failures(): Map<string, string> {
 
 it('collects both roles\' tools, prompts, skills and inputs', () => {
   expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
-    'orchestrator_thread_follow',
-    'orchestrator_thread_unrelated', 'orchestrator_trigger_handback'])
+    'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'request_create'])
   expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file']))
   // The one routing tool takes the place of four.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {

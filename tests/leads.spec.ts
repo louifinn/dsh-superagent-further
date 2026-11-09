@@ -24,6 +24,10 @@ describe('Lead Sessions', () => {
     expect(prompt).toContain('Local clone /src/app; repository acme/app; base branch main.')
     expect(prompt).toContain('## subscriptions')
     expect(prompt).toContain('Execution environment')
+    // The Lead's project-request duties are part of its built-in prompt, not only the tools' descriptions.
+    expect(prompt).toContain('## project requests')
+    expect(prompt).toContain('lead_request_decide')
+    expect(prompt).toContain('needs-attention')
   // A Lead's memories arrive in the runtime-context snapshot too, scoped to its project.
   expect(prompt).toContain('runtime-context snapshot')
   expect(prompt).not.toContain('## Memory')
@@ -52,12 +56,15 @@ describe('Lead Sessions', () => {
       // A second ensure resolves the loaded Session and does not create another one.
       const again = await host.runtime.sessions.ensureLead('app', join(host.directory, 'app'), 'Project App')
       expect(again.id).toBe('lead-app')
-      // The Lead's application tool reads its project, its Tickets and its waiting messages.
+      // The Lead's application tools read its project, its Tickets and its waiting messages, and list its requests.
+      expect([...host.tools.get('lead-app')!.keys()].sort()).toEqual(['lead_request_complete', 'lead_request_decide', 'lead_request_reply',
+        'lead_requests', 'lead_status', 'memory_forget', 'memory_search', 'memory_write'])
       const status = await host.runTool('lead-app', 'lead_status', {}) as { project: Record<string, unknown>; tickets: { open: unknown[] };
         messages: unknown[] }
       expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })
       expect(status.tickets.open).toEqual([])
       expect(status.messages).toEqual([])
+      expect(await host.runTool('lead-app', 'lead_requests', {})).toMatchObject({ project: 'app', requests: [], unanswered: [], reports: [], attention: [] })
       // A Lead remembers, recalls and forgets only inside its own project; installation-wide memories belong to the
       // Orchestrator, and another project's memories are invisible unless the Lead is given that project.
       const mine = host.runtime.store.memories.save({ kind: 'fact', project: 'app', text: 'The app keeps its release notes in docs.' })
