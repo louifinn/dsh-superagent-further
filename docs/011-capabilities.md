@@ -824,6 +824,25 @@ whitelisted mention or direct message. The design spec (decisions D1–D10 and t
 
 Schema 21 and the engine commands, the worker and Lead tools with their prompts, the aggregate report and explicit always-reply, the architecture approval round trip and the session bridge are implemented and merged (missions M13–M17). `tests/project-requests.spec.ts`, `tests/lead.spec.ts`, `tests/request-notices.spec.ts` and `tests/sources/session.spec.ts` cover them; `pnpm check` is green and the README records the suite totals.
 
+## Part F — Installation-level self-bootstrap (approved 2026-11-10, Sprint 26)
+
+The operator approved the two gaps left by A′: installation automation findings could not become work, and a project Lead
+had no channel for work that belongs to another project or to the installation. P1 lands the first.
+
+- **Tool:** the main Session's `orchestrator_request_create` creates one installation-level Request and its delivery
+  units' Tickets from an installation automation delivery's findings. It validates that the named automation exists and
+  is installation-scope (project findings belong to the project Lead, A′), and requires a registered project for every
+  unit.
+- **Authority:** the Request carries an installation Mandate (`basis.via = 'installation'`, actor
+  `dsh-superagent:installation`, provenance the automation id), empty Channels and no root Trigger; revalidation trusts
+  that basis because no Source admitted it. A repeated raise with the same title and automation returns the open
+  Request.
+- **Budget:** the delivery still changes no repository, Settings, Sources, Tickets or Policy directly; it only creates
+  the Request its automation was authorized to produce. Architecture work keeps its root-Thread approval gate.
+- **Panel:** the Request appears like any other, with its Mandate recording the automation id; no new page is needed.
+
+P2 — a project Lead escalating cross-project work to the main Session — remains open.
+
 ## Decisions requested
 
 The operator's answers decide how much of Parts A and B lands in Sprint 9 and in what order. The

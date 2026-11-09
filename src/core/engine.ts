@@ -3,10 +3,10 @@ import { randomBytes } from 'node:crypto'
 import { UserError } from './errors.ts'
 import { isoTime, latestReport, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, ProjectRequestError,
   projectRequestOpen, threadKey } from './model.ts'
-import type { Assignment, Decision, Mandate, PolicyEffect, ProjectRequest, ProjectRequestDeliverable, ProjectRequestDisposition,
-  ProjectRequestInput, ProjectRequestPlan, ProjectRequestReply, ProjectRequestStatus, ThreadRef, Ticket, Trigger } from './model.ts'
+import type { Assignment, Decision, Deliverable, Mandate, PolicyEffect, ProjectRequest, ProjectRequestDeliverable, ProjectRequestDisposition,
+  ProjectRequestInput, ProjectRequestPlan, ProjectRequestReply, ProjectRequestStatus, Request, ThreadRef, Ticket, Trigger } from './model.ts'
 import { key } from './ids.ts'
-import type { AssessmentOutcome, Candidate, ProjectRequestRepository, Repositories } from './ports.ts'
+import type { AssessmentOutcome, Candidate, DeliveryUnit, ProjectRequestRepository, Repositories } from './ports.ts'
 import type { EngineOptions } from './part.ts'
 import { Assignments, type WorkerReport } from './assignments.ts'
 import { Evals, type Outcome } from './evals.ts'
@@ -28,6 +28,17 @@ export type { WorkerReport } from './assignments.ts'
 export type { Outcome } from './evals.ts'
 export type { ReceiveResult } from './intake.ts'
 export type { Reply, ReplyRequest } from './replies.ts'
+
+/** What the main Session asks when an installation automation delivery's findings become work (docs/012 D12). */
+export interface InstallationRequestInput {
+  title: string
+  instruction: string
+  /** The installation automation id from the delivery marker, recorded as the Mandate's provenance. */
+  automation: string
+  /** One Ticket per unit, in order; every unit names a registered project. */
+  units: DeliveryUnit[]
+  deliverable?: Deliverable
+}
 
 /**
  * Single transactional entry point for mutating Triggers, Threads, Decisions, Tickets, and Assignments.
@@ -206,14 +217,54 @@ export class Engine {
     })
   }
   /**
+   * Turn an installation automation delivery's findings into work (docs/012 D12): one rootless Request with its delivery
+   * units' Tickets, under an installation Mandate that records the automation id. A repeated raise for the same title and
+   * automation while the first Request is open returns it instead of creating a second one.
+   * @throws ProjectRequestError when the title or instruction is empty or too long, the automation id is empty, or a unit
+   * names no project.
+   */
+  raiseInstallationRequest(input: InstallationRequestInput): Request {
+    return this.repo.atomic(() => {
+      const title = input.title.trim(), instruction = input.instruction.trim()
+      if (!title || !instruction) throw new ProjectRequestError('emptyText')
+      if (title.length > PROJECT_REQUEST_TITLE_LIMIT || instruction.length > PROJECT_REQUEST_INSTRUCTION_LIMIT) {
+        throw new ProjectRequestError('tooLong')
+      }
+      const automation = input.automation.trim()
+      if (!automation) throw new ProjectRequestError('emptyText')
+      const units = input.units.slice(0, 8).map((unit): DeliveryUnit => {
+        const project = unit.project?.trim()
+        if (!project) throw new Error('Every installation request unit needs a registered project')
+        return { project, ...unit.title?.trim() ? { title: unit.title.trim() } : {}, ...unit.after?.length ? { after: unit.after } : {} }
+      })
+      if (!units.length) throw new Error('An installation request needs at least one delivery unit')
+      const existing = this.repo.requests.list().find(request => !request.ended && request.title === title
+        && request.mandate.basis.via === 'installation' && request.mandate.basis.automation === automation)
+      if (existing) return existing
+      const at = this.now()
+      const decisionId = key('installation-request', automation, title, at)
+      const mandate: Mandate = {
+        strength: 'explicit',
+        policyVersion: this.options.policy().version,
+        basis: { via: 'installation', automation },
+        actor: { source: 'dsh-superagent', id: 'installation' },
+        scope: instruction,
+      }
+      const outcome: Extract<AssessmentOutcome, { kind: 'accept' }> = {
+        kind: 'accept', title, scope: instruction, reason: 'installationAutomation',
+        deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
+      }
+      return this.tickets.createLead(decisionId, mandate, outcome, at)
+    })
+  }
+  /**
    * The project requests of one project, or of every project, oldest first; `status` narrows the list to one state.
    * @throws ProjectRequestError when the repository stores no project requests.
    */
   listProjectRequests(filter: { project?: string; status?: ProjectRequestStatus } = {}): ProjectRequest[] {
     const requests = this.projectRequestStore().list(filter.project)
     return filter.status === undefined ? requests : requests.filter(request => request.status === filter.status)
-  }
-  /**
+  }  /**
    * Record the Lead's reply on an open project request, without a disposition (docs/012 D3); replies are kept oldest first.
    * @throws ProjectRequestError when the request is unknown or settled, or the reply is empty.
    */
@@ -595,7 +646,7 @@ export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'reques
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'
-  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest'>
+  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest'>
 /** What people ask of the Engine, through the panel or the main Session. */
 export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
 /** What Settings tells the Engine. */

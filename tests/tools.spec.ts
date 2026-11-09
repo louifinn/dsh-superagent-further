@@ -42,6 +42,13 @@ it('delivers workspace files only to a named chat and only from a registered pro
     .rejects.toThrow('Unknown project')
 })
 
+it('registers installation request creation and needs the Host schedule service to run it', async () => {
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_request_create')).toBe(true)
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_request_create', { title: 'Audit', instruction: 'Fix the build',
+    automation: 'auto-1', deliverables: [{ project: 'default' }] }))
+    .rejects.toThrow('No installation automation service is installed')
+})
+
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
   const { ticket, trigger } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   await h.acceptedTicket(feishu('2', '@bot 再修一个'))

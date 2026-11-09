@@ -23,7 +23,7 @@ const RoutingNoteSchema = z.string().trim()
   .describe(`Optional routing background or explicit human constraint, at most ${NOTE_WORDS} words. Never add implementation instructions or replace the original source.`)
 export interface MainToolsHost {
   readonly context: Context
-  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
+  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'> & EngineForPeople
   readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
@@ -32,6 +32,8 @@ export interface MainToolsHost {
   readonly resources: ResourceHost
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
+  /** The registered Execution projects, for validating a request's delivery units. */
+  readonly projects: () => readonly { id: string; name: string; workspace: string }[]
   /** Applies existing labels to the Issue or pull request a Trigger names, through that Source kind. */
   label(triggerId: string, change: SourceLabelChange): Promise<SourceLabelResult>
   /** Delivers one file from a project workspace to a chat through the Source kind that supports file messages. */
@@ -364,6 +366,38 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         path: z.string().trim().min(1).describe('Workspace-relative file path; absolute paths and .. are refused.'),
       }).strict().refine(value => (value.trigger_id === undefined) !== (value.chat_id === undefined), 'Name exactly one of trigger_id and chat_id'),
       execute: async args => host.sendFile(args),
+    }),
+    tool({
+      name: 'orchestrator_request_create',
+      description: 'Create one installation-level Request with one Ticket per delivery unit, from work an installation automation delivery asked you to act on: pass the automation id from the delivery marker ([AUTOMATION auto-… · installation]). Use it only for that delivery; project automation findings are raised by their project Lead, and work that needs a person\'s decision keeps its existing route. Every unit names a registered project. The Request records the automation id as its Mandate provenance and runs without external Channels.',
+      schema: z.object({
+        title: z.string().trim().min(1).max(200).describe('A short label for the whole Request; the first unit falls back to it as its Ticket title.'),
+        instruction: z.string().trim().min(1).max(8000).describe('The complete work: what to do, where, and how to verify it.'),
+        automation: z.string().trim().min(1).max(200).describe('The installation automation id from the delivery marker.'),
+        project: z.string().trim().min(1).optional().describe('Default registered project for units that omit one.'),
+        deliverable: z.enum(['change', 'answer']).optional().describe('What the Tickets owe (default change); answer is read-only.'),
+        deliverables: z.array(z.object({
+          project: z.string().trim().min(1).optional(),
+          title: z.string().trim().min(1).max(200).optional(),
+          after: z.array(z.number().int().min(0)).max(7).optional(),
+        })).min(1).max(8).optional().describe('One Ticket per unit, in order; after names earlier indexes it waits on.'),
+      }).strict(),
+      execute: async args => {
+        if (host.automations === undefined) throw new Error('No installation automation service is installed')
+        const automation = await host.automations.view(args.automation)
+        if (automation.scope !== 'installation') {
+          throw new Error(`Automation ${args.automation} is project-scope; its project Lead raises the work itself`)
+        }
+        const units = (args.deliverables ?? [{ project: args.project }]).map(unit => {
+          const project = unit.project ?? args.project
+          if (project === undefined) throw new Error('Name a registered project for every delivery unit')
+          if (!host.projects().some(item => item.id === project)) throw new Error(`Project ${project} is not registered`)
+          return { project, ...unit.title ? { title: unit.title } : {}, ...unit.after?.length ? { after: unit.after } : {} }
+        })
+        const request = host.engine.raiseInstallationRequest({ title: args.title, instruction: args.instruction,
+          automation: args.automation, units, ...args.deliverable ? { deliverable: args.deliverable } : {} })
+        return { request_id: request.id, tickets: request.ticketIds, automation: args.automation, mandate: 'installation' }
+      },
     }),
     tool({
       name: 'orchestrator_prompts_save',

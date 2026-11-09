@@ -120,6 +120,8 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'listed'; addressed?: 'mention' | 'direct'; observation?: { mode?: AcceptMode }; authority?: string }
   /** A project Lead accepted the project request that raised this work (docs/012 D2); the Lead runtime adds the `revalidate` case. The optional `addressed` keeps the shared basis view reading every non-followup basis. */
   | { via: 'lead'; project: string; project_request_id: string; addressed?: 'mention' | 'direct' }
+  /** The main Session turned an installation automation delivery's findings into work (docs/012 D12): the Mandate records the automation id and revalidates like a Lead accept, because no Source asked for it. */
+  | { via: 'installation'; automation: string; addressed?: 'mention' | 'direct' }
   /** A message of a bot on its Source's bot list: an inferred candidate at most, never an explicit request or a stop. */
   | { via: 'bot'; addressed?: 'mention' | 'direct'; observation: { mode: AcceptMode } }
 )

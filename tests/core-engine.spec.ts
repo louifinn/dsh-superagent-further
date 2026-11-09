@@ -1680,4 +1680,24 @@ describe('requests', () => {
     h.engine.stopTicket(secondId!, 'not needed either')
     expect(h.repo.requests.list()[0]!.ended).toMatchObject({ by: 'human', outcome: 'stopped' })
   })
+  it('creates an installation request with its units, and returns the open one on a repeated raise', () => {
+    const h = harness()
+    const request = h.engine.raiseInstallationRequest({ title: 'Audit the build', instruction: 'Inspect the failing jobs and fix them',
+      automation: 'auto-1', units: [{ project: 'superagent' }, { project: 'project-check', title: 'Report', after: [0] }] })
+    expect(request.channels).toEqual([])
+    expect(request.mandate.basis).toEqual({ via: 'installation', automation: 'auto-1' })
+    expect(request.mandate.actor).toEqual({ source: 'dsh-superagent', id: 'installation' })
+    const tickets = request.ticketIds.map(id => h.repo.tickets.get(id)!)
+    expect(tickets.map(ticket => ticket.project)).toEqual(['superagent', 'project-check'])
+    expect(tickets[1]!.after).toEqual([tickets[0]!.id])
+    expect(h.repo.requests.list()).toHaveLength(1)
+    // A repeated raise with the same automation and title answers the open Request instead of creating a second.
+    expect(h.engine.raiseInstallationRequest({ title: 'Audit the build', instruction: 'Again', automation: 'auto-1',
+      units: [{ project: 'superagent' }] }).id).toBe(request.id)
+    expect(h.repo.requests.list()).toHaveLength(1)
+    expect(() => h.engine.raiseInstallationRequest({ title: 'Audit', instruction: 'x', automation: 'auto-1', units: [] }))
+      .toThrow('at least one delivery unit')
+    expect(() => h.engine.raiseInstallationRequest({ title: 'Audit', instruction: 'x', automation: 'auto-1', units: [{ project: '' }] }))
+      .toThrow('needs a registered project')
+  })
 })

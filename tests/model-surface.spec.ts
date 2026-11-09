@@ -47,7 +47,9 @@ interface Skill { name: string; description: string; content: string }
 // tool text the model reads, and the longer registration ids add about 30 characters at this size.
 // It rose from 40,600 with request_create, which adds a schema and the rule for raising a project request (docs/012 D4);
 // the capability is the point of the change, so the budget grows with it.
-const BUDGET: Record<Role, number> = { orchestrator: 64_500, worker: 43_800 }
+// It rose from 64,500 with orchestrator_request_create, which adds a schema and description for the installation-level
+// self-bootstrap approved on 2026-11-10 (docs/012 D12); deleting that capability would let the budget drop back.
+const BUDGET: Record<Role, number> = { orchestrator: 66_500, worker: 43_800 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -395,7 +397,7 @@ function failures(): Map<string, string> {
 it('collects both roles\' tools, prompts, skills and inputs', () => {
   expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
     'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'request_create'])
-  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file']))
+  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create']))
   // The one routing tool takes the place of four.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {
     expect(toolsOf('orchestrator').has(name)).toBe(false)

@@ -207,6 +207,22 @@ The automation delivery's write budget stays the capability decision's: raising 
 the only project record it may change, while the repository, Settings, Sources, Tickets and Policy stay untouched. The
 panel's project Lead row shows the pending project-request count and how many arrived from automations.
 
+### D12. Installation-level self-bootstrap
+
+An installation automation delivery is a standing instruction like a project one, but it targets the main Session and no
+project Lead. When its inspection finds work, the main Session calls `orchestrator_request_create`. The tool validates
+that the automation named is an existing `installation`-scope record (a project task's findings still go through its
+Lead, D11), that every delivery unit names a registered project, and then raises one rootless Request through
+`Tickets.createLead` with an empty Channel set. The Mandate basis is `{ via: 'installation', automation }`, its actor
+`dsh-superagent:installation`, and revalidation trusts that basis because no Source message admitted the work. A repeated
+raise for the same title and automation while the first Request is open returns that Request instead of creating a
+second one.
+
+The tool never accepts Source candidates, never creates architecture work (a person's approval needs a root Thread), and
+the delivery's write budget remains the Request it creates: the repository, Settings, Sources, Tickets, Policy and panel
+records stay untouched directly. The Request appears in the panel like any other, and its Mandate records the automation
+id that produced it.
+
 ## Phases / missions
 
 - M13 (P1) — **done**: schema 21 `project_request` store, engine APIs (`raise`, `decide` on a request, `complete`),

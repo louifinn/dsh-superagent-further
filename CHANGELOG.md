@@ -42,6 +42,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   exactly that project request and no other project write, and the panel's Lead row shows the pending count and how
   many came from automations.
 
+- Installation-level self-bootstrap (docs/012 D12): `orchestrator_request_create` lets the main Session turn an
+  installation automation delivery's findings into one rootless Request with one Ticket per registered delivery unit.
+  The tool requires an existing `installation`-scope automation (project findings stay with their Lead), records the
+  automation id as the Mandate's provenance (`basis.via = 'installation'`, actor `dsh-superagent:installation`), returns
+  the open Request for a repeated raise, and creates no Channels; revalidation trusts the installation basis. The
+  delivery's write budget remains the Request it creates.
+
 - Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
   service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
   `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both

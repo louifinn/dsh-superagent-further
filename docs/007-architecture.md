@@ -583,7 +583,7 @@ Nothing deletes old records yet, so these grow without bound: the `trigger`, `di
 
 ### Main Session tools
 
-The main Session has 17 application tools, plus six automation tools when the Host `schedule` service is installed:
+The main Session has 18 application tools, plus six automation tools when the Host `schedule` service is installed:
 
 | Purpose | Tools |
 | --- | --- |
@@ -593,6 +593,7 @@ The main Session has 17 application tools, plus six automation tools when the Ho
 | Assess proactive work | `orchestrator_eval`, `orchestrator_eval_read`, `orchestrator_eval_decide` |
 | Communicate and unsubscribe | `orchestrator_reply`, `orchestrator_thread_unsubscribe` |
 | Label and deliver files | `orchestrator_label`, `orchestrator_send_file` |
+| Create installation work from an automation delivery | `orchestrator_request_create`, only for an existing `installation`-scope automation, one Request with one Ticket per registered delivery unit, under an installation Mandate |
 | Configure | `orchestrator_settings_save`, `orchestrator_settings_propose`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
 | Automate installation and project tasks (project scope is report-only) | `automation_create`, `automation_list`, `automation_view`, `automation_edit`, `automation_run`, `automation_delete`, only when the Host `schedule` service exists |
 
