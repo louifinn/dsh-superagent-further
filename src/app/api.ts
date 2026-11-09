@@ -40,6 +40,8 @@ export interface Api {
   'POST tickets/:id/stop': { response: { stopped: true } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
+  /** Restore one block from a saved revision as a new revision, recording `restoredFrom` on the history row. */
+  'POST settings/:block/restore': { body: { revision: number; reason?: string }; response: { revision: number; restarting: boolean; restoredFrom: number } }
   /** Pending tier-B settings proposals, with the per-field diff the panel shows (docs/011 A5.2). */
   'GET settings/proposals': { response: ProposalsView }
   /** Approve a proposal through the ordinary panel save path, recording its actor and reason on the new revision. */

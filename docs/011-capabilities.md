@@ -1,6 +1,6 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **partly implemented — Part A P1/P2 and Part B P1 implemented; decisions settled** (2026-11-09). The survey behind this
+Status: **partly implemented — Part A P1/P2/P3 and Part B P1 implemented; decisions settled** (2026-11-09). The survey behind this
 document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
@@ -10,7 +10,11 @@ tests in `tests/settings.spec.ts`, `tests/tools.spec.ts` and `tests/runtime.spec
 (proposal records and the panel confirmation surface) is implemented in schema 18: the
 `settings_proposal` table and its accessors, `migrateTo18`, `orchestrator_settings_propose`, the
 `settings/proposals` read resource, Apply/Reject routes and panel section with per-field diffs, and
-reason/actor/proposal audit in the history. The rest of Part A (restore) and Parts B P2/P3 remain
+reason/actor/proposal audit in the history. Part A P3 (per-block restore and the pending
+reminder) is implemented without a schema change: `Settings.restore` reads a saved revision's block
+value and saves it through the panel save path with `restoredFrom`, `POST settings/<block>/restore`
+exposes it, the panel's history rows offer a confirmed Restore action, and the pending-proposal
+count is shown on every settings group. Parts B P2/P3 remain
 proposals. Every claim below names the
 file and line it comes from. Repo evidence is the checkout at `b4f2dbe` (dsh-superagent 0.2.0; the
 plugin is now dsh-superagent-further 0.3.0). Host evidence is DeepSeek
@@ -37,6 +41,20 @@ restart decision still runs; a failed save leaves the proposal pending with its 
 `orchestrator_settings_propose` and the `settings/proposals` read resource expose the list to the
 main Session, and only the panel can apply or reject it. The history row names the proposal, actor
 and reason.
+
+**Part A P3 implemented without a schema change.** `Settings.restore(block, revision, audit?)` reads
+the block's value from the saved settings snapshot at that global revision (`Store.settingsVersion`)
+and calls `save(..., 'panel', { ...audit, restore: { block, from: revision } })`, so guards, account
+checks, model checks, Policy effects and restart decisions are exactly those of a manual panel save;
+a restore that changes a setup field still restarts. The new revision and its `policyHistory` row
+record `restoredFrom`. A revision or block value that is not retained throws
+`SettingsRevisionNotFound` (HTTP 404), and a restore whose value already matches throws
+`SettingsConflict` (HTTP 409), so a successful restore always creates a new revision.
+`POST settings/<block>/restore` sits behind the same-origin check, and the panel's ConfigHistory
+offers the action after a confirmation naming the block and the revision. The pending-proposal
+count is the Settings badge and appears on every settings group. Per A-D2 the panel is the only
+restore and approval surface: no Feishu DM or other IM message is sent, and the settings history is the
+audit (A-D5).
 
 **Part B P1 implemented in schema 19.** `SCHEMA_VERSION` is 19: the Store creates the `automation`
 table, `migrateTo19` keeps its place in the sequence, and `AutomationRecords` reads and writes the
@@ -307,13 +325,15 @@ field shows "Save" or "Propose".
 5. Tests: proposal lifecycle (stale revision, expiry, supersede, reject, failed apply),
    `tests/http.spec.ts`, `tests/panel-settings.spec.tsx`, `tests/migration.spec.ts`.
 
-**P3 — restore and notices.**
+**P3 — restore and notices. Implemented 2026-11-09, without notice channels (A-D2).**
 
 1. Per-block restore with `restoredFrom` audit; the history row gets a Restore button and a
-   confirmation that names the block and the revision.
-2. Optional panel/Feishu notice for pending proposals (the panel is the approval surface; a message
-   is only a reminder).
-3. Tests: restore round-trip, restart-triggering restore stays refused/panel-only, notices.
+   confirmation that names the block and the revision. `Settings.restore` reads the saved block
+   value and saves through the panel path; an unretained revision is a 404 and a no-op is a 409.
+2. No Feishu or panel notice was added: the pending-proposal count on Settings, shown on every
+   settings group, is the only reminder.
+3. Tests: restore round-trip, tier-C panel restore, restart-triggering restore through the panel,
+   404/409, the panel confirmation and restored-from row, and the badge on every settings group.
 
 ### A7. Risks
 
@@ -330,8 +350,11 @@ field shows "Save" or "Propose".
 - **No operator identity.** The panel is a local same-origin UI, not an authenticated console
   (`src/app/http.ts:85`). `decided_by` can only say "panel", not *which* person. That is acceptable
   for a single-operator installation and should be stated.
-- **History is bounded.** `policyHistory` reads 30 revisions (`src/app/settings-history.ts:100-108`).
-  A restore older than that is impossible; the UI should say so instead of offering a dead button.
+- **History is bounded.** `policyHistory` lists the newest 30 revisions
+  (`src/app/settings-history.ts:100-108`). The store itself retains every saved revision
+  (`settings-version:<n>`), so `Settings.restore` can read any retained revision through the API;
+  the panel offers Restore only on the rows it lists, and a revision or block value that is not
+  retained answers 404.
 
 ### A8. Decisions requested (Part A)
 
@@ -686,8 +709,8 @@ The operator approved every recommendation and the suggested order.
 10. B-D5 — session turns only in the first release; no Feishu or panel notice per delivery.
 
 Implementation order: A-P2 (done, schema 18) → B-P1 (done, schema 19, installation-scope automation
-tasks) → A-P3 (per-block restore and notices) → B-P2 (project scope and the panel) → B-P3 (history
-and delivery notices).
+tasks) → A-P3 (done, per-block restore and the panel reminder) → B-P2 (project scope and the panel) →
+B-P3 (history and delivery notices).
 
 ## Non-goals
 

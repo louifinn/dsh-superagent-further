@@ -31,10 +31,13 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
         || undefined}
         aria-current={value === group ? 'page' : undefined} onClick={() => navigate(settingsRoute(value),
           true)}>{t(`settingsGroup.${value}`)}</button>)}
+      {/* Groups without a settings body have no proposals list to carry the count, so the polled state supplies the badge. */}
+      {(group === 'prompts' || group === 'deployment') && state.proposals > 0
+        && <span className="dt-count" aria-label={t('proposalsTitle')}>{t('proposalsTitle')} · {state.proposals}</span>}
     </nav>
     <div className="dt-settings-body">
       <h2 className="dt-settings-title">{t(`settingsGroup.${group}`)}</h2>
-      {group !== 'prompts' && group !== 'deployment' && <SettingsProposals />}
+      {(group === 'source' || group === 'eval' || group === 'execution' || group === 'language') && <SettingsProposals />}
       {content}
     </div>
   </div>

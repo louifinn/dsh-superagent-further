@@ -224,6 +224,40 @@ it('rejects a pending proposal, and the history names its proposal with the appr
   expect(text()).toContain(zh.historyReason.replace('{reason}', 'The person asked for this'))
 })
 
+it('restores a block from a history revision after confirming the block and revision, and shows where it came from', async () => {
+  const oldEval = { ...server.settings.eval, timeoutSeconds: 120 }
+  server.restoreValues[1] = { ...server.settings, eval: oldEval }
+  server.revisions = { ...server.revisions, eval: 2 }
+  server.history = { current: 2, policyVersion: 'abcdef1234567890', items: [{ revision: 1, savedAt: '2026-09-21T00:00:00Z',
+    source: 'panel', block: 'eval', policyVersion: 'abcdef1234567890', policyChanged: false, notified: [], changes: [] }] }
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  await click(zh.configHistory)
+  await click(zh.restore)
+  expect(text()).toContain(zh.restoreConfirm.replace('{block}', 'eval').replace('{revision}', '1'))
+  await click(zh.confirm)
+  await settle()
+  const restore = server.requests.find(request => request.method === 'POST' && request.path === 'settings/eval/restore')
+  expect(restore?.body).toEqual({ revision: 1 })
+  expect(server.settings.eval.timeoutSeconds).toBe(120)
+  expect(server.revisions.eval).toBe(3)
+  expect(text()).toContain(zh.historyRestoredFrom.replace('{revision}', '1'))
+})
+
+it('shows the pending-proposal badge on every settings group, including Prompts and Deployment', async () => {
+  server.proposals = [{ id: 'pr-9999aaaa', block: 'eval', base_revision: server.revisions.eval ?? 0,
+    value: { ...server.settings.eval, mode: 'off' }, diff: [{ path: 'eval.mode', from: server.settings.eval.mode, to: 'off' }],
+    reason: 'The person asked for it', actor: 'master', status: 'pending', created_at: '2026-11-01T00:00:00.000Z',
+    expires_at: '2026-11-08T00:00:00.000Z' }]
+  await mount()
+  await click(tab(zh['tab.settings']))
+  for (const group of ['prompts', 'deployment', 'language'] as const) {
+    await click(find(zh[`settingsGroup.${group}`], '.dt-settings-link'))
+    expect(text()).toContain(`${zh.proposalsTitle} · 1`)
+  }
+})
+
 it('saves the default language from its own Settings group', async () => {
   await mount()
   await click(zh['tab.settings'])

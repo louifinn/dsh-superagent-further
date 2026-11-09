@@ -88,6 +88,8 @@ export interface PanelServer {
   joined?: Record<string, string>; joining?: Record<string, string>
   joinError?: string
   settings: Settings; revisions: Record<string, number>
+  /** Saved settings snapshots the restore route reads by revision; tests seed an older value here. */
+  restoreValues: Record<number, Settings>
   prompts: PromptsView
   tickets: { open: TicketRow[]; ended: TicketRow[] }; ticketDetails: Record<string, TicketPageView>
   threads: ThreadRow[]
@@ -172,6 +174,7 @@ function sourceStatuses(): SourceStatusRow[] {
 const stateView = (): StateView => ({
   setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
   wizard: server.wizard,
+  proposals: server.proposals.filter(proposal => proposal.status === 'pending').length,
   masterId: 'master', paused: server.settings.paused,
   // The panel does not read health; the service script does.
   health: {},
@@ -273,7 +276,7 @@ function initial(): PanelServer {
         name: 'Widgets Bot' } } },
     // Existing panel tests start on a finished installation; wizard tests set `firstRun` themselves.
     wizard: { firstRun: false, skipped: false },
-    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 },
+    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 }, restoreValues: {},
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },
       defaults: defaultPrompts(), parts: Object.entries(builtInParts()).map(([key, part]) => ({ key, ...part, base: builtInBase(part.text) })),
@@ -450,6 +453,39 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     }
     server.revisions[block] = (server.revisions[block] ?? 0) + 1
     return { restarting, revision: server.revisions[block] }
+  } },
+  'POST settings/:block/restore': { body: true, answer: ({ params: { block }, body }) => {
+    const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
+    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+      : refuse(400, 'Invalid settings: block')
+    const snapshot = server.restoreValues[body.revision]
+    if (!snapshot) return refuse(404, `No settings revision ${body.revision} is retained`)
+    let value: unknown
+    if (block === 'policy') value = snapshot.policy
+    else if (block === 'eval') value = snapshot.eval
+    else if (block === 'executor') value = snapshot.executor
+    else if (block === 'memory') value = snapshot.memory
+    else if (block === 'language') value = snapshot.language
+    else if (source) value = snapshot.sources[source.kind]
+    if (value === undefined) return refuse(404, `Settings revision ${body.revision} does not contain ${block}`)
+    let restarting = false
+    if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(value) }
+    else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(value) }
+    else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(value) }
+    else if (block === 'memory') server.settings = { ...server.settings, memory: MemoryConfigSchema.parse(value) }
+    else if (block === 'language') server.settings = { ...server.settings, language: LanguageConfigSchema.parse(value) }
+    else if (source) {
+      const { enabled, config: stored } = SourceSave.parse(value)
+      const config = source.schema.parse(stored)
+      restarting = (config.cli ?? '') !== (server.settings.sources[source.kind]?.config.cli ?? '')
+      server.settings = { ...server.settings, sources: { ...server.settings.sources, [source.kind]: { enabled, config } } }
+    }
+    server.revisions[block] = (server.revisions[block] ?? 0) + 1
+    const revision = server.revisions[block]!
+    server.history = { ...server.history, current: revision, items: [{ revision, savedAt: new Date().toISOString(), source: 'panel',
+      block: block as HistoryView['items'][number]['block'], policyVersion: server.history.policyVersion, policyChanged: false, notified: [],
+      restoredFrom: body.revision, changes: [] }, ...server.history.items] }
+    return { revision, restarting, restoredFrom: body.revision }
   } },
   'GET policy/history': { answer: () => server.history },
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },

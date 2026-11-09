@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
-import { SettingsConflict } from '../src/app/settings.ts'
+import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
@@ -52,6 +52,33 @@ it('answers each kind of failure with its own status', async () => {
   expect(await call('POST', 'tickets/t9/retry')).toEqual({ status: 404, body: { error: 'Ticket not found' } })
   expect(await call('GET', 'nothing/here')).toEqual({ status: 404, body: { error: 'Unknown operation' } })
   expect(await call('POST', 'executor/pause', 'not json')).toEqual({ status: 400, body: { error: 'The request body is not JSON' } })
+})
+
+it('restores a settings block from a retained revision, and reports an unknown revision or a no-op restore', async () => {
+  const restores: unknown[] = []
+  const call = serve({
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: { restore: async (...args: unknown[]) => {
+      restores.push(args)
+      if (args[1] === 99) throw new SettingsRevisionNotFound('No settings revision 99 is retained')
+      if (args[1] === 98) throw new SettingsConflict('Settings already match revision 98; nothing to restore')
+      return { saved: true, revision: 5, policy_changed: false, restarting: false, context_delivery: 'injected', restoredFrom: args[1] }
+    } },
+  })
+  expect(await call('POST', 'settings/eval/restore', { revision: 3 })).toEqual({ status: 200,
+    body: { revision: 5, restarting: false, restoredFrom: 3 } })
+  expect(restores).toEqual([['eval', 3, {}]])
+  expect(await call('POST', 'settings/eval/restore', { revision: 3, reason: 'Put it back' })).toMatchObject({ status: 200 })
+  expect(restores[1]).toEqual(['eval', 3, { reason: 'Put it back' }])
+  expect(await call('POST', 'settings/eval/restore', { revision: 99 })).toEqual({ status: 404,
+    body: { error: 'No settings revision 99 is retained' } })
+  expect(await call('POST', 'settings/eval/restore', { revision: 98 })).toEqual({ status: 409,
+    body: { error: 'Settings already match revision 98; nothing to restore' } })
+  // The block name is validated before the restore, and the revision must be a non-negative integer.
+  expect(await call('POST', 'settings/pause/restore', { revision: 1 })).toMatchObject({ status: 400 })
+  expect(await call('POST', 'settings/source:feishu/restore', { revision: 1 })).toEqual({ status: 404, body: { error: 'Source not found' } })
+  expect(await call('POST', 'settings/eval/restore', { revision: -1 })).toMatchObject({ status: 400 })
+  expect(restores).toHaveLength(4)
 })
 
 it('lists pending settings proposals and applies or rejects one for the panel', async () => {
