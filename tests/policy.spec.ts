@@ -278,16 +278,23 @@ it('reads a stored GitHub Source configuration that names a merge account withou
 })
 
 describe('localized default rules and their migration', () => {
-  it('ships ten localized categories, in a stable order, when no rules are stored', () => {
-    expect(DEFAULT_RULES.map(rule => rule.id)).toEqual(['copy', 'visual', 'bugfix', 'feature', 'docs', 'tests', 'refactor', 'research', 'review', 'qa'])
+  it('ships twelve localized categories, all enabled, in a stable order, when no rules are stored', () => {
+    expect(DEFAULT_RULES.map(rule => rule.id)).toEqual(['copy', 'visual', 'bugfix', 'feature', 'docs', 'tests', 'refactor', 'research', 'review', 'qa', 'settings', 'automation'])
     expect(DEFAULT_RULES.every(rule => /\p{Script=Han}/u.test(rule.name) && /\p{Script=Han}/u.test(rule.instruction))).toBe(true)
-    // The first two keep the ids and positions existing Tickets, decisions and history entries name, and stay enabled as before.
-    expect(DEFAULT_RULES.filter(rule => rule.enabled).map(rule => rule.id)).toEqual(['copy', 'visual'])
+    // The first two keep the ids and positions existing Tickets, decisions and history entries name.
+    expect(DEFAULT_RULES.filter(rule => rule.enabled).map(rule => rule.id)).toEqual(DEFAULT_RULES.map(rule => rule.id))
     expect(DEFAULT_RULES.slice(0, 2).map(rule => rule.id)).toEqual(['copy', 'visual'])
     expect(SettingsSchema.parse({}).policy.rules).toEqual(DEFAULT_RULES)
   })
   it('replaces an untouched legacy rule pair with the whole localized set, once', () => {
     const upgraded = SettingsSchema.parse({ policy: { rules: LEGACY_DEFAULT_RULES } }).policy.rules
+    expect(upgraded).toEqual(DEFAULT_RULES)
+    expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
+  })
+  it('replaces an untouched 0.3.0 rule set with the current all-enabled set, once', () => {
+    const previous = DEFAULT_RULES.filter(rule => rule.id !== 'settings' && rule.id !== 'automation')
+      .map(rule => ({ ...rule, enabled: rule.id === 'copy' || rule.id === 'visual' }))
+    const upgraded = SettingsSchema.parse({ policy: { rules: previous } }).policy.rules
     expect(upgraded).toEqual(DEFAULT_RULES)
     expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
   })

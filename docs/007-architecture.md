@@ -148,7 +148,7 @@ Trigger and Thread `meta` belong to the Source. The core does not interpret them
 
 ### Policy
 
-`src/policy.ts` defines settings schemas, authorization and assessment rules. `DEFAULT_RULES` holds the ten built-in rules, named and worded in Chinese; `copy` and `visual` stay enabled, while the eight newer categories ship disabled so no installation silently widens proactive authority. `LEGACY_DEFAULT_RULES` keeps the old English text, and `upgradeRules` translates an existing installation's untouched built-ins while preserving operator edits. The rules are normalized whenever settings are parsed, so no schema step is needed. `settingsPolicy(settings, scope)` returns a fresh, stateless `Policy` on each use:
+`src/policy.ts` defines settings schemas, authorization and assessment rules. `DEFAULT_RULES` holds the twelve built-in rules, named and worded in Chinese and all enabled, so a fresh installation assesses every category; the operator can switch any category off. `LEGACY_DEFAULT_RULES` keeps the old English text, and `upgradeRules` translates an existing installation's untouched built-ins while preserving operator edits; a stored set that is still exactly the 0.3.0 defaults or the untouched legacy pair is replaced by the current twelve-rule set. The rules are normalized whenever settings are parsed, so no schema step is needed. `settingsPolicy(settings, scope)` returns a fresh, stateless `Policy` on each use:
 
 - `version`, `paused` and `evalTimeoutMs` describe its current state.
 - `gate(trigger, thread, tickets)` returns admission strength and basis.

@@ -16,6 +16,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   tool list (six automation tools). A Host refusal to run or delete keeps the record and is reported; deleting an already
   missing Host task is fine.
 
+### Changed
+
+- The built-in accept rule set now has twelve categories: `settings` (更改 SuperAgent 配置) and `automation`
+  (项目 dsh 自动化任务) join the existing ten, and every built-in rule ships enabled instead of only `copy` and `visual`.
+  Existing installations whose stored rules are still exactly the 0.3.0 ten-rule defaults are upgraded to the
+  all-enabled twelve-rule set when settings are read; operator-edited, renamed, added or removed rules are preserved.
+
+
 ## [0.3.0] - 2026-11-09
 
 The package and every registration identity are now `dsh-superagent-further`: the npm package and bundle name, the
