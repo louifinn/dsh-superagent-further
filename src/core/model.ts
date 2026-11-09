@@ -312,7 +312,21 @@ export interface ProjectRequestRoot { request_id?: string; project_request_id?: 
 /** The Lead's one disposition of a ProjectRequest, recorded with the mandatory reply that carries it (docs/012 D3). */
 export interface ProjectRequestDecision { action: 'accept' | 'reject' | 'needs-info'; at: string; notes?: string }
 /** A person's approval of an architecture ProjectRequest's design, linked from a human Trigger on the root thread. */
-export interface ProjectRequestApproval { thread_key: string; trigger_id: string; at: string; by: 'human'; text: string }
+export interface ProjectRequestApproval {
+  thread_key: string
+  trigger_id: string
+  at: string
+  by: 'human'
+  text: string
+  /** False when the person rejected the design; absent on approvals recorded before M16, which mean approved. */
+  approved?: boolean
+}
+/** One staged Ticket of a ProjectRequest's plan, shaped like a Decision deliverable (docs/012 D5, D7). */
+export interface ProjectRequestDeliverable { title?: string; project?: string; after?: number[] }
+/** What the Lead staged on accepting an architecture request: the statement it replied with and its Tickets, in order. */
+export interface ProjectRequestPlan { statement?: string; deliverables: ProjectRequestDeliverable[] }
+/** The design report an architecture request sent to its root Channel for a person's approval (docs/012 D7). */
+export interface ProjectRequestProposal { at: string; ticket_id: string; text: string }
 /**
  * A project-level ask a worker or the project Lead raised (docs/012 D1). `root` is set only on the root request of a chain:
  * derived requests name it in `root.project_request_id`, it lists their ids in `derived`, and they keep its id in `root`.
@@ -331,6 +345,12 @@ export interface ProjectRequest {
   /** The Lead's answers, oldest first: the disposition's reply, the completion summary and any extra reply. */
   replies: LeadReply[]
   decision?: ProjectRequestDecision
+  /** The plan the Lead staged on accept; used to create the implementation Request's Tickets after approval. */
+  plan?: ProjectRequestPlan
+  /** The design Ticket an architecture accept created; it produces the decision document, not code (docs/012 D7). */
+  design_ticket_id?: string
+  /** When the design ended and its report went to the root Channel for approval (docs/012 D7). */
+  proposal?: ProjectRequestProposal
   /** The domain Request an accept created, whose Mandate basis is this project request (docs/012 D2). */
   request_id?: string
   /** Tickets of this request and of its derived requests. */
@@ -365,6 +385,8 @@ export interface ProjectRequestDisposition extends ProjectRequestReply { action:
 /** Why the Engine refused a project-request command. */
 export type ProjectRequestRefusal = 'unknownProjectRequest' | 'settledProjectRequest' | 'emptyText' | 'tooLong' | 'notAccepted'
   | 'unknownRootProjectRequest' | 'notRootProjectRequest' | 'foreignProjectRequest' | 'noProjectRequestStore'
+  | 'notArchitectureProjectRequest' | 'notAcceptedForApproval' | 'notAwaitingApproval' | 'designNotEnded'
+  | 'missingApprovalTrigger' | 'approvalRootRequired'
 const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   unknownProjectRequest: 'This project request does not exist',
   settledProjectRequest: 'This project request has already been decided or closed',
@@ -375,6 +397,12 @@ const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   notRootProjectRequest: 'A derived project request must name a root project request',
   foreignProjectRequest: 'A project request must stay in the project of the root request it derives from',
   noProjectRequestStore: 'This repository does not store project requests',
+  notArchitectureProjectRequest: 'Only an architecture project request follows the design approval flow',
+  notAcceptedForApproval: 'Only an accepted architecture project request can ask for approval',
+  notAwaitingApproval: 'This project request is not awaiting approval',
+  designNotEnded: 'The design Ticket of this project request has not ended yet',
+  missingApprovalTrigger: 'No human reply on the root thread can be linked to this approval',
+  approvalRootRequired: 'An architecture project request needs a root thread for its approval',
 }
 /**
  * A project-request command's refusal: a missing request, a settled one, an empty reply or summary, or a repository that

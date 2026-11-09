@@ -14,7 +14,8 @@ import { mkdirSync } from 'node:fs'
 import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import { Engine, key, reasonText, threadKey, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger }
+  from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -35,7 +36,8 @@ import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
-import { projectResultChannels, projectResultNotices, requestResultNotices } from './request-notices.ts'
+import { projectApprovalChannels, projectApprovalNotices, projectResultChannels, projectResultNotices, requestResultNotices }
+  from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Automations, type ScheduleService } from './automations.ts'
 import { localFile } from './files.ts'
@@ -45,11 +47,12 @@ import { Setup } from './setup.ts'
 import { feishuSettings } from '../sources/feishu.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
-import { Sessions } from './sessions.ts'
+import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
+import { bindLeadApprovals } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -197,6 +200,19 @@ export class Runtime extends Service implements SourceHost {
               for (const message of report) outbox.send(message)
             }
           }
+          // Ask the root Channel to approve an architecture request's design once its design Ticket ended (docs/012 D7).
+          if (event.type === 'project-request.approval-requested') {
+            const request = store.projectRequests.get(event.data.projectRequestId)
+            if (request) {
+              const channels = projectApprovalChannels(request, id => store.requests.get(id), id => store.triggers.get(id))
+              for (const message of projectApprovalNotices(request, channels)) outbox.send(message)
+            }
+          }
+          // A person's message on an awaiting approval's root thread reaches its Lead, which records the answer (docs/012 D7).
+          if (event.type === 'trigger.received') {
+            const trigger = store.triggers.get(event.data.triggerId)
+            if (trigger?.human) runtime.routeApprovalReply(trigger)
+          }
           // Notify the ticket's conversations whenever it ends via a pull request.
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
           if (ended && setup.configured()) {
@@ -241,6 +257,12 @@ export class Runtime extends Service implements SourceHost {
         } })
       // The Lead tools and the reply enforcement act through the Engine; attach it once the composition is complete.
       sessions.attachEngine(engine)
+      // The approval tools read and write through the same Engine; bind them by the Store the Lead tools are built with.
+      bindLeadApprovals(store, {
+        plan: (id, plan) => engine.planProjectRequest(id, plan),
+        requestApproval: id => engine.requestProjectApproval(id),
+        approve: (id, input) => engine.approveProjectRequest(id, input),
+      })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
       const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
@@ -377,6 +399,28 @@ export class Runtime extends Service implements SourceHost {
     this.effects.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
     void this.cleanupLoop()
+  }
+  /**
+   * Send a person's reply on the root thread of an awaiting-approval project request to its Lead (docs/012 D7). The Lead
+   * records the answer with `lead_request_approve` from that human message, or answers with `lead_request_reply`; the request
+   * stays awaiting-approval until it does, so an approval can never come from the Lead's own text alone.
+   */
+  private routeApprovalReply(trigger: Trigger): void {
+    if (!trigger.human) return
+    const threads = new Set(trigger.threads.map(threadKey))
+    let requests: ProjectRequest[] = []
+    try {
+      requests = this.store.projectRequests.list().filter(request => request.status === 'awaiting-approval'
+        && request.root !== undefined && threads.has(request.root.thread_key)
+        && (request.proposal === undefined || trigger.at >= request.proposal.at))
+    } catch { return }
+    for (const request of requests) {
+      const text = `A person replied on the root thread of project request ${request.id} ("${request.title}"):\n\n${trigger.text}\n\n`
+        + 'If this answers its design proposal, call lead_request_approve with approved true or false and a reply for the raiser. '
+        + 'Otherwise call lead_request_reply so the person and the raiser get an answer.'
+      void this.sessions.prompt(leadSessionId(request.project), `project-approval:${request.id}:${trigger.id}`, text, 'queue')
+        .catch(error => { this.ctx.logger.warn('dsh-superagent-further could not route an approval reply: %s', String(error)) })
+    }
   }
   /** Removes the worktrees and `agent/` branches of Tickets that ended past the retention; failures are logged, never fatal. */
   private async reclaimFinishedWorktrees(): Promise<void> {
