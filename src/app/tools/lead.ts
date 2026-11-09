@@ -10,6 +10,8 @@ import { tool, type Tool } from './tool.ts'
 /** The Engine commands the Lead tools need; the runtime binds them because a Lead Session only holds its dispatch. */
 export interface LeadApprovalHost {
   raise(input: ProjectRequestInput): ProjectRequest
+  /** Raise an escalation to the Orchestrator for work outside this project (docs/012 D13). */
+  escalate(input: ProjectRequestInput): ProjectRequest
   plan(id: string, plan: ProjectRequestPlan): ProjectRequest
   requestApproval(id: string): ProjectRequest
   approve(id: string, input: { approved: boolean; trigger_id: string }): ProjectRequest
@@ -111,6 +113,21 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       return projectRequestView(raised)
     },
   }), tool({
+    name: 'lead_request_escalate',
+    description: 'Escalate work that belongs outside this project, or at the installation level, to the Orchestrator. The '
+      + 'Orchestrator decides it with the mandatory reply; this project Lead cannot decide an escalated request itself.',
+    schema: z.object({
+      title: z.string().trim().min(1).max(200).describe('One line naming the escalated work.'),
+      instruction: z.string().trim().min(1).max(8_000).describe('What is needed, why this project cannot do it, and the evidence.'),
+    }).strict(),
+    execute: async ({ title, instruction }: { title: string; instruction: string }) => {
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      const raised = engine.escalate({ project: project.id, kind: 'escalation', title, instruction,
+        raised_by: { session: host.session } })
+      return projectRequestView(raised)
+    },
+  }), tool({
     name: 'lead_request_decide',
     description: 'Decide one project request with the reply it requires. On accept, name the statement and deliverables the work '
       + 'should carry. The reply reaches the Session that raised the request when it still exists.',
@@ -127,6 +144,9 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
     execute: async (input: { id: string; action: 'accept' | 'reject' | 'needs-info'; reply: string; statement?: string;
       deliverables?: { project?: string | null; title?: string | null; after?: number[] | null }[]; notes?: string }) => {
       const request = requestOf(host, project, input.id)
+      if (request.kind === 'escalation') {
+        throw new Error(`Project request ${input.id} is escalated to the Orchestrator; orchestrator_escalation_decide decides it`)
+      }
       // An accepted project request's work stays in this project (docs/012 D2), so a deliverable naming another project is refused here too.
       if (input.action === 'accept') {
         for (const [index, item] of (input.deliverables ?? []).entries()) {

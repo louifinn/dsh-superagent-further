@@ -223,6 +223,21 @@ the delivery's write budget remains the Request it creates: the repository, Sett
 records stay untouched directly. The Request appears in the panel like any other, and its Mandate records the automation
 id that produced it.
 
+### D13. Escalation to the Orchestrator
+
+A project Lead whose automation delivery finds work that belongs outside its own project — another project's code, a
+shared build, the installation's own configuration — raises an `escalation` project request with
+`lead_request_escalate`: a pending request the Orchestrator disposes, never the Lead (the Lead's decide/reply commands
+refuse it). The Orchestrator sees it through `orchestrator_escalations` and answers it with
+`orchestrator_escalation_decide` and its mandatory reply. An accept names at least one delivery unit (every unit a
+registered project), and creates one rootless installation-level Request and its Tickets through `Tickets.createLead`:
+the Mandate basis is `{ via: 'escalation', project, request }`, its actor `dsh-superagent:orchestrator`, and revalidation
+trusts that basis like a Lead accept, because the Orchestrator decided it rather than a Source message. Reject and
+needs-info record the reply and create no work. The reply is written as a `lead_message` notice for the source project
+and delivered to its Lead, which reports it onward through the original worker; a repeated escalation of the same title
+in the same Lead Session returns the open request. A person's architecture approval is unaffected: architecture work
+still needs a root Thread, so escalation stays inside the work kind.
+
 ## Phases / missions
 
 - M13 (P1) — **done**: schema 21 `project_request` store, engine APIs (`raise`, `decide` on a request, `complete`),

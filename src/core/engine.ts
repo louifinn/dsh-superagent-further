@@ -40,6 +40,13 @@ export interface InstallationRequestInput {
   deliverable?: Deliverable
 }
 
+/** What the Orchestrator records when it disposes a project Lead's escalated request (docs/012 D13). */
+export interface EscalationDecisionInput {
+  /** One Ticket per unit, in order; every unit names a registered project. */
+  units: DeliveryUnit[]
+  deliverable?: Deliverable
+}
+
 /**
  * Single transactional entry point for mutating Triggers, Threads, Decisions, Tickets, and Assignments.
  * Coordinates Intake, Evals, Tickets, Assignments, and Replies inside synchronous repository transactions while queuing side
@@ -255,6 +262,85 @@ export class Engine {
         deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
       }
       return this.tickets.createLead(decisionId, mandate, outcome, at)
+    })
+  }
+  /**
+   * Record a project Lead's escalation of work that does not belong to its own project (docs/012 D13): a pending
+   * `escalation` request the Orchestrator disposes. A repeated escalation of the same title in the same Lead Session
+   * returns the open request.
+   */
+  escalateProjectRequest(input: ProjectRequestInput): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const { title, instruction } = this.projectRequestText(input)
+      const open = store.list(input.project).filter(request => request.title === title && request.kind === 'escalation'
+        && projectRequestOpen(request.status))
+      const existing = open.find(request => request.raised_by.session === input.raised_by.session)
+      if (existing) return existing
+      const at = this.now()
+      const request: ProjectRequest = {
+        id: `prq-${randomBytes(4).toString('hex')}`,
+        project: input.project,
+        kind: 'escalation',
+        title,
+        instruction,
+        raised_by: { ...input.raised_by },
+        status: 'pending',
+        replies: [],
+        tickets: [],
+        derived: [],
+        created_at: at,
+        updated_at: at,
+      }
+      store.save(request)
+      return request
+    })
+  }
+  /** The escalated project requests of one project, or of every project, oldest first; `status` narrows the list. */
+  listEscalations(filter: { project?: string; status?: ProjectRequestStatus } = {}): ProjectRequest[] {
+    return this.projectRequestStore().list(filter.project)
+      .filter(request => request.kind === 'escalation' && (filter.status === undefined || request.status === filter.status))
+  }
+  /**
+   * Dispose a project Lead's escalated request as the Orchestrator (docs/012 D13): the mandatory reply is recorded with
+   * the decision, and an accept creates one rootless installation-level Request with its units' Tickets under an
+   * escalation Mandate. Reject and needs-info move the request without creating work.
+   */
+  decideEscalation(id: string, disposition: ProjectRequestDisposition, input: EscalationDecisionInput): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = store.get(id)
+      if (!request) throw new ProjectRequestError('unknownProjectRequest')
+      if (request.kind !== 'escalation') throw new ProjectRequestError('notEscalationProjectRequest')
+      if (request.status !== 'pending' && request.status !== 'needs-info') throw new ProjectRequestError('settledProjectRequest')
+      const at = this.now()
+      const status: ProjectRequestStatus = disposition.action === 'accept' ? 'accepted'
+        : disposition.action === 'reject' ? 'rejected' : 'needs-info'
+      const notes = disposition.notes?.trim()
+      const decision = { action: disposition.action, at, ...notes ? { notes } : {} }
+      if (disposition.action !== 'accept') return this.saveProjectRequestReply(store, request, disposition, at, { status, decision })
+      const units = input.units.slice(0, 8).map((unit): DeliveryUnit => {
+        const project = unit.project?.trim()
+        if (!project) throw new ProjectRequestError('emptyText')
+        return { project, ...unit.title?.trim() ? { title: unit.title.trim() } : {}, ...unit.after?.length ? { after: unit.after } : {} }
+      })
+      if (!units.length) throw new ProjectRequestError('emptyText')
+      const decisionId = key('escalation', request.id)
+      const mandate: Mandate = {
+        strength: 'explicit',
+        policyVersion: this.options.policy().version,
+        basis: { via: 'escalation', project: request.project, request: request.id },
+        actor: { source: 'dsh-superagent', id: 'orchestrator' },
+        scope: request.instruction,
+      }
+      const outcome: Extract<AssessmentOutcome, { kind: 'accept' }> = {
+        kind: 'accept', title: request.title, scope: request.instruction, reason: 'leadEscalation',
+        deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
+      }
+      const created = this.tickets.createLead(decisionId, mandate, outcome, at)
+      return this.saveProjectRequestReply(store, request, disposition, at, {
+        status, decision, request_id: created.id, tickets: [...request.tickets, ...created.ticketIds],
+      })
     })
   }
   /**
@@ -496,6 +582,7 @@ export class Engine {
   private projectRequestOf(store: ProjectRequestRepository, id: string): ProjectRequest {
     const request = store.get(id)
     if (!request) throw new ProjectRequestError('unknownProjectRequest')
+    if (request.kind === 'escalation') throw new ProjectRequestError('escalationNotLeadDecision')
     return request
   }
   /** Trimmed text, refusing empty and over-long project-request titles and instructions. */
@@ -641,12 +728,13 @@ export class Engine {
 }
 
 /** What the project Lead's approval tools ask of the Engine (docs/012 D7). */
-export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'requestProjectApproval' | 'approveProjectRequest'>
+export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'requestProjectApproval' | 'approveProjectRequest' | 'escalateProjectRequest'>
 /** What Sources ask and tell the Engine. */
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'
-  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest'>
+  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest'
+  | 'listEscalations' | 'decideEscalation'>
 /** What people ask of the Engine, through the panel or the main Session. */
 export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
 /** What Settings tells the Engine. */

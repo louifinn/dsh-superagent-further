@@ -6,7 +6,6 @@ import { Store } from '../src/app/store.ts'
 import { Engine, MemoryRepositories, ProjectRequestError, key, projectRequestOpen, threadKey, type Assessor, type Executor, type Outbox,
   type Policy, type ProjectRequestInput, type ProjectRequestRefusal, type ProjectRequestStatus, type SourceScope, type Trigger }
   from '../src/core/index.ts'
-
 let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'orchestrator-project-requests-')) })
 afterEach(() => { rmSync(directory, { recursive: true, force: true }) })
@@ -341,5 +340,38 @@ it('refuses approval commands for requests that cannot take them', () => {
   const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Accepted.' })
   expect(accepted.status).toBe('accepted')
   refusal(() => engine.requestProjectApproval(raised.id), 'designNotEnded')
+  store.close()
+})
+
+it("lets the Orchestrator decide a project Lead's escalated request into one installation Request", () => {
+  const { engine, store, setClock } = open()
+  const raised = engine.escalateProjectRequest({ project: 'superagent', kind: 'escalation', title: 'Rework the shared build',
+    instruction: 'The shared build belongs to another project; rework it there.', raised_by: { session: 'lead-superagent' } })
+  expect(raised).toMatchObject({ kind: 'escalation', status: 'pending', replies: [], tickets: [] })
+  expect(engine.listEscalations().map(item => item.id)).toEqual([raised.id])
+  // The project Lead cannot decide its own escalation: the Orchestrator does.
+  refusal(() => engine.disposeProjectRequest(raised.id, { by: 'lead-superagent', action: 'accept', text: 'ok' }), 'escalationNotLeadDecision')
+  refusal(() => engine.replyProjectRequest(raised.id, { by: 'lead-superagent', text: 'ok' }), 'escalationNotLeadDecision')
+  // A repeated escalation of the same title in the same Session returns the open request.
+  setClock('2026-11-10T09:01:00.000Z')
+  expect(engine.escalateProjectRequest({ project: 'superagent', title: 'Rework the shared build', instruction: 'Again',
+    raised_by: { session: 'lead-superagent' } }).id).toBe(raised.id)
+  // Accepting creates one rootless installation Request under an escalation Mandate.
+  const decided = engine.decideEscalation(raised.id, { by: 'orchestrator', action: 'accept', text: 'Owned by project-check now' },
+    { units: [{ project: 'project-check' }, { project: 'superagent', title: 'Follow up', after: [0] }] })
+  expect(decided.status).toBe('accepted')
+  expect(decided.replies.at(-1)).toMatchObject({ by: 'orchestrator', text: 'Owned by project-check now' })
+  const created = store.requests.get(decided.request_id ?? '')
+  expect(created?.channels).toEqual([])
+  expect(created?.mandate.basis).toEqual({ via: 'escalation', project: 'superagent', request: raised.id })
+  expect(created?.mandate.actor).toEqual({ source: 'dsh-superagent', id: 'orchestrator' })
+  expect(created?.ticketIds).toHaveLength(2)
+  expect(store.tickets.get(created?.ticketIds[1] ?? '')?.after).toEqual([created?.ticketIds[0]])
+  // A non-accept records the reply and creates no work.
+  const second = engine.escalateProjectRequest({ project: 'superagent', title: 'A second ask', instruction: 'Nothing here',
+    raised_by: { session: 'lead-superagent' } })
+  const rejected = engine.decideEscalation(second.id, { by: 'orchestrator', action: 'reject', text: 'Stay in your project' }, { units: [] })
+  expect(rejected.status).toBe('rejected')
+  expect(store.requests.list()).toHaveLength(1)
   store.close()
 })

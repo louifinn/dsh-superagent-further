@@ -44,6 +44,8 @@ it('delivers workspace files only to a named chat and only from a registered pro
 
 it('registers installation request creation and needs the Host schedule service to run it', async () => {
   expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_request_create')).toBe(true)
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_escalations')).toBe(true)
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_escalation_decide')).toBe(true)
   await expect(h.runTool(h.runtime.masterId, 'orchestrator_request_create', { title: 'Audit', instruction: 'Fix the build',
     automation: 'auto-1', deliverables: [{ project: 'default' }] }))
     .rejects.toThrow('No installation automation service is installed')

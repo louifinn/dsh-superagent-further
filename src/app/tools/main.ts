@@ -23,10 +23,11 @@ const RoutingNoteSchema = z.string().trim()
   .describe(`Optional routing background or explicit human constraint, at most ${NOTE_WORDS} words. Never add implementation instructions or replace the original source.`)
 export interface MainToolsHost {
   readonly context: Context
-  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
+  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'
+    | 'listEscalations' | 'decideEscalation'> & EngineForPeople
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
-  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
+  readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry' | 'ensureLead' | 'prompt'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync' | 'propose' | 'proposals'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
@@ -397,6 +398,60 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         const request = host.engine.raiseInstallationRequest({ title: args.title, instruction: args.instruction,
           automation: args.automation, units, ...args.deliverable ? { deliverable: args.deliverable } : {} })
         return { request_id: request.id, tickets: request.ticketIds, automation: args.automation, mandate: 'installation' }
+      },
+    }),
+    tool({
+      name: 'orchestrator_escalations',
+      description: 'List escalated project requests: work a project Lead escalated to the Orchestrator because it belongs outside its own project. Decide each one with orchestrator_escalation_decide so the Lead receives the mandatory reply.',
+      schema: z.object({
+        project: z.string().trim().min(1).optional().describe('Only escalations of this registered project.'),
+        status: z.enum(['pending', 'needs-info', 'accepted', 'rejected']).optional().describe('Only escalations in this status; omit for every recent one.'),
+      }).strict(),
+      execute: async (args: { project?: string; status?: 'pending' | 'needs-info' | 'accepted' | 'rejected' }) => {
+        const requests = host.engine.listEscalations({ ...args.project ? { project: args.project } : {}, ...args.status ? { status: args.status } : {} })
+        return { escalations: requests.slice(-20).reverse().map(request => ({
+          id: request.id, project: request.project, title: request.title, instruction: request.instruction,
+          raised_by: request.raised_by, status: request.status, created_at: request.created_at, updated_at: request.updated_at,
+        })) }
+      },
+    }),
+    tool({
+      name: 'orchestrator_escalation_decide',
+      description: 'Decide one escalated project request with the mandatory reply its Lead requires. On accept, name at least one delivery unit: the work becomes one installation-level Request with one Ticket per unit, recorded under an escalation Mandate. Reject and needs-info record the reply and create no work. The reply is delivered to the project Lead.',
+      schema: z.object({
+        id: z.string().trim().min(1).describe('The escalated project request id.'),
+        decision: z.enum(['accept', 'reject', 'needs-info']).describe('accept starts the work, reject declines it, needs-info asks the Lead for more.'),
+        reply: z.string().trim().min(1).max(8000).describe('The required non-empty reply, in the language of the request.'),
+        deliverables: z.array(z.object({
+          project: z.string().trim().min(1).max(40),
+          title: z.string().trim().min(1).max(200).optional(),
+          after: z.array(z.number().int().min(0)).max(7).optional(),
+        })).min(1).max(8).optional().describe('accept: one Ticket per unit, in order; every unit names a registered project.'),
+        deliverable: z.enum(['change', 'answer']).optional().describe('What the accepted Tickets owe (default change); answer is read-only.'),
+      }).strict().refine(value => value.decision !== 'accept' || (value.deliverables?.length ?? 0) > 0, 'accept needs at least one delivery unit'),
+      execute: async (args: { id: string; decision: 'accept' | 'reject' | 'needs-info'; reply: string
+        ; deliverables?: { project: string; title?: string; after?: number[] }[]; deliverable?: 'change' | 'answer' }) => {
+        for (const [index, unit] of (args.deliverables ?? []).entries()) {
+          if (!host.projects().some(item => item.id === unit.project)) throw new Error(`Deliverable ${index}: project ${unit.project} is not registered`)
+        }
+        const request = host.engine.decideEscalation(args.id, { by: 'orchestrator', action: args.decision, text: args.reply },
+          { units: (args.deliverables ?? []).map(unit => ({ project: unit.project, ...unit.title ? { title: unit.title } : {},
+            ...unit.after?.length ? { after: unit.after } : {} })), ...args.deliverable ? { deliverable: args.deliverable } : {} })
+        let delivered = false
+        try {
+          const project = host.store.settings().executor.projects.find(item => item.id === request.project)
+          if (project) {
+            const body = `Your escalated project request ${request.id} was ${args.decision}: ${args.reply}`
+            const message = host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
+              requestId: `escalation-result:${request.id}`, body })
+            const session = await host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+            await host.sessions.prompt(session.id, message.requestId, message.body, 'queue')
+            host.store.leads.deliver(message.id)
+            delivered = true
+          }
+        } catch { delivered = false }
+        return { id: request.id, project: request.project, status: request.status, replies: request.replies,
+          ...request.request_id ? { request_id: request.request_id } : {}, tickets: request.tickets, reply_delivered: delivered }
       },
     }),
     tool({

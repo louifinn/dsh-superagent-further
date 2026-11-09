@@ -273,6 +273,7 @@ export class Runtime extends Service implements SourceHost {
       // The approval tools read and write through the same Engine; bind them by the Store the Lead tools are built with.
       bindLeadApprovals(store, {
         raise: input => engine.raiseProjectRequest(input),
+        escalate: input => engine.escalateProjectRequest(input),
         plan: (id, plan) => engine.planProjectRequest(id, plan),
         requestApproval: id => engine.requestProjectApproval(id),
         approve: (id, input) => engine.approveProjectRequest(id, input),

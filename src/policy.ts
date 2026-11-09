@@ -386,7 +386,7 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
       if (basis.via === 'followup') return mandate.strength === 'explicit' || (mode === 'auto' && rulesOn(basis.rules))
       // Internal accepts — a project Lead's decision, or the main Session acting on an installation automation delivery —
       // came from no Source message, so no Source check or observation mode applies (docs/012 D2, D12).
-      if (basis.via === 'lead' || basis.via === 'installation') return true
+      if (basis.via === 'lead' || basis.via === 'installation' || basis.via === 'escalation') return true
       // A bot's candidate holds only while the bot remains on its Source's bot list and passes the observation checks below.
       if (basis.via === 'bot' && !listedBot(settings, mandate.actor)) return false
       // An admission-table Mandate holds while the sender's current cell still grants at least the original strength.

@@ -49,6 +49,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   the open Request for a repeated raise, and creates no Channels; revalidation trusts the installation basis. The
   delivery's write budget remains the Request it creates.
 
+- Lead escalation (docs/012 D13): `lead_request_escalate` lets a project Lead escalate work that belongs outside its
+  project; `orchestrator_escalations` and `orchestrator_escalation_decide` let the Orchestrator answer with the
+  mandatory reply and, on accept, create one installation-level Request under an escalation Mandate. Reject and
+  needs-info create no work; the decision is recorded as a durable notice for the source project's Lead.
+
 - Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
   service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
   `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both

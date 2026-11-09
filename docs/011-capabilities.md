@@ -841,7 +841,24 @@ had no channel for work that belongs to another project or to the installation. 
   the Request its automation was authorized to produce. Architecture work keeps its root-Thread approval gate.
 - **Panel:** the Request appears like any other, with its Mandate recording the automation id; no new page is needed.
 
-P2 — a project Lead escalating cross-project work to the main Session — remains open.
+## Part G — Lead escalation to the Orchestrator (approved 2026-11-10, Sprint 27)
+
+P2 of the self-bootstrap pair: a project Lead can escalate work that belongs outside its project to the Orchestrator,
+which decides it and must reply, and the reply reaches the Lead through its durable message record.
+
+- **Raise:** `lead_request_escalate` records an `escalation` project request (title and instruction) raised by that Lead
+  Session. A repeated title in the same Session returns the open request. The Lead's own decide, reply and complete
+  commands refuse an escalated request.
+- **Decide:** the Orchestrator lists open escalations with `orchestrator_escalations` and disposes one with
+  `orchestrator_escalation_decide` and a non-empty reply. Accept requires at least one delivery unit, each naming a
+  registered project, and creates one rootless installation-level Request with its Tickets; the Mandate basis is
+  `{ via: 'escalation', project, request }`, actor `dsh-superagent:orchestrator`, and revalidation trusts it. Reject and
+  needs-info record the reply and create no work.
+- **Reply:** the decision is written as a `lead_message` notice for the source project and delivered to its Lead once the
+  Lead Session resolves; the Lead reports it onward to the worker that raised the original request. The original root
+  request keeps its own origin-Channel aggregate.
+- **Boundaries:** architecture work still requires a root Thread and a person's approval, so escalation stays in the work
+  kind; the Orchestrator never accepts Source candidates this way and changes no repository directly.
 
 ## Decisions requested
 

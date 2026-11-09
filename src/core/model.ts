@@ -122,6 +122,8 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'lead'; project: string; project_request_id: string; addressed?: 'mention' | 'direct' }
   /** The main Session turned an installation automation delivery's findings into work (docs/012 D12): the Mandate records the automation id and revalidates like a Lead accept, because no Source asked for it. */
   | { via: 'installation'; automation: string; addressed?: 'mention' | 'direct' }
+  /** The Orchestrator accepted a project Lead's escalated request: the Mandate records the source project and request, and revalidates like a Lead accept because the Orchestrator decided it (docs/012 D13). */
+  | { via: 'escalation'; project: string; request: string; addressed?: 'mention' | 'direct' }
   /** A message of a bot on its Source's bot list: an inferred candidate at most, never an explicit request or a stop. */
   | { via: 'bot'; addressed?: 'mention' | 'direct'; observation: { mode: AcceptMode } }
 )
@@ -308,7 +310,7 @@ export interface Request {
   /** When, by whom, and how it ended; absent while it is open. */
   ended?: { at: string; by: TicketEndBy; outcome: 'done' | 'partial' | 'stopped'; reason?: string }
 }
-export type ProjectRequestKind = 'work' | 'architecture'
+export type ProjectRequestKind = 'work' | 'architecture' | 'escalation'
 /**
  * A project-level request's lifecycle (docs/012 D1): the Lead disposes a `pending` or `needs-info` request as `accepted`,
  * `rejected` or `needs-info`; an accepted one ends `completed` with its summary, while an architecture request passes
@@ -406,6 +408,7 @@ export type ProjectRequestRefusal = 'unknownProjectRequest' | 'settledProjectReq
   | 'unknownRootProjectRequest' | 'notRootProjectRequest' | 'foreignProjectRequest' | 'noProjectRequestStore'
   | 'notArchitectureProjectRequest' | 'notAcceptedForApproval' | 'notAwaitingApproval' | 'designNotEnded'
   | 'missingApprovalTrigger' | 'approvalRootRequired'
+  | 'notEscalationProjectRequest' | 'escalationNotLeadDecision'
 const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   unknownProjectRequest: 'This project request does not exist',
   settledProjectRequest: 'This project request has already been decided or closed',
@@ -422,6 +425,8 @@ const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   designNotEnded: 'The design Ticket of this project request has not ended yet',
   missingApprovalTrigger: 'No human reply on the root thread can be linked to this approval',
   approvalRootRequired: 'An architecture project request needs a root thread for its approval',
+  notEscalationProjectRequest: 'Only an escalation project request is decided by the Orchestrator',
+  escalationNotLeadDecision: 'An escalated project request is decided by the Orchestrator, not its project Lead',
 }
 /**
  * A project-request command's refusal: a missing request, a settled one, an empty reply or summary, or a repository that
