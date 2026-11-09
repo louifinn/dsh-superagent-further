@@ -56,9 +56,9 @@ dsh-superagent-further runs on macOS, Linux and Windows 10/11, with each platfor
 
 ### Engine
 
-`Engine` (`src/core/engine.ts`) is the only writer of Triggers, Threads, Decisions, Tickets and Assignments. It receives these ports from `src/core/ports.ts`: `Repositories`, a current-Policy getter, `SourceScope`, `Assessor`, `Executor` and `Outbox`. Optional dependencies are `prepareTicket`, `now` and `emit`.
+`Engine` (`src/core/engine.ts`) is the only writer of Triggers, Threads, Decisions, Tickets and Assignments. It receives these ports from `src/core/ports.ts`: `Repositories`, a current-Policy getter, `SourceScope`, `Assessor`, `Executor` and `Outbox`. Optional dependencies are `prepareTicket`, `now`, `emit`, and the `projectRequests` repository that only a repository storing project requests provides.
 
-All Engine methods are synchronous. Each command changes its aggregates in one transaction. `evaluateDue` uses a separate transaction for each Eval or Ticket it changes. Ports enqueue external work inside the transaction; adapters perform it after commit. Invalid requests throw `UserError`.
+All Engine methods are synchronous. Each command changes its aggregates in one transaction. `evaluateDue` uses a separate transaction for each Eval or Ticket it changes. Ports enqueue external work inside the transaction; adapters perform it after commit. Invalid requests throw `UserError`, except the project-request commands, which throw `ProjectRequestError`.
 
 The Engine exposes one entry point and delegates to five internal parts. It owns each command's transaction. Commands spanning parts, such as `attach`, `evaluateDue` and `policyChanged`, call the parts in sequence.
 
@@ -71,6 +71,8 @@ Each part extends `EnginePart` (`src/core/part.ts`), which provides options and 
 | `Tickets` | The Ticket lifecycle: creation from an accept with its Mandate, Subscriptions and first Assignment, the Threads it follows and their closes (`followsDone`), attached Threads and Threads followed for context, Inputs and notes, resume and the messages a resume refuses, retry, restart, stop and end, the Subscriptions it drops, and the notice of a Policy change to the Tickets it bears on | Replies |
 | `Assignments` | What the Executor and its workers report: an Assignment started, Inputs reached it or failed to, a restart interrupted it, and a worker's Report with its question for a person | Tickets, Replies |
 | `Replies` | Channel writes through the `Outbox`: the acknowledgement, the answer, the result and the attention message, each by the rule that allows it | Nothing |
+
+Project requests do not need a part: they live in the optional `projectRequests` repository. `raiseProjectRequest` records a worker's or a Lead's ask, and the Lead commands list, reply to, decide and complete one. They refuse with `ProjectRequestError` while that repository is absent, the request is unknown, or the change does not fit its status. A `disposeProjectRequest` accept records the decision only; creating the domain Request and its Tickets belongs to the Lead tools.
 
 Commands use imperative names such as `stopTicket`; facts reported by adapters use past-tense names such as `assignmentStarted`. The query `candidate` uses a noun.
 
@@ -88,6 +90,11 @@ Callers receive only their role's `Pick` of the Engine: `EngineForSources`, `Eng
 | Main Session | `requestStatus(ticketId)` | Asks a waiting Executor Session for its status, and answers whether it asked |
 | Main Session | `note(ticketId, text)` | Gives a Ticket's Executor a fact from other work as a text Input, which grants nothing |
 | Main Session, Executor | `reply(request)` | Queues a message for the Channel its purpose names: `acknowledgement`, `answer`, `result` or `attention` |
+| Main Session | `listProjectRequests(filter?)` | The project requests the Lead may answer, optionally narrowed by `project` and `status`, oldest first |
+| Main Session | `replyProjectRequest(id, reply)` | Appends a Lead's reply to a request still open (`projectRequestOpen`), oldest first |
+| Main Session | `disposeProjectRequest(id, disposition)` | Answers a pending or `needs-info` request with a non-empty text and an `accept`, `reject` or `needs-info` decision, which it records after the reply |
+| Main Session | `completeProjectRequest(id, summary)` | Completes the work of an accepted or approved request with the Lead's summary |
+| Executor | `raiseProjectRequest(input)` | Records a worker's project request, or answers the open request that the same Ticket already has under the same project and title |
 | People | `stopTicket(ticketId, reason?)` | A person's stop, which withdraws the Mandate |
 | People | `retryTicket(ticketId)` | Ends the stalled Assignment of a Ticket that waits for a person after a `failed` or `blocked` Report, or whose Input delivery failed (`canRetry`), and starts a new one |
 | People | `reevaluate(triggerId)` | Queues a stored Trigger for a fresh Eval |
@@ -135,6 +142,8 @@ An Input that carries a Trigger records whether a person wrote it, which `waitsF
 
 A Trigger's disposition records the Tickets it reached, by fan-out or attachment, a person's requeue, each Ticket that handed it back, with the reason, and each Ticket whose Executor acknowledged or answered it.
 
+A project request (`ProjectRequest`) records work asked of a project rather than of one Trigger: its `project`, `kind`, `title`, `instruction`, who raised it (`raised_by`, with its Ticket and Assignment when a worker did), its `status`, the Lead's `replies` oldest first, its `decision`, the domain Request an acceptance created (`request_id`), the `tickets` it covers, the `derived` requests that name it as root, and the human `approval` an architecture request needs. A root request also records where it came from in `root` (`request_id`, `trigger_id`, `thread_key`), while a derived request points at its root through `root.project_request_id`; `projectRequestOpen` says whether the Lead may still answer it. Its refusals are `ProjectRequestError` codes.
+
 A Mandate's `basis` (`MandateBasis`) records how the gate admitted its Trigger. Revalidation reads the receiving `source`, `scope` and `row`, the listed `sender`, matched `rules`, and `via`:
 
 | `via` | Admission basis |
@@ -142,6 +151,7 @@ A Mandate's `basis` (`MandateBasis`) records how the gate admitted its Trigger. 
 | `addressed` | An allowed sender addressed the agent |
 | `followup` | A message arrived on a Thread with Tickets |
 | `admission` | An admission-table cell; `observation` marks an inferred candidate |
+| `lead` | The basis an accepted project request records: its `project` and `project_request_id` name the work |
 | `bot` | A listed bot produced an inferred candidate |
 
 Trigger and Thread `meta` belong to the Source. The core does not interpret them.
@@ -165,14 +175,14 @@ Trigger and Thread `meta` belong to the Source. The core does not interpret them
 
 Its interfaces are grouped by purpose:
 
-- **Domain repositories:** `atomic`, plus `triggers`, `threads`, `tickets` and `decisions`, each with `get`, `save` and list queries. Indexed working sets are `threads.active()`, `tickets.open()`, `tickets.active()` and `read.subscribedThreads`.
+- **Domain repositories:** `atomic`, plus `triggers`, `threads`, `tickets`, `requests`, `decisions` and `projectRequests`, each with `get`, `save` and list queries. Indexed working sets are `threads.active()`, `tickets.open()`, `tickets.active()` and `read.subscribedThreads`.
 - **Read queries:** `read` serves views, tools and Source polls through methods such as `threadTriggers`, `triggerStats`, `search` and `droppedReplies`. These methods never write.
 - **Source metadata:** `threads.describe` and `threads.patchMeta` update Source-owned Thread metadata.
 - **Settings:** `settings`, `saveSettings`, `blockRevision`, `settingsVersion`, `settingsHistory` and `proposals`, which lists and stores the `settings_proposal` records the panel decides. Settings and prompts use numbered `Versions` (`src/app/versions.ts`).
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16, 16 to 17, 17 to 18, which adds the `settings_proposal` table the Store creates, 18 to 19, which adds the `automation` table the Store creates, and 19 to 20, which adds the `automation_delivery` table the Store creates).
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16, 16 to 17, 17 to 18, which adds the `settings_proposal` table the Store creates, 18 to 19, which adds the `automation` table the Store creates, 19 to 20, which adds the `automation_delivery` table the Store creates, and 20 to 21, which adds the `project_request` table the Store creates).
 
 ### Effects
 
@@ -293,7 +303,7 @@ Each model request binds the Session to the current prompt revision. The revisio
   A Source changes a Ticket only through `SourceContext.tickets.bindThread` and `threadClosed`, which call the Engine.
 - **Requests and facts.** A method that asks for something is named by an imperative verb and its object, such as `stopTicket` or `bindThread`, and may be refused; a method that records what an adapter did is named in the past tense, such as `assignmentStarted` or `deliveryFailed`. Each host receives the Engine as the role type it needs.
 - **Typed fields, and Source data under the Source.** The code reads typed fields of Tickets and Mandates. A Source keeps nothing on a Ticket: which of its Threads a Ticket follows is the Ticket's `follows`, and what it keeps about a Trigger or a Thread is in their `meta`.
-- **Fixed refusals.** A refusal a person or an agent can cause is a `UserError(code, values)` from `USER_ERRORS` in `src/core/errors.ts`. The management API answers a `missing` code with 404 and the others with 400, and the panel words each code in its language. Setup problems are `SetupError` codes (`src/setup.ts`) and fixed health texts `HealthCode`s (`src/sources/host.ts`), worded the same way.
+- **Fixed refusals.** A refusal a person or an agent can cause is a `UserError(code, values)` from `USER_ERRORS` in `src/core/errors.ts`. The management API answers a `missing` code with 404 and the others with 400, and the panel words each code in its language. Setup problems are `SetupError` codes (`src/setup.ts`) and fixed health texts `HealthCode`s (`src/sources/host.ts`), worded the same way. The project-request commands refuse with `ProjectRequestError`, whose codes name the request conditions they refuse.
 ### Source-specific dependencies
 
 Some generic modules still refer directly to GitHub or Feishu:
@@ -321,9 +331,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/limits.ts` | The limits of the values a person sets, which the settings schemas check and the panel's fields offer |
 | `src/kv.ts` | `KV`: every family of `kv` records with its key, its value's type and its owner, and the `Key` and `Family` types the Store and `SourceContext.state` take |
 | `src/navigation.ts` | Opens a DeepSeek Harness Session from the panel once the host's catalog lists it |
-| `src/core/model.ts` | The domain types, among them the typed Ticket and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`, `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment` and `latestReport` |
-| `src/core/ports.ts` | The ports: `Repositories`, `Policy`, `SourceScope`, `Assessor`, `Executor`, `Outbox`, and the domain events |
-| `src/core/engine.ts` | The Engine, the core's entry point, and the role interfaces `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` and `EngineForExecutor` |
+| `src/core/model.ts` | The domain types, among them the typed Ticket, `ProjectRequest` and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`, `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment`, `latestReport` and `ProjectRequestError` |
+| `src/core/ports.ts` | The ports: `Repositories` (with the optional `ProjectRequestRepository`), `Policy`, `SourceScope`, `Assessor`, `Executor`, `Outbox`, and the domain events |
+| `src/core/engine.ts` | The Engine, the core's entry point, with its project-request commands, and the role interfaces `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` and `EngineForExecutor` |
 | `src/core/part.ts` | `EnginePart`, the base of the Engine's parts, and `EngineOptions` |
 | `src/core/intake.ts` | `Intake`: Triggers from Sources, to their Tickets and, unless a person's message reached one, to Eval |
 | `src/core/evals.ts` | `Evals`: the Evals of Threads and their Decisions |
@@ -343,7 +353,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
-| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, 15 to 16 adds the `memory` table the Store creates, 16 to 17 removes the GitHub Source's own `repository` setting because the first registered project supplies the primary repository, 17 to 18 adds the `settings_proposal` table the Store creates, 18 to 19 adds the `automation` table the Store creates, and 19 to 20 adds the `automation_delivery` table the Store creates |
+| `src/app/project-requests.ts` | `ProjectRequests`: the Store's project-request repository, by id and by project in the order they were raised |
+| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, 15 to 16 adds the `memory` table the Store creates, 16 to 17 removes the GitHub Source's own `repository` setting because the first registered project supplies the primary repository, 17 to 18 adds the `settings_proposal` table the Store creates, 18 to 19 adds the `automation` table the Store creates, 19 to 20 adds the `automation_delivery` table the Store creates, and 20 to 21 adds the `project_request` table the Store creates |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
 | `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
@@ -492,8 +503,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, the tier-A, tier-B and tier-C refusals of a tool-origin save with nothing written, the required reason and recorded audit, the refusals of the pause, a sync and a block, and a per-block restore with its `restoredFrom` history row, tier-C panel restore, setup-field restart and 404/409 outcomes |
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |
-| `tests/migration.spec.ts` | The schema migrations: every stored record in its current shape, each Ticket's project filled in, the localization of untouched built-in rules on read, and the refusal of older schemas |
-| `tests/store.spec.ts` | Repositories and their working sets, in SQLite as in memory, the kv area, with every key of `KV` spelled only in `src/kv.ts` and the migration, settings history and queries |
+| `tests/migration.spec.ts` | The schema migrations: every stored record in its current shape, each Ticket's project filled in, the localization of untouched built-in rules on read, the refusal of older schemas, and the `project_request` table at schema 21 |
+| `tests/store.spec.ts` | Repositories and their working sets, in SQLite as in memory, the kv area, with every key of `KV` spelled only in `src/kv.ts` and the migration, settings history and queries, and the project requests listed by project and status across a reopen |
+| `tests/project-requests.spec.ts` | Project requests: the raise of a root and a derived request, one open request per worker Ticket and title, replies, decisions, the statuses a Lead may still answer, completing an accepted or an approved request, and the listings by project and status, on SQLite across a reopen |
 | `tests/prompts.spec.ts` | Prompt validation, assembly, versions, the localized Policy section and the review/read-only working boundary |
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
 | `tests/model-surface.spec.ts` | Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary, within a size budget per role |
@@ -524,6 +536,7 @@ One SQLite file, `<stateDir>/orchestrator.sqlite`, which only the Store opens.
 | `trigger_thread` | Which Threads each Trigger is on, with its time and whether a person wrote it, so a Thread's Triggers are read without scanning every Trigger, in order of time and then id: a page of a Thread's timeline continues from a `<at>|<id>` cursor, and Triggers that share a time are not skipped | Store, with each Trigger |
 | `thread` | Threads: Subscriptions, the Tickets that follow it for context, queued Triggers, the Eval in progress, the count of its expiries and `meta`; the generated columns `active`, set while Triggers are queued or an Eval runs, and `subscribed`, its Source while a Ticket subscribes to it | Engine; Sources write `meta` |
 | `ticket` | Tickets with their Mandate, origin, execution, Assignments, Channels, Inputs and the Threads they follow; the generated columns `open`, set while it has not ended, and `active`, set while Inputs are undelivered or the latest Assignment is pending or running | Engine |
+| `project_request` | Project requests: the project, kind and title, who raised it with its Ticket and Assignment, the status, the Lead's replies and decision, the Request an acceptance created, the Tickets it covers and the derived requests that name it as root, the approval of an architecture request, and its times; the columns `project` and `status` serve the listings | Engine |
 | `decision` | Decisions, by Thread | Engine |
 | `effect` | The effect queue: per kind and key, the payload, its order, failed attempts with the last error, and when it is due | Effects; the schema 11 migration queues what earlier versions kept for the main Session |
 | `outbox` | The receipt of each message for a Channel, by id, with the Ticket it is for and its `status`, `pending`, `sent` or `dropped`, kept so an id is never queued twice; for a dropped message, when and why, as the generated column `dropped`, its time, and a reason code. A message that waits has a `reply` effect, which holds its attempts | The Outbox |
@@ -552,7 +565,7 @@ Read caches use bounded in-memory `TextCache` instances and are lost on restart.
 
 Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request. The exception is `automation_delivery`, which keeps only each task's newest 50 rows. Every saved settings revision stays retained, so a restore can read any of them, while the panel lists only the newest 30. Settings proposals are not pruned either: an expired, rejected or superseded row stays as the record of what was asked.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates, then 18 to 19, which adds the `automation` table the Store creates, then 19 to 20, which adds the `automation_delivery` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates, then 18 to 19, which adds the `automation` table the Store creates, then 19 to 20, which adds the `automation_delivery` table the Store creates, then 20 to 21, which adds the `project_request` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
 
 ## Model-facing interfaces
 

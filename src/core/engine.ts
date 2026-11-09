@@ -1,8 +1,11 @@
 /** The domain Engine: the single entry point of the core, and the role interfaces its callers receive. */
+import { randomBytes } from 'node:crypto'
 import { UserError } from './errors.ts'
-import { isoTime, liveTicket } from './model.ts'
-import type { ChannelRef, Decision, PolicyEffect, ThreadRef, Ticket, Trigger } from './model.ts'
-import type { Candidate, Repositories } from './ports.ts'
+import { isoTime, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, ProjectRequestError, projectRequestOpen }
+  from './model.ts'
+import type { ChannelRef, Decision, PolicyEffect, ProjectRequest, ProjectRequestDisposition, ProjectRequestInput, ProjectRequestReply,
+  ProjectRequestStatus, ThreadRef, Ticket, Trigger } from './model.ts'
+import type { Candidate, ProjectRequestRepository, Repositories } from './ports.ts'
 import type { EngineOptions } from './part.ts'
 import { Assignments, type WorkerReport } from './assignments.ts'
 import { Evals, type Outcome } from './evals.ts'
@@ -28,8 +31,10 @@ export class Engine {
   private readonly assignments: Assignments
   private readonly evals: Evals
   private readonly intake: Intake
+  private readonly projectRequests: ProjectRequestRepository | undefined
   constructor(private readonly options: EngineOptions) {
     this.repo = options.repo
+    this.projectRequests = options.repo.projectRequests
     this.replies = new Replies(options)
     this.tickets = new Tickets(options, this.replies)
     this.assignments = new Assignments(options, this.tickets, this.replies)
@@ -133,6 +138,140 @@ export class Engine {
    * is not ready, completed, merged, or dropped.
    */
   reply(request: ReplyRequest): Reply { return this.repo.atomic(() => this.replies.reply(request)) }
+
+  // Project requests (docs/012)
+
+  private now(): string { return this.options.now?.() ?? new Date().toISOString() }
+
+  /**
+   * Record a project-level request a worker or the project Lead raises: `pending`, with no replies yet, in `project`.
+   * A worker's repeated raise for the same Ticket and title returns the open request instead of a second one (docs/012 D4),
+   * and a derived request is linked from its root request's `derived` list.
+   * @throws ProjectRequestError when the repository stores no project requests, the text is empty or too long, or the root
+   * named is unknown, is itself derived, or belongs to another project.
+   */
+  raiseProjectRequest(input: ProjectRequestInput): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const { title, instruction } = this.projectRequestText(input)
+      // One open request per (ticket, title): a repeated call answers the request it raised before.
+      if (input.raised_by.ticket) {
+        const existing = store.list(input.project).find(request =>
+          request.raised_by.ticket === input.raised_by.ticket && request.title === title && projectRequestOpen(request.status))
+        if (existing) return existing
+      }
+      const at = this.now()
+      const parent = input.root?.project_request_id ? store.get(input.root.project_request_id) : undefined
+      if (input.root?.project_request_id) {
+        if (!parent) throw new ProjectRequestError('unknownRootProjectRequest')
+        if (parent.root?.project_request_id) throw new ProjectRequestError('notRootProjectRequest')
+        if (parent.project !== input.project) throw new ProjectRequestError('foreignProjectRequest')
+      }
+      const request: ProjectRequest = {
+        id: `prq-${randomBytes(4).toString('hex')}`,
+        project: input.project,
+        kind: input.kind ?? 'work',
+        title,
+        instruction,
+        raised_by: { ...input.raised_by },
+        status: 'pending',
+        replies: [],
+        tickets: [],
+        derived: [],
+        created_at: at,
+        updated_at: at,
+        ...input.root ? { root: { ...input.root } } : {},
+      }
+      store.save(request)
+      if (parent) store.save({ ...parent, derived: [...parent.derived, request.id], updated_at: at })
+      return request
+    })
+  }
+  /**
+   * The project requests of one project, or of every project, oldest first; `status` narrows the list to one state.
+   * @throws ProjectRequestError when the repository stores no project requests.
+   */
+  listProjectRequests(filter: { project?: string; status?: ProjectRequestStatus } = {}): ProjectRequest[] {
+    const requests = this.projectRequestStore().list(filter.project)
+    return filter.status === undefined ? requests : requests.filter(request => request.status === filter.status)
+  }
+  /**
+   * Record the Lead's reply on an open project request, without a disposition (docs/012 D3); replies are kept oldest first.
+   * @throws ProjectRequestError when the request is unknown or settled, or the reply is empty.
+   */
+  replyProjectRequest(id: string, reply: ProjectRequestReply): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (!projectRequestOpen(request.status)) throw new ProjectRequestError('settledProjectRequest')
+      return this.saveProjectRequestReply(store, request, reply, this.now())
+    })
+  }
+  /**
+   * Dispose an open project request with the Lead's mandatory reply (docs/012 D3): `accept` moves it to `accepted`,
+   * `reject` to `rejected` and `needs-info` to `needs-info`, recording the decision after the reply. Creating the domain
+   * Request and its Tickets on accept is the Lead tools' job when they land (docs/012 D5); this records the decision they read.
+   * @throws ProjectRequestError when the request is unknown, already settled, or the reply is empty.
+   */
+  disposeProjectRequest(id: string, disposition: ProjectRequestDisposition): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (request.status !== 'pending' && request.status !== 'needs-info') throw new ProjectRequestError('settledProjectRequest')
+      const at = this.now()
+      const status: ProjectRequestStatus = disposition.action === 'accept' ? 'accepted'
+        : disposition.action === 'reject' ? 'rejected' : 'needs-info'
+      const notes = disposition.notes?.trim()
+      return this.saveProjectRequestReply(store, request, disposition, at, {
+        status,
+        decision: { action: disposition.action, at, ...notes ? { notes } : {} },
+      })
+    })
+  }
+  /**
+   * Complete an accepted project request with the Lead's summary (docs/012 D5, D6): the summary is recorded as the last
+   * reply and the request ends `completed`. The Lead checks that all Tickets and derived requests ended before it calls
+   * this; the aggregate report D6 reads the same record.
+   * @throws ProjectRequestError when the request is unknown, not accepted (or approved by the architecture flow), or the
+   * summary is empty.
+   */
+  completeProjectRequest(id: string, summary: ProjectRequestReply): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (request.status !== 'accepted' && request.status !== 'approved') throw new ProjectRequestError('notAccepted')
+      const at = this.now()
+      return this.saveProjectRequestReply(store, request, summary, at, { status: 'completed', completed_at: at })
+    })
+  }
+  private projectRequestStore(): ProjectRequestRepository {
+    const store = this.projectRequests
+    if (!store) throw new ProjectRequestError('noProjectRequestStore')
+    return store
+  }
+  private projectRequestOf(store: ProjectRequestRepository, id: string): ProjectRequest {
+    const request = store.get(id)
+    if (!request) throw new ProjectRequestError('unknownProjectRequest')
+    return request
+  }
+  /** Trimmed text, refusing empty and over-long project-request titles and instructions. */
+  private projectRequestText(input: Pick<ProjectRequestInput, 'title' | 'instruction'>): { title: string; instruction: string } {
+    const title = input.title.trim(), instruction = input.instruction.trim()
+    if (!title || !instruction) throw new ProjectRequestError('emptyText')
+    if (title.length > PROJECT_REQUEST_TITLE_LIMIT || instruction.length > PROJECT_REQUEST_INSTRUCTION_LIMIT) {
+      throw new ProjectRequestError('tooLong')
+    }
+    return { title, instruction }
+  }
+  /** Append the Lead's reply at `at`, with `changes` applied, and save the request it answers. */
+  private saveProjectRequestReply(store: ProjectRequestRepository, request: ProjectRequest, reply: ProjectRequestReply, at: string,
+    changes: Partial<ProjectRequest> = {}): ProjectRequest {
+    const text = reply.text.trim()
+    if (!text) throw new ProjectRequestError('emptyText')
+    const updated: ProjectRequest = { ...request, ...changes, replies: [...request.replies, { at, by: reply.by.trim(), text }], updated_at: at }
+    store.save(updated)
+    return updated
+  }
 
   // People, through the panel or the main Session
 
@@ -260,11 +399,12 @@ export class Engine {
 /** What Sources ask and tell the Engine. */
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
-export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'>
+export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'
+  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest'>
 /** What people ask of the Engine, through the panel or the main Session. */
 export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
 /** What Settings tells the Engine. */
 export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */
 export type EngineForExecutor = Pick<Engine, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed'
-  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply'>
+  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply' | 'raiseProjectRequest'>

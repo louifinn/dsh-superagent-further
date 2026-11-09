@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { SCHEMA_VERSION, Store, type SettingsVersion } from '../src/app/store.ts'
+import type { ProjectRequest } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { DEFAULT_RULES, LEGACY_DEFAULT_RULES } from '../src/policy.ts'
 import { basisOf, reasonsOf, withoutCopies } from '../src/app/migration.ts'
@@ -729,4 +730,37 @@ it('groups a Ticket from before Requests existed under a Request of its own', ()
   expect(request?.ended).toBeUndefined()
   expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
   store.close()
+})
+
+it('creates the project_request table and keeps its records when migrating to schema 21', () => {
+  const request: ProjectRequest = {
+    id: 'prq-0a1b2c3d', project: 'orchestrator', kind: 'work', title: 'A project request', instruction: 'Do the work',
+    raised_by: { session: 'lead-orchestrator', ticket: 'ticket-1' }, status: 'pending', replies: [], tickets: [], derived: [],
+    created_at: '2026-11-10T09:00:00.000Z', updated_at: '2026-11-10T09:00:00.000Z',
+  }
+  // A schema 20 database that already carries the table keeps every record when the schema 21 step runs.
+  const keptPath = join(directory, 'project-requests-kept.sqlite')
+  const kept = new Store(keptPath)
+  kept.projectRequests.save(request)
+  kept.close()
+  const keptDb = new DatabaseSync(keptPath)
+  keptDb.prepare("UPDATE kv SET value='20' WHERE key='schema'").run()
+  keptDb.close()
+  const migrated = new Store(keptPath)
+  expect(migrated.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  expect(migrated.projectRequests.get(request.id)).toEqual(request)
+  migrated.close()
+  // One without the table, as a schema 20 Store created it, gets the empty table before the step runs.
+  const createdPath = join(directory, 'project-requests-created.sqlite')
+  new Store(createdPath).close()
+  const createdDb = new DatabaseSync(createdPath)
+  createdDb.exec('DROP TABLE project_request')
+  createdDb.prepare("UPDATE kv SET value='20' WHERE key='schema'").run()
+  createdDb.close()
+  const created = new Store(createdPath)
+  expect(created.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  expect(created.projectRequests.list()).toEqual([])
+  created.projectRequests.save(request)
+  expect(created.projectRequests.list()).toEqual([request])
+  created.close()
 })

@@ -1,5 +1,5 @@
 /** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
-import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
+import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
   from './model.ts'
 import type { Reason } from './reasons.ts'
 
@@ -113,6 +113,14 @@ export interface DomainEvents {
 }
 export type DomainEvent = { [K in keyof DomainEvents]: { type: K; at: string; data: DomainEvents[K] } }[keyof DomainEvents]
 
+/** The project-request records of a schema 21 Store (docs/012 D1): root and derived requests, read oldest first. */
+export interface ProjectRequestRepository {
+  get(id: string): ProjectRequest | undefined
+  save(request: ProjectRequest): void
+  /** Oldest first; `project` narrows the list to one project's requests. */
+  list(project?: string): ProjectRequest[]
+}
+
 /** Durable state. Every method is synchronous so `atomic` can wrap a unit of work. */
 export interface Repositories {
   atomic<T>(work: () => T): T
@@ -142,6 +150,8 @@ export interface Repositories {
     save(request: Request): void
     list(): Request[]
   }
+  /** Absent from repositories opened before schema 21, such as `MemoryRepositories`; project-request commands refuse there. */
+  projectRequests?: ProjectRequestRepository
   decisions: {
     get(id: string): Decision | undefined
     save(decision: Decision): void
