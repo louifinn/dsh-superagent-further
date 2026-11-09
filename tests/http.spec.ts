@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
+import { AutomationLimitError, UnknownAutomationError, UnknownProjectError } from '../src/app/automations.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
@@ -248,4 +249,56 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
   const kept = saved
   expect(await call('PUT', 'wizard', { skipped: 'yes' })).toMatchObject({ status: 400 })
   expect(saved).toBe(kept)
+})
+
+it('serves the Automations page from one service path, with same-origin, validation and 503 states', async () => {
+  const summary = { id: 'auto-1', scope: 'project' as const, project: 'default', report_only: true, title: 'Check the queue',
+    instruction: 'Report what waits.', rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', enabled: true, orphaned: false,
+    host_status: 'active' as const, next_at: null, last_delivery_at: null, last_error: null, revision: 0,
+    created_at: '2026-11-09T12:00:00.000Z', updated_at: '2026-11-09T12:00:00.000Z', dsh_task: 'schedule-1',
+    target_session: 'lead-default' }
+  const creates: unknown[][] = [], edits: unknown[][] = []
+  const automations = {
+    list: async () => ({ items: [summary], unrecorded: [] }),
+    create: async (input: Record<string, unknown>, actor: string) => {
+      if (input.project === 'missing') throw new UnknownProjectError('missing')
+      if (input.title === 'limit') throw new AutomationLimitError('Automation tasks are limited to 20; disable or edit an existing one first')
+      creates.push([input, actor])
+      return summary
+    },
+    edit: async (input: Record<string, unknown>, actor: string) => {
+      if (input.id === 'gone') throw new UnknownAutomationError('gone')
+      if (input.id === 'conflict') return { ...summary, conflict: true as const,
+        warning: 'The Host task changed outside this plugin; review its schedule before editing again' }
+      edits.push([input, actor])
+      return summary
+    },
+  }
+  const store = { settings: () => ({ executor: { projects: [{ id: 'default', name: 'Default' }] } }) }
+  const call = serve({ store, automations })
+  expect(await call('GET', 'automations')).toEqual({ status: 200, body: { service: true, items: [summary], unrecorded: [],
+    projects: [{ id: 'default', name: 'Default' }] } })
+  const body = { title: 'New task', instruction: 'Report it.', rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', project: 'default' }
+  expect(await call('POST', 'automations', body)).toMatchObject({ status: 200, body: { id: 'auto-1' } })
+  expect(creates[0]).toEqual([{ ...body, enabled: true }, 'panel'])
+  expect(await call('POST', 'automations', { ...body, project: 'missing' })).toEqual({ status: 400,
+    body: { error: 'Project missing is not registered', code: 'projectNotRegistered' } })
+  expect(await call('POST', 'automations', { ...body, title: 'limit' })).toMatchObject({ status: 400,
+    body: { error: expect.stringContaining('limited to 20') } })
+  expect(await call('PUT', 'automations/auto-1', { expected_revision: 0, title: 'Changed', enabled: false }))
+    .toMatchObject({ status: 200, body: { id: 'auto-1' } })
+  expect(edits[0]).toEqual([{ id: 'auto-1', action: 'update', expected_revision: 0, title: 'Changed', enabled: false }, 'panel'])
+  expect(await call('PUT', 'automations/conflict', { enabled: false })).toEqual({ status: 409,
+    body: { error: 'The Host task changed outside this plugin; review its schedule before editing again' } })
+  expect(await call('PUT', 'automations/gone', { enabled: false })).toEqual({ status: 404, body: { error: 'Unknown automation gone' } })
+  expect((await call('PUT', 'automations/auto-1', {})).status).toBe(400)
+  // Only the panel's same-origin header reaches the route.
+  expect(await call('GET', 'automations', undefined, { 'x-orchestrator-request': undefined }))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+  // Without the Host schedule service the routes say so instead of failing.
+  const unavailable = serve({ store })
+  expect(await unavailable('GET', 'automations')).toEqual({ status: 503,
+    body: { error: 'The Host schedule service is not installed' } })
+  expect((await unavailable('POST', 'automations', body)).status).toBe(503)
+  expect((await unavailable('PUT', 'automations/auto-1', { enabled: false })).status).toBe(503)
 })

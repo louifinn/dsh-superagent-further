@@ -122,6 +122,10 @@ export interface PanelServer {
   asks: NonNullable<ApiResponse<'GET overview'>>['requests']
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
+  /** False simulates a Host without the schedule service: the automations routes answer 503. */
+  automationService: boolean
+  /** Automation rows the Automations page lists and edits. */
+  automations: ApiResponse<'GET automations'>['items']
 }
 export let server: PanelServer
 
@@ -271,6 +275,7 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], memories: [], proposals: [],
+    automationService: true, automations: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -302,7 +307,7 @@ function initial(): PanelServer {
 }
 
 /** A refusal response carrying the host's HTTP status code and JSON error body. Returned by route handlers when a request is rejected. */
-class Refusal { constructor(readonly status: 400 | 404 | 409 | 500, readonly body: Record<string, unknown>) {} }
+class Refusal { constructor(readonly status: 400 | 404 | 409 | 500 | 503, readonly body: Record<string, unknown>) {} }
 const refuse = (status: Refusal['status'], error: string, more: Record<string, unknown> = {}) => new Refusal(status, { error, ...more })
 type Query<K extends keyof Api> = Api[K] extends { query?: infer Q } ? keyof NonNullable<Q> & string : never
 type Body<K extends keyof Api> = Api[K] extends { body: infer B } ? B : undefined
@@ -374,6 +379,47 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { items: [...rows].sort((a, b) => pinnedFirst(a, b) || order(a, b)).slice(offset, offset + limit),
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
       offset, limit, config: server.settings.memory }
+  } },
+  'GET automations': { answer: () => {
+    if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
+    return { service: true, items: server.automations, unrecorded: [],
+      projects: server.settings.executor.projects.map(({ id, name }) => ({ id, name })) }
+  } },
+  'POST automations': { body: true, answer: ({ body }) => {
+    const project = body.project ?? ''
+    if (!body.title.trim() || !body.instruction.trim() || !body.rrule.trim()) return refuse(400, 'Invalid automation')
+    if (project && !server.settings.executor.projects.some(item => item.id === project)) {
+      return refuse(400, `Project ${project} is not registered`, { code: 'projectNotRegistered' })
+    }
+    const at = new Date().toISOString()
+    const scope = project ? 'project' : 'installation'
+    const row: ApiResponse<'GET automations'>['items'][number] = {
+      id: `auto-${String(server.automations.length + 1).padStart(8, '0')}`, scope, project,
+      report_only: scope === 'project', title: body.title, instruction: body.instruction, rrule: body.rrule,
+      enabled: body.enabled ?? true, orphaned: false, host_status: (body.enabled ?? true) ? 'active' : 'paused',
+      next_at: null, last_delivery_at: null, last_error: null, revision: 0, created_at: at, updated_at: at,
+      dsh_task: `schedule-${server.automations.length + 1}`,
+      target_session: scope === 'project' ? `lead-${project}` : 'master',
+    }
+    server.automations = [...server.automations, row]
+    return row
+  } },
+  'PUT automations/:id': { body: true, answer: ({ params, body }) => {
+    const row = server.automations.find(item => item.id === params.id)
+    if (!row) return refuse(404, `Unknown automation ${params.id}`)
+    if (body.expected_revision !== undefined && body.expected_revision !== row.revision) {
+      return refuse(409, `Automation ${params.id} changed (revision ${row.revision}, expected ${body.expected_revision}); view it again`)
+    }
+    const updated: typeof row = {
+      ...row,
+      ...body.title !== undefined ? { title: body.title } : {},
+      ...body.instruction !== undefined ? { instruction: body.instruction } : {},
+      ...body.rrule !== undefined ? { rrule: body.rrule } : {},
+      ...body.enabled !== undefined ? { enabled: body.enabled, host_status: body.enabled ? 'active' : 'paused' } : {},
+      revision: row.revision + 1, updated_at: new Date().toISOString(),
+    }
+    server.automations = server.automations.map(item => item.id === params.id ? updated : item)
+    return updated
   } },
   'POST memory/forget': { body: true, answer: ({ body }) => {
     const before = server.memories.length

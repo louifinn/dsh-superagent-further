@@ -1,10 +1,10 @@
-/** Installation automation tasks: validation and limits, the Host create record and its compensation, edit conflicts, reconciliation and the runtime-context text. */
+/** Installation and project automation tasks: validation and limits, Host-first records and compensation, edit conflicts, reconciliation and the runtime-context text. */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Automations, AUTOMATION_CONTEXT_ORDER, automationEnvelope, type ScheduleCreate, type ScheduleEditRequest,
-  type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
+import { Automations, AUTOMATION_CONTEXT_ORDER, automationEnvelope, type ScheduleCreate,
+  type ScheduleEditRequest, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
 import { Store } from '../src/app/store.ts'
 import { automationTools } from '../src/app/tools/automation.ts'
 import { LIMITS } from '../src/limits.ts'
@@ -149,6 +149,129 @@ describe('creating an installation automation', () => {
     const before = schedule.tasks.size
     await expect(create()).rejects.toThrow(`limited to ${LIMITS.automationTasks}`)
     expect(schedule.tasks.size).toBe(before)
+  })
+})
+
+describe('project-scope automations', () => {
+  const project = { id: 'default', name: 'Default', workspace: '/srv/default' }
+  const leads: { id: string; workspace: string }[] = []
+  /**
+   * A service that can resolve `default` and ensure its Lead, with the same now/id and store as the installation
+   * fixture. Rebuilding it with different resolvers is how the tests move a project's registration.
+   */
+  const scoped = (overrides: { project?: (id: string) => typeof project | undefined; projects?: () => string[] } = {}) =>
+    new Automations({
+      schedule, store: store.automations, masterId: MASTER, now: () => new Date(AT),
+      id: () => `auto-${(++sequence).toString(16).padStart(8, '0')}`,
+      projects: overrides.projects ?? (() => ['default']),
+      project: overrides.project ?? (id => id === 'default' ? project : undefined),
+      lead: async value => { leads.push({ id: value.id, workspace: value.workspace }); return `lead-${value.id}` },
+    })
+  const request = {
+    title: 'Check the queue', instruction: 'Review waiting tickets and report anything urgent.',
+    rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', project: 'default',
+  }
+  beforeEach(() => { leads.length = 0 })
+
+  it('ensures the project Lead before the Host task, targets lead-<project>, and delivers the report-only rule', async () => {
+    const service = scoped()
+    const created = await service.create(request, 'panel')
+    expect(leads).toEqual([{ id: 'default', workspace: '/srv/default' }])
+    expect(created).toMatchObject({ scope: 'project', project: 'default', report_only: true, target_session: 'lead-default',
+      dsh_task: 'schedule-1' })
+    expect(schedule.creates[0]!.target).toEqual({ kind: 'session', sessionId: 'lead-default' })
+    const prompt = schedule.creates[0]!.prompt
+    expect(prompt.split('\n')[0]).toBe('[AUTOMATION auto-00000001 · project default]')
+    expect(prompt).toContain('Report only for project default: inspect and report in this Session; do not modify the '
+      + 'repository, Settings, Tickets, or Policy. If action is needed, state what the Orchestrator should do.')
+    expect(prompt).toContain('Review waiting tickets and report anything urgent.')
+    expect(store.automations.get(created.id)).toMatchObject({ scope: 'project', project: 'default', host: 'lead',
+      target_session: 'lead-default', orphaned: false,
+      audit: [{ at: AT, kind: 'created', by: 'panel', detail: 'Project automation for default' }] })
+  })
+
+  it('refuses an unregistered project before ensuring a Lead or creating a Host task', async () => {
+    const service = scoped()
+    await expect(service.create({ ...request, project: 'missing' }, 'panel')).rejects.toThrow('Project missing is not registered')
+    expect(leads).toEqual([])
+    expect(schedule.creates).toEqual([])
+  })
+
+  it('reports a Lead Session that cannot be ensured and creates no Host task', async () => {
+    const service = new Automations({ schedule, store: store.automations, masterId: MASTER, now: () => new Date(AT),
+      projects: () => ['default'], project: () => project,
+      lead: async () => { throw new Error('workspace busy') } })
+    await expect(service.create(request, 'panel')).rejects.toThrow('The Lead Session of project default could not be ensured: workspace busy')
+    expect(schedule.creates).toEqual([])
+  })
+
+  it('lists both scopes, filters by project, and shows scope, project and report-only', async () => {
+    const installation = await automations.create({ title: 'Check the queue', instruction: 'Report.', rrule: request.rrule }, MASTER)
+    const service = scoped()
+    const created = await service.create({ ...request, instruction: 'Report project status.' }, 'panel')
+    const listed = await service.list()
+    expect(listed.items.map(item => item.id)).toEqual([created.id, installation.id])
+    expect(listed.items[0]).toMatchObject({ scope: 'project', project: 'default', report_only: true, instruction: 'Report project status.' })
+    expect(listed.items[1]).toMatchObject({ scope: 'installation', project: '', report_only: false })
+    expect((await service.list({ project: 'default' })).items.map(item => item.id)).toEqual([created.id])
+  })
+
+  it('keeps the project marker on edit, and refuses to re-target scope or project', async () => {
+    const service = scoped()
+    const created = await service.create(request, 'panel')
+    const edited = await service.edit({ id: created.id, action: 'update', expected_revision: 0, title: 'Check twice' }, 'panel')
+    expect(edited.project).toBe('default')
+    expect(schedule.tasks.get('schedule-1')!.prompt.split('\n')[0]).toBe('[AUTOMATION auto-00000001 · project default]')
+    expect(schedule.tasks.get('schedule-1')!.prompt).toContain('Report only for project default:')
+    await expect(service.edit({ id: created.id, action: 'update', project: 'other' } as never, 'panel')).rejects.toThrow()
+    expect(store.automations.get(created.id)).toMatchObject({ project: 'default', target_session: 'lead-default' })
+  })
+
+  it('reconciles by recorded project id, reports a re-targeted Host task, and orphans a removed project', async () => {
+    const service = scoped()
+    const created = await service.create(request, 'panel')
+    // The project still resolves under its recorded id even when the settings id list moves on.
+    expect(await scoped({ projects: () => ['other'] }).reconcile()).toMatchObject({ checked: 1, orphaned: 0, drifted: 0 })
+    store.automations.save({ ...store.automations.get(created.id)!, target_session: MASTER })
+    const drifted = await service.reconcile()
+    expect(drifted).toMatchObject({ checked: 1, orphaned: 0, drifted: 1 })
+    expect(store.automations.get(created.id)!.last_error).toContain('The Host target is not the project Lead')
+    const removed = scoped({ project: () => undefined, projects: () => [] })
+    expect(await removed.reconcile()).toMatchObject({ checked: 1, orphaned: 1 })
+    expect(store.automations.get(created.id)!.last_error).toBe('The project default is no longer registered')
+  })
+
+  it('orphans a project task whose Lead Session was archived and never recreates the Host task', async () => {
+    const service = scoped()
+    const created = await service.create(request, 'panel')
+    // Archive admission removes active Host tasks whose target Session is archived; the record must survive as an orphan.
+    schedule.tasks.delete('schedule-1')
+    expect(await service.reconcile()).toMatchObject({ checked: 1, orphaned: 1, drifted: 0, unrecorded: 0 })
+    expect(store.automations.get(created.id)).toMatchObject({ scope: 'project', project: 'default', target_session: 'lead-default',
+      orphaned: true, enabled: false, last_error: 'The Host task is missing' })
+    expect(await schedule.catalog()).toEqual([])
+  })
+
+  it('explains report-only tasks to a Lead and names the project context', async () => {
+    const service = scoped()
+    const created = await service.create(request, 'panel')
+    const context = service.context('default')
+    expect(context).toContain(`## automations`)
+    expect(context).toContain(`- ${created.id} — Check the queue`)
+    expect(context).toContain('It is report-only: inspect and report')
+    expect(context).toContain('state what the Orchestrator should do')
+    expect(service.context('other')).toContain('No automation is enabled for project other.')
+    expect(service.context()).toContain('No installation automation is enabled.')
+  })
+
+  it('creates a project task through automation_create and filters it with automation_list', async () => {
+    const tools = automationTools(scoped(), 'panel')
+    const byName = new Map(tools.map(tool => [tool.name, tool]))
+    const signal = new AbortController().signal
+    const created = await byName.get('automation_create')!.execute(request, signal) as Record<string, unknown>
+    expect(created).toMatchObject({ scope: 'project', project: 'default', report_only: true, target_session: 'lead-default' })
+    const listed = await byName.get('automation_list')!.execute({ project: 'default' }, signal) as Record<string, unknown>
+    expect(listed.items).toHaveLength(1)
   })
 })
 

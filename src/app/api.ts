@@ -6,6 +6,8 @@ import type { ProposalsView } from './settings.ts'
 import type { Proposal } from './store.ts'
 import type { HistoryView } from './settings-history.ts'
 import type { MemorySort } from '../memory.ts'
+import type { AutomationCreateInput, AutomationSummary, AutomationUpdate } from './automations.ts'
+import type { AutomationsView } from './views/automations.ts'
 import type { MemoriesView } from './views/memories.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
@@ -63,6 +65,10 @@ export interface Api {
   'GET memories': { query?: { q?: string; project?: string; sort?: MemorySort; offset?: number; limit?: number }; response: MemoriesView }
   'POST memory/forget': { body: { id: string }; response: { forgotten: boolean } }
   'POST memory/pin': { body: { id: string; pinned: boolean }; response: { pinned: boolean } }
+  /** The Automations page: tasks at installation or project scope, and the projects a new task can target. */
+  'GET automations': { response: AutomationsView }
+  'POST automations': { body: AutomationCreateInput; response: AutomationSummary }
+  'PUT automations/:id': { body: AutomationUpdate; response: AutomationSummary }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>
