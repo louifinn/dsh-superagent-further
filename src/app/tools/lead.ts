@@ -1,15 +1,25 @@
 /** Lead application tools: the project a Lead serves, and the Project Requests it must answer. */
 import { z } from 'zod'
-import { ticketStage, type ProjectRequest, type Ticket } from '../../core/index.ts'
+import { ticketStage, type ProjectRequest, type ProjectRequestPlan, type Ticket } from '../../core/index.ts'
 import type { Project } from '../../projects.ts'
 import type { LeadDispatch } from '../lead-dispatch.ts'
 import { projectRequestView } from '../lead-dispatch.ts'
 import type { Store } from '../store.ts'
 import { tool, type Tool } from './tool.ts'
 
-/** Host dependencies of the Lead tools: the Store's project records and the Lead dispatch that owns disposition. */
+/** The Engine commands the approval tools need; the runtime binds them because a Lead Session only holds its dispatch. */
+export interface LeadApprovalHost {
+  plan(id: string, plan: ProjectRequestPlan): ProjectRequest
+  requestApproval(id: string): ProjectRequest
+  approve(id: string, input: { approved: boolean; trigger_id: string }): ProjectRequest
+}
+/** Bind the Engine-backed approval commands to one Store, as the runtime and the tool tests do before serving a Lead. */
+const approvals = new WeakMap<object, LeadApprovalHost>()
+export function bindLeadApprovals(store: object, host: LeadApprovalHost): void { approvals.set(store, host) }
+
+/** Host dependencies of the Lead tools: the Store's project records, its optional read-side thread history, and the Lead dispatch. */
 export interface LeadToolsHost {
-  readonly store: Pick<Store, 'tickets' | 'leads' | 'projectRequests'>
+  readonly store: Pick<Store, 'tickets' | 'leads' | 'projectRequests'> & { readonly read?: Store['read'] }
   readonly lead: LeadDispatch
 }
 
@@ -96,9 +106,68 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
         for (const [index, item] of (input.deliverables ?? []).entries()) {
           if (item.project && item.project !== project.id) throw new Error(`Deliverable ${index} belongs to project ${item.project}, not ${project.id}`)
         }
+        // The structured plan reaches the Engine before the disposition's reply text, so an approved design creates the staged
+        // Tickets, not one Ticket defaulted from the request (docs/012 D5, D7).
+        approvals.get(host.store)?.plan(request.id, {
+          ...input.statement ? { statement: input.statement } : {},
+          deliverables: (input.deliverables ?? []).map(item => ({
+            project: item.project ?? project.id,
+            ...item.title ? { title: item.title } : {},
+            ...item.after?.length ? { after: item.after } : {},
+          })),
+        })
       }
       const result = await host.lead.decide(request, input)
       return { ...projectRequestView(result.request), reply_delivered: result.delivered }
+    },
+  }), tool({
+    name: 'lead_request_approval',
+    description: 'After the design Ticket of an accepted architecture project request has ended, send its report to the root '
+      + 'channel for a person\'s approval and mark the request awaiting-approval. The request then waits for a human reply.',
+    schema: z.object({
+      id: z.string().trim().min(1).describe('The accepted architecture project request id whose design Ticket ended.'),
+    }).strict(),
+    execute: async ({ id }: { id: string }) => {
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      const request = requestOf(host, project, id)
+      return { ...projectRequestView(engine.requestApproval(request.id)), approval_requested: true }
+    },
+  }), tool({
+    name: 'lead_request_approve',
+    description: 'Record a person\'s approval or rejection of an awaiting-approval architecture project request from their human '
+      + 'reply on the root thread. Approval creates the implementation Request and its staged Tickets; rejection records it. '
+      + 'When no human reply can be linked yet, the text still reaches the raiser and the request stays awaiting approval.',
+    schema: z.object({
+      id: z.string().trim().min(1).describe('The awaiting-approval architecture project request id.'),
+      approved: z.boolean().describe('True when the person approved the design, false when they rejected it.'),
+      text: z.string().trim().min(1).max(8_000).describe('The Lead\'s reply to the raiser, in the language of the request.'),
+    }).strict(),
+    execute: async ({ id, approved, text }: { id: string; approved: boolean; text: string }) => {
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      const request = requestOf(host, project, id)
+      if (!request.root) throw new Error(`Project request ${id} has no root thread to approve on`)
+      const read = host.store.read
+      if (!read) throw new Error('This runtime cannot read the root thread history')
+      const since = request.proposal?.at
+      // Store.read returns the latest triggers of a thread oldest first; the newest human one after the proposal is the answer.
+      const answer = read.threadTriggers(request.root.thread_key, 50)
+        .filter(trigger => trigger.human && (since === undefined || trigger.at >= since)).at(-1)
+      if (!answer) {
+        const result = await host.lead.reply(request, text)
+        return { ...projectRequestView(result.request), approval_recorded: false,
+          reason: 'No human reply on the root thread can be linked yet; the request stays awaiting approval.' }
+      }
+      if (approved) {
+        const updated = engine.approve(request.id, { approved: true, trigger_id: answer.id })
+        const result = await host.lead.reply(updated, text)
+        return { ...projectRequestView(result.request), approval_recorded: true, reply_delivered: result.delivered }
+      }
+      // A rejected request accepts no reply, so record the answer to the raiser before the approval closes it.
+      const acknowledged = await host.lead.reply(request, text)
+      const updated = engine.approve(request.id, { approved: false, trigger_id: answer.id })
+      return { ...projectRequestView(updated), approval_recorded: true, reply_delivered: acknowledged.delivered }
     },
   }), tool({
     name: 'lead_request_reply',

@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
-import { Engine, MemoryRepositories, ProjectRequestError, projectRequestOpen, type Assessor, type Executor, type Outbox, type Policy,
-  type ProjectRequestInput, type ProjectRequestRefusal, type ProjectRequestStatus, type SourceScope } from '../src/core/index.ts'
+import { Engine, MemoryRepositories, ProjectRequestError, key, projectRequestOpen, threadKey, type Assessor, type Executor, type Outbox,
+  type Policy, type ProjectRequestInput, type ProjectRequestRefusal, type ProjectRequestStatus, type SourceScope, type Trigger }
+  from '../src/core/index.ts'
 
 let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'orchestrator-project-requests-')) })
@@ -166,5 +167,156 @@ it('refuses empty and over-long request text', () => {
   refusal(() => engine.raiseProjectRequest(request({ title: 'x'.repeat(121) })), 'tooLong')
   refusal(() => engine.raiseProjectRequest(request({ instruction: 'x'.repeat(8001) })), 'tooLong')
   expect(engine.listProjectRequests()).toEqual([])
+  store.close()
+})
+
+/** A Source Trigger on the root thread a project request came from; `overrides` replaces fields such as id, human or text. */
+const trigger = (overrides: Partial<Trigger> = {}): Trigger => ({
+  id: 'trigger-root', source: 'feishu', threads: [{ source: 'feishu', id: 'oc_1' }],
+  actor: { source: 'feishu', id: 'person-1' }, human: true, at: '2026-11-10T08:59:00.000Z',
+  text: 'Change the data model', meta: {}, ...overrides,
+})
+
+/** An architecture request raised from the `trigger-root` thread, as a Lead creates one for a design proposal. */
+const architecture = (overrides: Partial<ProjectRequestInput> = {}): ProjectRequestInput => request({
+  kind: 'architecture', title: 'Change the data model', instruction: 'Design the migration before any code changes.',
+  root: { trigger_id: 'trigger-root', thread_key: 'feishu:oc_1' }, ...overrides,
+})
+
+/** Runs an architecture request through the design Ticket until the request asks for a human's approval. */
+const awaitingApproval = (engine: Engine, store: Store, raised: { id: string }, setClock: (at: string) => void) => {
+  setClock('2026-11-10T09:01:00.000Z')
+  const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Design it first.' })
+  const design = store.tickets.get(accepted.design_ticket_id ?? '')
+  if (!design || !design.assignments[0]) throw new Error('the accepted architecture request has no design Ticket')
+  engine.assignmentStarted(design.id, design.assignments[0].id)
+  setClock('2026-11-10T09:02:00.000Z')
+  engine.report(design.id, { state: 'ready', summary: 'Proposal: migrate the schema first, then build the page.' })
+  setClock('2026-11-10T09:03:00.000Z')
+  return { accepted, design, awaiting: engine.requestProjectApproval(raised.id) }
+}
+
+it('runs an architecture request from design through human approval to an implementation request', () => {
+  const { engine, store, setClock } = open()
+  store.triggers.save(trigger())
+  const raised = engine.raiseProjectRequest(architecture())
+  expect(raised).toMatchObject({ kind: 'architecture', status: 'pending' })
+  const planned = engine.planProjectRequest(raised.id, {
+    statement: 'Stage the schema change before the page.', deliverables: [{ title: 'Migrate the schema' }, { title: 'Build the status page', after: [0] }],
+  })
+  expect(planned.plan).toEqual({
+    statement: 'Stage the schema change before the page.',
+    deliverables: [
+      { title: 'Migrate the schema', project: 'orchestrator' },
+      { title: 'Build the status page', after: [0], project: 'orchestrator' },
+    ],
+  })
+  setClock('2026-11-10T09:01:00.000Z')
+  const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Design it first.' })
+  expect(accepted.status).toBe('accepted')
+  const designId = accepted.design_ticket_id
+  expect(designId).toBe(key('ticket', raised.id, 'design'))
+  expect(accepted.tickets).toEqual([designId])
+  const design = store.tickets.get(designId ?? '')
+  expect(design).toMatchObject({ title: 'Change the data model', project: 'orchestrator' })
+  expect(design?.requestId).toBeUndefined()
+  expect(design?.mandate.basis).toEqual({ via: 'lead', project: 'orchestrator', project_request_id: raised.id })
+  expect(design?.assignments).toHaveLength(1)
+  expect(store.requests.get(key('request', key('lead-request', raised.id)))).toBeUndefined()
+  engine.assignmentStarted(designId ?? '', design?.assignments[0]?.id ?? '')
+  setClock('2026-11-10T09:02:00.000Z')
+  engine.report(designId ?? '', { state: 'ready', summary: 'Proposal: migrate the schema first, then build the page.' })
+  expect(store.tickets.get(designId ?? '')?.ended).toBeDefined()
+  setClock('2026-11-10T09:03:00.000Z')
+  const awaiting = engine.requestProjectApproval(raised.id)
+  expect(awaiting.status).toBe('awaiting-approval')
+  expect(awaiting.proposal).toEqual({
+    at: '2026-11-10T09:03:00.000Z', ticket_id: designId, text: 'Proposal: migrate the schema first, then build the page.',
+  })
+  refusal(() => engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-root' }), 'missingApprovalTrigger')
+  store.triggers.save(trigger({ id: 'trigger-bot', human: false, at: '2026-11-10T09:04:00.000Z' }))
+  refusal(() => engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-bot' }), 'missingApprovalTrigger')
+  store.triggers.save(trigger({ id: 'trigger-elsewhere', threads: [{ source: 'feishu', id: 'oc_2' }], at: '2026-11-10T09:04:00.000Z' }))
+  refusal(() => engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-elsewhere' }), 'missingApprovalTrigger')
+  refusal(() => engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-missing' }), 'missingApprovalTrigger')
+  store.triggers.save(trigger({ id: 'trigger-approved', at: '2026-11-10T09:05:00.000Z', text: 'Approved, go ahead.' }))
+  const approved = engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-approved' })
+  expect(approved.status).toBe('approved')
+  expect(approved.approval).toEqual({
+    thread_key: 'feishu:oc_1', trigger_id: 'trigger-approved', at: '2026-11-10T09:05:00.000Z', by: 'human', text: 'Approved, go ahead.',
+  })
+  expect(approved.request_id).toBe(key('request', key('lead-approval', raised.id)))
+  const implementationIds = [key('ticket', raised.id, 'implementation'), key('ticket', key('lead-approval', raised.id), '1')]
+  expect(approved.tickets).toEqual([designId, ...implementationIds])
+  const implementation = store.requests.get(approved.request_id ?? '')
+  expect(implementation).toMatchObject({
+    title: 'Change the data model',
+    mandate: {
+      strength: 'explicit', basis: { via: 'lead', project: 'orchestrator', project_request_id: raised.id },
+      actor: { source: 'feishu', id: 'person-1' },
+    },
+  })
+  expect(implementation?.ticketIds).toEqual(implementationIds)
+  const [migration, page] = implementationIds.map(id => store.tickets.get(id))
+  expect(migration).toMatchObject({ title: 'Migrate the schema', project: 'orchestrator' })
+  expect(migration?.after).toBeUndefined()
+  expect(page).toMatchObject({ title: 'Build the status page', project: 'orchestrator' })
+  expect(page?.after).toEqual([implementationIds[0]])
+  setClock('2026-11-10T09:07:00.000Z')
+  const completed = engine.completeProjectRequest(raised.id, { by: 'lead-orchestrator', text: 'Implementation started.' })
+  expect(completed.status).toBe('completed')
+  store.close()
+})
+
+it('records a human rejection of the design without creating an implementation request', () => {
+  const { engine, store, setClock } = open()
+  store.triggers.save(trigger())
+  const raised = engine.raiseProjectRequest(architecture())
+  const { design, awaiting } = awaitingApproval(engine, store, raised, setClock)
+  expect(awaiting.status).toBe('awaiting-approval')
+  store.triggers.save(trigger({ id: 'trigger-rejected', at: '2026-11-10T09:04:00.000Z', text: 'Not yet, explain the migration cost.' }))
+  const rejected = engine.approveProjectRequest(raised.id, { approved: false, trigger_id: 'trigger-rejected' })
+  expect(rejected.status).toBe('rejected')
+  expect(rejected.approval).toEqual({
+    thread_key: 'feishu:oc_1', trigger_id: 'trigger-rejected', at: '2026-11-10T09:04:00.000Z', by: 'human',
+    text: 'Not yet, explain the migration cost.', approved: false,
+  })
+  expect(rejected.request_id).toBeUndefined()
+  expect(rejected.tickets).toEqual([design.id])
+  expect(store.requests.get(key('request', key('lead-approval', raised.id)))).toBeUndefined()
+  refusal(() => engine.approveProjectRequest(raised.id, { approved: true, trigger_id: 'trigger-rejected' }), 'notAwaitingApproval')
+  refusal(() => engine.planProjectRequest(raised.id, { deliverables: [] }), 'settledProjectRequest')
+  store.close()
+})
+
+it('creates the implementation request when the Lead accepts a work request from a root thread', () => {
+  const { engine, store } = open()
+  store.triggers.save(trigger({ id: 'trigger-work' }))
+  const raised = engine.raiseProjectRequest(request({ root: { trigger_id: 'trigger-work', thread_key: 'feishu:oc_1' } }))
+  const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Go ahead.' })
+  expect(accepted.request_id).toBe(key('request', key('lead-request', raised.id)))
+  const created = store.requests.get(accepted.request_id ?? '')
+  expect(created?.ticketIds).toEqual([key('ticket', raised.id, 'work')])
+  expect(accepted.tickets).toEqual(created?.ticketIds)
+  const ticket = store.tickets.get(created?.ticketIds[0] ?? '')
+  expect(ticket).toMatchObject({ title: 'Add a project status page', project: 'orchestrator' })
+  expect(ticket?.mandate.basis).toEqual({ via: 'lead', project: 'orchestrator', project_request_id: raised.id })
+  store.close()
+})
+
+it('refuses approval commands for requests that cannot take them', () => {
+  const { engine, store, setClock } = open()
+  store.triggers.save(trigger())
+  const work = engine.raiseProjectRequest(request())
+  refusal(() => engine.planProjectRequest(work.id, { deliverables: [{ project: 'superagent' }] }), 'foreignProjectRequest')
+  refusal(() => engine.requestProjectApproval(work.id), 'notArchitectureProjectRequest')
+  refusal(() => engine.approveProjectRequest(work.id, { approved: true, trigger_id: 'trigger-root' }), 'notArchitectureProjectRequest')
+  const rootless = engine.raiseProjectRequest(request({ kind: 'architecture', title: 'Rootless design', instruction: 'Design it anyway.' }))
+  refusal(() => engine.disposeProjectRequest(rootless.id, { by: 'lead-orchestrator', action: 'accept', text: 'Accepted.' }), 'approvalRootRequired')
+  const raised = engine.raiseProjectRequest(architecture())
+  setClock('2026-11-10T09:01:00.000Z')
+  const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Accepted.' })
+  expect(accepted.status).toBe('accepted')
+  refusal(() => engine.requestProjectApproval(raised.id), 'designNotEnded')
   store.close()
 })

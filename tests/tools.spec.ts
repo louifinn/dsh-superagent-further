@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
-import { UserError } from '../src/core/index.ts'
+import { UserError, key } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { RESOURCES } from '../src/app/resources.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
@@ -562,4 +562,67 @@ it('gives a worker the other messages of the request its ticket was accepted fro
   const page = await h.runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}` })
   expect(page).toMatchObject({ batch: [{ trigger_id: other, read: `trigger/${other}` }] })
   expect(await h.runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `trigger/${other}` })).toMatchObject({ trigger_id: other })
+})
+
+it('asks the root thread to approve an architecture design and creates the implementation request on the human answer', async () => {
+  const { ticket, trigger } = await h.acceptedTicket(feishu('7', '@bot 设计数据模型'))
+  const raised = await h.runTool(`worker-${ticket.id}`, 'request_create', {
+    kind: 'architecture', title: 'Change the data model',
+    instruction: 'Design the migration before any code changes.', evidence: 'The schema blocks the status page.',
+  }) as { id: string; status: string }
+  expect(raised.status).toBe('pending')
+  const accepted = await h.runTool('lead-default', 'lead_request_decide', {
+    id: raised.id, action: 'accept', reply: 'Design it first.',
+    statement: 'Stage the schema change before the page.', deliverables: [{ title: 'Migrate the schema' }, { title: 'Build the status page', after: [0] }],
+  }) as { status: string; reply_delivered: boolean }
+  expect(accepted).toMatchObject({ status: 'accepted', reply_delivered: true })
+  const designId = h.runtime.store.projectRequests.get(raised.id)!.design_ticket_id
+  const design = h.runtime.store.tickets.get(designId ?? '')
+  expect(design).toMatchObject({ project: 'default', title: 'Change the data model' })
+  expect(design?.assignments).toHaveLength(1)
+  await h.runtime.idle()
+  // The design worker ends its Ticket with the proposal; the Lead then sends it to the root Channel for approval.
+  h.runtime.engine.report(designId ?? '', { state: 'ready', summary: 'Proposal: migrate the schema first, then build the page.' })
+  const awaiting = await h.runTool('lead-default', 'lead_request_approval', { id: raised.id }) as { status: string; approval_requested: boolean }
+  expect(awaiting).toMatchObject({ status: 'awaiting-approval', approval_requested: true })
+  const proposed = h.runtime.store.projectRequests.get(raised.id)!
+  expect(proposed.proposal?.text).toBe('Proposal: migrate the schema first, then build the page.')
+  await h.runtime.idle()
+  const channel = trigger.channel!
+  const notice = h.runtime.store.receipts.get(key('project-approval', raised.id, channel.source, JSON.stringify(channel.address)))
+  expect(notice).toMatchObject({ status: 'sent', kind: 'notice', channel })
+  expect(notice?.text).toContain('ready for your approval')
+  expect(notice?.text).toContain('Proposal: migrate the schema first, then build the page.')
+
+  // Without a person's answer on the root thread the tool records no approval and keeps the request waiting.
+  const early = await h.runTool('lead-default', 'lead_request_approve',
+    { id: raised.id, approved: true, text: 'Approved.' }) as { status: string; approval_recorded: boolean; reason?: string }
+  expect(early).toMatchObject({ status: 'awaiting-approval', approval_recorded: false })
+  expect(early.reason).toContain('No human reply')
+
+  // A person's reply on the root thread reaches the Lead, and the Lead's tool links it and creates the staged Tickets.
+  const answer = { ...feishu('8', '@bot Approved, go ahead.'), threads: trigger.threads,
+    at: new Date(Date.parse(proposed.proposal!.at) + 1000).toISOString() }
+  await h.runtime.receive(answer)
+  await h.runtime.idle()
+  const leadPrompts = h.deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === 'lead-default')
+  expect(leadPrompts.some(call => call.text.includes('lead_request_approve') && call.text.includes('Approved, go ahead.'))).toBe(true)
+  const approved = await h.runTool('lead-default', 'lead_request_approve',
+    { id: raised.id, approved: true, text: 'Approved; implement the staged plan.' }) as {
+    status: string; approval_recorded: boolean; request_id?: string; tickets: string[]; reply_delivered: boolean }
+  expect(approved).toMatchObject({ status: 'approved', approval_recorded: true, reply_delivered: true })
+  expect(approved.request_id).toBe(key('request', key('lead-approval', raised.id)))
+  const implementation = h.runtime.store.requests.get(approved.request_id ?? '')!
+  expect(implementation.ticketIds).toHaveLength(2)
+  expect(implementation.mandate.basis).toEqual({ via: 'lead', project: 'default', project_request_id: raised.id })
+  expect(approved.tickets).toEqual([designId, ...implementation.ticketIds])
+  const [migration, page] = implementation.ticketIds.map(id => h.runtime.store.tickets.get(id))
+  expect(migration).toMatchObject({ title: 'Migrate the schema', project: 'default' })
+  expect(migration?.after).toBeUndefined()
+  expect(page).toMatchObject({ title: 'Build the status page', project: 'default' })
+  expect(page?.after).toEqual([migration?.id])
+  const stored = h.runtime.store.projectRequests.get(raised.id)!
+  expect(stored.approval).toMatchObject({ trigger_id: answer.id, by: 'human', text: '@bot Approved, go ahead.' })
+  expect(h.deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === `worker-${ticket.id}`)
+    .some(call => call.text.includes('Approved; implement the staged plan.'))).toBe(true)
 })

@@ -78,6 +78,48 @@ export function projectResultChannels(
 }
 
 /**
+ * The original Channels an architecture project request's design proposal must reach for a person's approval (docs/012 D7):
+ * those of the root's domain Request and the Channel of the Trigger that started it, deduplicated.
+ */
+export function projectApprovalChannels(
+  request: ProjectRequest, requestOf: (id: string) => Request | undefined, triggerOf: (id: string) => Trigger | undefined,
+): ChannelRef[] {
+  const root = request.root
+  if (!root) return []
+  const origin = root.request_id ? requestOf(root.request_id) : undefined
+  const trigger = root.trigger_id ? triggerOf(root.trigger_id) : undefined
+  const seen = new Set<string>()
+  return [...(origin?.channels ?? []), ...(trigger?.channel ? [trigger.channel] : [])].filter(channel => {
+    const id = `${channel.source}:${channel.thread}:${JSON.stringify(channel.address)}`
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+/**
+ * Builds the one approval ask of an architecture project request (docs/012 D7): one idempotent notice per root Channel that
+ * quotes the design's proposal and tells the person how to answer. A request without a proposal sends nothing.
+ */
+export function projectApprovalNotices(request: ProjectRequest, channels: readonly ChannelRef[]): OutboundMessage[] {
+  const proposal = request.proposal
+  if (!proposal) return []
+  const chinese = /\p{Script=Han}/u.test(request.title + request.instruction)
+    && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(request.title + request.instruction)
+  const head = chinese
+    ? `项目请求「${request.title}」的设计已完成，请批准（请求 ${request.id}）：`
+    : `The design for project request "${request.title}" is ready for your approval (request ${request.id}):`
+  const ask = chinese
+    ? '如同意，请在本线程回复批准；如不同意，请说明需要修改的地方。'
+    : 'Reply on this thread to approve, or say what should change.'
+  const text = [head, proposal.text.trim(), ask].join('\n')
+  return channels.map(channel => ({
+    id: key('project-approval', request.id, channel.source, JSON.stringify(channel.address)),
+    channel, text, kind: 'notice' as const,
+  }))
+}
+
+/**
  * Builds the one aggregate report of a root project Request (docs/012 D6): one idempotent notice per original Channel,
  * naming every Ticket of the root and its derived requests with its outcome, every derived Request with its status, and the
  * Lead's summary. A root without origin Channels reports nothing; a derived request's own completion is its root's business.

@@ -1,11 +1,12 @@
 /** The domain Engine: the single entry point of the core, and the role interfaces its callers receive. */
 import { randomBytes } from 'node:crypto'
 import { UserError } from './errors.ts'
-import { isoTime, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, ProjectRequestError, projectRequestOpen }
-  from './model.ts'
-import type { ChannelRef, Decision, PolicyEffect, ProjectRequest, ProjectRequestDisposition, ProjectRequestInput, ProjectRequestReply,
-  ProjectRequestStatus, ThreadRef, Ticket, Trigger } from './model.ts'
-import type { Candidate, ProjectRequestRepository, Repositories } from './ports.ts'
+import { isoTime, latestReport, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, ProjectRequestError,
+  projectRequestOpen, threadKey } from './model.ts'
+import type { Assignment, Decision, Mandate, PolicyEffect, ProjectRequest, ProjectRequestDeliverable, ProjectRequestDisposition,
+  ProjectRequestInput, ProjectRequestPlan, ProjectRequestReply, ProjectRequestStatus, ThreadRef, Ticket, Trigger } from './model.ts'
+import { key } from './ids.ts'
+import type { AssessmentOutcome, Candidate, ProjectRequestRepository, Repositories } from './ports.ts'
 import type { EngineOptions } from './part.ts'
 import { Assignments, type WorkerReport } from './assignments.ts'
 import { Evals, type Outcome } from './evals.ts'
@@ -17,6 +18,8 @@ declare module './ports.ts' {
   interface DomainEvents {
     /** A ProjectRequest ended `completed`; the runtime reports a root request through its origin Channels (docs/012 D6). */
     'project-request.completed': { projectRequestId: string }
+    /** An architecture request's design ended and its proposal must reach the root Channel for a person's approval (docs/012 D7). */
+    'project-request.approval-requested': { projectRequestId: string }
   }
 }
 
@@ -223,9 +226,11 @@ export class Engine {
   }
   /**
    * Dispose an open project request with the Lead's mandatory reply (docs/012 D3): `accept` moves it to `accepted`,
-   * `reject` to `rejected` and `needs-info` to `needs-info`, recording the decision after the reply. Creating the domain
-   * Request and its Tickets on accept is the Lead tools' job when they land (docs/012 D5); this records the decision they read.
-   * @throws ProjectRequestError when the request is unknown, already settled, or the reply is empty.
+   * `reject` to `rejected` and `needs-info` to `needs-info`, recording the decision after the reply. An accept also creates
+   * the domain work: an architecture request gets one design Ticket that produces the decision document (docs/012 D7) and
+   * waits for a person's approval, while a work request creates its implementation Request and Tickets at once (docs/012 D5).
+   * @throws ProjectRequestError when the request is unknown, already settled, the reply is empty, or an architecture accept
+   * has no root Trigger to anchor its approval.
    */
   disposeProjectRequest(id: string, disposition: ProjectRequestDisposition): ProjectRequest {
     return this.repo.atomic(() => {
@@ -236,11 +241,172 @@ export class Engine {
       const status: ProjectRequestStatus = disposition.action === 'accept' ? 'accepted'
         : disposition.action === 'reject' ? 'rejected' : 'needs-info'
       const notes = disposition.notes?.trim()
+      const decision = { action: disposition.action, at, ...notes ? { notes } : {} }
+      if (disposition.action !== 'accept') return this.saveProjectRequestReply(store, request, disposition, at, { status, decision })
+      const trigger = request.root ? this.repo.triggers.get(request.root.trigger_id) : undefined
+      if (request.kind === 'architecture') {
+        if (!request.root || !trigger) throw new ProjectRequestError('approvalRootRequired')
+        const design = this.createDesignTicket(request, trigger, at)
+        return this.saveProjectRequestReply(store, request, disposition, at,
+          { status, decision, design_ticket_id: design, tickets: [...request.tickets, design] })
+      }
+      // A work request accepted without a root Trigger has no Channels to deliver from, so it stays recorded as accepted.
+      if (!request.root || !trigger) return this.saveProjectRequestReply(store, request, disposition, at, { status, decision })
+      const decisionId = key('lead-request', request.id)
+      this.tickets.create(key('ticket', request.id, 'work'), decisionId, this.leadMandate(request, trigger),
+        { triggerIds: [trigger.id], primary: trigger.id }, this.leadOutcome(request, 'work'), at)
+      const created = this.repo.requests.get(key('request', decisionId))
       return this.saveProjectRequestReply(store, request, disposition, at, {
-        status,
-        decision: { action: disposition.action, at, ...notes ? { notes } : {} },
+        status, decision,
+        ...created ? { request_id: created.id, tickets: [...request.tickets, ...created.ticketIds] } : {},
       })
     })
+  }
+  /**
+   * Record the plan the Lead staged when it accepted a project request (docs/012 D5, D7): the statement and the ordered
+   * deliverables that become the implementation Request's Tickets after a person approves the design. The tool records it
+   * before the disposition because the disposition arrives as the Lead's reply text only.
+   * @throws ProjectRequestError when the request is unknown or settled, or a deliverable names another project.
+   */
+  planProjectRequest(id: string, plan: ProjectRequestPlan): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (!projectRequestOpen(request.status)) throw new ProjectRequestError('settledProjectRequest')
+      const deliverables = (plan.deliverables ?? []).slice(0, 8).map((item): ProjectRequestDeliverable => {
+        const project = item.project?.trim() || request.project
+        if (project !== request.project) throw new ProjectRequestError('foreignProjectRequest')
+        const title = item.title?.trim().slice(0, 200)
+        const after = item.after?.filter(index => Number.isInteger(index) && index >= 0)
+        return { project, ...title ? { title } : {}, ...after?.length ? { after } : {} }
+      })
+      const statement = plan.statement?.trim().slice(0, PROJECT_REQUEST_INSTRUCTION_LIMIT)
+      const updated: ProjectRequest = { ...request, plan: { ...statement ? { statement } : {}, deliverables }, updated_at: this.now() }
+      store.save(updated)
+      return updated
+    })
+  }
+  /**
+   * Move an accepted architecture request to `awaiting-approval` once its design Ticket ended (docs/012 D7): the design's
+   * latest report becomes the proposal the runtime sends to the root Channel for a person to answer.
+   * @throws ProjectRequestError when the request is not an accepted architecture request of a root thread, or its design
+   * Ticket has not ended.
+   */
+  requestProjectApproval(id: string): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (request.kind !== 'architecture') throw new ProjectRequestError('notArchitectureProjectRequest')
+      if (request.status !== 'accepted') throw new ProjectRequestError('notAcceptedForApproval')
+      if (!request.root) throw new ProjectRequestError('approvalRootRequired')
+      const design = request.design_ticket_id ? this.repo.tickets.get(request.design_ticket_id) : undefined
+      if (!design || !design.ended) throw new ProjectRequestError('designNotEnded')
+      const at = this.now()
+      const text = latestReport(design)?.summary?.trim() || request.instruction
+      const updated: ProjectRequest = {
+        ...request, status: 'awaiting-approval', proposal: { at, ticket_id: design.id, text }, updated_at: at,
+      }
+      store.save(updated)
+      this.options.emit?.({ type: 'project-request.approval-requested', at, data: { projectRequestId: updated.id } })
+      return updated
+    })
+  }
+  /**
+   * Record a person's approval or rejection of an architecture request's design (docs/012 D7), linked only to a human Trigger
+   * on the request's root thread written after its proposal. Approval creates the implementation Request and its staged
+   * Tickets under a Lead Mandate; rejection records the person's answer and ends the request. The Lead's reply is recorded by
+   * its tool before or after this, because a rejected request accepts none.
+   * @throws ProjectRequestError when the request is not awaiting approval, or no human Trigger on the root thread after the
+   * proposal can be linked.
+   */
+  approveProjectRequest(id: string, input: { approved: boolean; trigger_id: string }): ProjectRequest {
+    return this.repo.atomic(() => {
+      const store = this.projectRequestStore()
+      const request = this.projectRequestOf(store, id)
+      if (request.kind !== 'architecture') throw new ProjectRequestError('notArchitectureProjectRequest')
+      if (request.status !== 'awaiting-approval') throw new ProjectRequestError('notAwaitingApproval')
+      if (!request.root || !request.proposal) throw new ProjectRequestError('approvalRootRequired')
+      const trigger = this.repo.triggers.get(input.trigger_id)
+      const onRoot = trigger?.threads.some(ref => threadKey(ref) === request.root!.thread_key) ?? false
+      if (!trigger || !trigger.human || !onRoot || trigger.at < request.proposal.at) throw new ProjectRequestError('missingApprovalTrigger')
+      const at = this.now()
+      const approval = {
+        thread_key: request.root.thread_key, trigger_id: trigger.id, at: trigger.at, by: 'human' as const,
+        text: trigger.text.trim(), ...!input.approved ? { approved: false } : {},
+      }
+      if (!input.approved) {
+        const rejected: ProjectRequest = { ...request, status: 'rejected', approval, updated_at: at }
+        store.save(rejected)
+        return rejected
+      }
+      const decisionId = key('lead-approval', request.id)
+      this.tickets.create(key('ticket', request.id, 'implementation'), decisionId, this.leadMandate(request, trigger),
+        { triggerIds: [request.root.trigger_id], primary: request.root.trigger_id }, this.leadOutcome(request, 'approved'), at)
+      const created = this.repo.requests.get(key('request', decisionId))
+      const approved: ProjectRequest = {
+        ...request, status: 'approved', approval, updated_at: at,
+        ...created ? { request_id: created.id, tickets: [...request.tickets, ...created.ticketIds] } : {},
+      }
+      store.save(approved)
+      return approved
+    })
+  }
+  /** The Lead Mandate an accepted project request's Tickets run under (docs/012 D2). */
+  private leadMandate(request: ProjectRequest, trigger: Trigger): Mandate {
+    return {
+      strength: 'explicit',
+      policyVersion: this.options.policy().version,
+      basis: { via: 'lead', project: request.project, project_request_id: request.id },
+      actor: { ...trigger.actor },
+      scope: request.plan?.statement ?? request.title,
+    }
+  }
+  /** A worktree-safe short name for a Lead-created Ticket; Chinese or digit-led titles fall back to a stable English name. */
+  private leadWorktreeName(request: ProjectRequest, phase: 'design' | 'work' | 'approved'): string {
+    const words = request.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').filter(Boolean).slice(0, 4)
+    const slug = words.join('-').slice(0, 32).replace(/-+$/g, '')
+    if (/^[a-z]+(?:-[a-z0-9]+){0,3}$/.test(slug)) return slug
+    return phase === 'design' ? 'lead-design' : phase === 'approved' ? 'lead-implementation' : 'lead-work'
+  }
+  /** The accept outcome of an accepted project request's Tickets: one design Ticket, or the staged plan's deliverables. */
+  private leadOutcome(request: ProjectRequest, phase: 'design' | 'work' | 'approved'): Extract<AssessmentOutcome, { kind: 'accept' }> {
+    const deliverables = phase === 'design' ? undefined : request.plan?.deliverables.length ? request.plan.deliverables : undefined
+    return {
+      kind: 'accept',
+      title: request.title,
+      scope: request.plan?.statement ?? request.title,
+      reason: { code: phase === 'design' ? 'leadDesign' : phase === 'approved' ? 'leadApproved' : 'leadRequest' },
+      project: request.project,
+      name: this.leadWorktreeName(request, phase),
+      ...deliverables ? { deliverables: deliverables.map(item => ({ ...item })) } : {},
+      ...phase === 'design'
+        ? { note: 'Design only: produce the decision document or plan this architecture request needs; make no code changes.' }
+        : {},
+    }
+  }
+  /**
+   * Create the one design Ticket an architecture accept needs (docs/012 D7): it is not part of a domain Request, because the
+   * implementation Request exists only after a person approves the design, and it starts from the root Trigger's Channel.
+   */
+  private createDesignTicket(request: ProjectRequest, trigger: Trigger, at: string): string {
+    const id = key('ticket', request.id, 'design')
+    const decisionId = key('lead-request', request.id)
+    const mandate = this.leadMandate(request, trigger)
+    const outcome = this.leadOutcome(request, 'design')
+    let ticket: Ticket = {
+      id, title: request.title, decisionId, mandate,
+      channels: trigger.channel ? [{ ...trigger.channel }] : [],
+      assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at,
+      origin: { triggerId: trigger.id, triggerIds: [trigger.id] }, project: request.project,
+    }
+    ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
+    const assignment: Assignment = { id: key('assignment', ticket.id, '0'), state: 'pending', createdAt: at }
+    ticket.assignments.push(assignment)
+    this.repo.tickets.save(ticket)
+    const stored = this.repo.tickets.get(ticket.id)
+    if (stored) this.options.executor.start(stored, assignment)
+    this.options.emit?.({ type: 'ticket.created', at, data: { ticketId: ticket.id, decisionId, strength: mandate.strength } })
+    return ticket.id
   }
   /**
    * Complete an accepted project request with the Lead's summary (docs/012 D5, D6): the summary is recorded as the last
@@ -413,6 +579,8 @@ export class Engine {
   }
 }
 
+/** What the project Lead's approval tools ask of the Engine (docs/012 D7). */
+export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'requestProjectApproval' | 'approveProjectRequest'>
 /** What Sources ask and tell the Engine. */
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
