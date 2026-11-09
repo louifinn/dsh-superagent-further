@@ -2,6 +2,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { AUTOMATION_DELIVERY_LIMIT } from '../limits.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
   type Request, type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
@@ -472,8 +473,6 @@ export interface AutomationDelivery {
   message_id: string | null
   error: string | null
 }
-/** How many delivery entries are kept per task; reconciliation prunes older ones (docs/011 B7). */
-export const AUTOMATION_DELIVERY_LIMIT = 50
 /**
  * Stores the bounded delivery history of automation tasks. Every task keeps its newest
  * `AUTOMATION_DELIVERY_LIMIT` entries; recording a new one prunes the task's older rows in the same statement pair.

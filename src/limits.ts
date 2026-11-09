@@ -31,3 +31,7 @@ export const LIMITS = {
   automationTasks: 20,
   automationAudit: 20,
 } as const
+
+// How many delivery records the plugin keeps per automation. It lives here, next to the other automation limits, so modules
+// that the client graph can reach (the automation service) do not have to import the SQLite-backed store for one number.
+export const AUTOMATION_DELIVERY_LIMIT = 50

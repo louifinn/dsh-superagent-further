@@ -5,9 +5,8 @@
  */
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
-import { LIMITS } from '../limits.ts'
+import { AUTOMATION_DELIVERY_LIMIT, LIMITS } from '../limits.ts'
 import type { AutomationAudit, AutomationDelivery, AutomationRecord, AutomationRecords, AutomationHostStatus, AutomationScope } from './store.ts'
-import { AUTOMATION_DELIVERY_LIMIT } from './store.ts'
 
 /** The first line of every delivery prompt, and the prefix that marks a Host task as this plugin's installation automation. */
 export const AUTOMATION_MARKER_PREFIX = '[AUTOMATION '
