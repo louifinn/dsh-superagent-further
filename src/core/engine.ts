@@ -13,6 +13,13 @@ import { Intake, type ReceiveResult } from './intake.ts'
 import { Replies, type Reply, type ReplyRequest } from './replies.ts'
 import { Tickets } from './tickets.ts'
 
+declare module './ports.ts' {
+  interface DomainEvents {
+    /** A ProjectRequest ended `completed`; the runtime reports a root request through its origin Channels (docs/012 D6). */
+    'project-request.completed': { projectRequestId: string }
+  }
+}
+
 export type { EngineOptions } from './part.ts'
 export type { WorkerReport } from './assignments.ts'
 export type { Outcome } from './evals.ts'
@@ -97,12 +104,19 @@ export class Engine {
    * Decide a Trigger: the Eval that holds it, or a direct Eval of it alone when none does, such as a person's explicit
    * request the main Session routes. A proactive candidate is accepted only in `auto` mode with enabled rules its assessment
    * matched, and a Trigger that already started a ticket returns that ticket's Decision. An invalid stop is recorded as
-   * `ignore`; one judged under an older Policy as `unavailable`.
+   * `ignore`; one judged under an older Policy as `unavailable`. A decision that ignores, cannot assess or stops a
+   * whitelisted person's explicit mention or direct message also queues the one notice that answers it (docs/012 D8).
    * @throws UserError when the Trigger is unknown or not admissible, `outcome.evalId` names an Eval that has finished, a
    * ticket's worker still decides the Trigger and the outcome is not a stop, or an inferred candidate is accepted outside `auto`
    * mode or without enabled matching rules.
    */
-  decide(triggerId: string, outcome: Outcome): Decision { return this.repo.atomic(() => this.evals.decide(triggerId, outcome)) }
+  decide(triggerId: string, outcome: Outcome): Decision {
+    return this.repo.atomic(() => {
+      const decision = this.evals.decide(triggerId, outcome)
+      this.replies.answerExplicit(decision)
+      return decision
+    })
+  }
   /**
    * Attach a Trigger to a ticket that the message points at: the ticket follows the Trigger's Threads and receives it as an
    * Input with the routing note, and the Eval that holds the Trigger ends, since the ticket has it now; the other Triggers of
@@ -230,8 +244,9 @@ export class Engine {
   }
   /**
    * Complete an accepted project request with the Lead's summary (docs/012 D5, D6): the summary is recorded as the last
-   * reply and the request ends `completed`. The Lead checks that all Tickets and derived requests ended before it calls
-   * this; the aggregate report D6 reads the same record.
+   * reply, the request ends `completed`, and the completion is announced so the runtime sends the one aggregate report for
+   * a root request. The Lead checks that all Tickets and derived requests ended before it calls this; the report reads the
+   * same record.
    * @throws ProjectRequestError when the request is unknown, not accepted (or approved by the architecture flow), or the
    * summary is empty.
    */
@@ -241,7 +256,9 @@ export class Engine {
       const request = this.projectRequestOf(store, id)
       if (request.status !== 'accepted' && request.status !== 'approved') throw new ProjectRequestError('notAccepted')
       const at = this.now()
-      return this.saveProjectRequestReply(store, request, summary, at, { status: 'completed', completed_at: at })
+      const completed = this.saveProjectRequestReply(store, request, summary, at, { status: 'completed', completed_at: at })
+      this.options.emit?.({ type: 'project-request.completed', at, data: { projectRequestId: completed.id } })
+      return completed
     })
   }
   private projectRequestStore(): ProjectRequestRepository {

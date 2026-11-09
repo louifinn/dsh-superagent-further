@@ -2,7 +2,8 @@
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, liveTicket, ticketOutcome } from './model.ts'
-import type { ChannelRef, Ticket, Trigger } from './model.ts'
+import { reasonText } from './reasons.ts'
+import type { ChannelRef, Decision, Ticket, Trigger } from './model.ts'
 import type { ReplyStatus } from './ports.ts'
 import { EnginePart } from './part.ts'
 
@@ -45,6 +46,27 @@ export class Replies extends EnginePart {
   }
   /** Withdraw a ticket's question for a person from the outbox, unless it went out already. */
   withdrawAttention(attentionId: string): void { this.options.outbox.withdraw(key('attention-reply', attentionId)) }
+  /**
+   * Answer a whitelisted person's explicit mention or direct message even when the Decision did not accept it (docs/012 D8):
+   * one short notice on that Trigger's Channel saying what happened and why, under a deterministic id. Whether the Trigger
+   * expects a reply is derived from the same Policy gate that admitted it — a whitelisted sender's addressed message — so no
+   * stored flag can drift from the Policy. Accepted requests keep the acknowledgement and result replies; a Trigger that is
+   * not a person's, is not addressed, has no Channel, or that the Policy no longer admits gets nothing.
+   */
+  answerExplicit(decision: Decision): void {
+    if (decision.kind === 'accept') return
+    for (const triggerId of new Set(decision.triggerIds)) {
+      const trigger = this.repo.triggers.get(triggerId)
+      if (!trigger?.human || !trigger.addressed || !trigger.channel) continue
+      const thread = this.thread(trigger.threads[0]!)
+      const gate = this.policy().gate(trigger, thread, this.ticketsOnThread(thread))
+      if (!gate.admissible || gate.basis.via !== 'addressed') continue
+      const id = key('explicit-reply', decision.id, trigger.id)
+      // A Decision is recorded once, but an outbox that already holds the notice keeps it (idempotent).
+      if (this.options.outbox.status(id) !== undefined) continue
+      this.options.outbox.send({ id, channel: trigger.channel, text: this.explicitText(decision, trigger), kind: 'notice' })
+    }
+  }
   private acknowledge(request: Extract<ReplyRequest, { purpose: 'acknowledgement' }>): Reply {
     const ticket = this.require(request.ticketId)
     if (!liveTicket(ticket)) throw new UserError('ackEnded')
@@ -92,4 +114,15 @@ export class Replies extends EnginePart {
   }
   /** The conversation a ticket started in: its origin Trigger's Channel, else its first Channel. */
   private sourceChannel(ticket: Ticket): ChannelRef | undefined { return this.source(ticket)?.channel ?? ticket.channels[0] }
+  /** The notice answering a whitelisted person's explicit message, in that message's language: outcome and reason. */
+  private explicitText(decision: Decision, trigger: Trigger): string {
+    const chinese = /\p{Script=Han}/u.test(trigger.text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(trigger.text)
+    const own = decision.reason.filter(reason => reason.triggerId === undefined || reason.triggerId === trigger.id)
+    const detail = reasonText(own.length ? own : decision.reason)
+    const outcome = chinese
+      ? decision.kind === 'ignore' ? '你的请求未被采纳' : decision.kind === 'unavailable' ? '你的请求暂时无法处理' : '已按你的请求停止'
+      : decision.kind === 'ignore' ? 'Your request was not taken up'
+        : decision.kind === 'unavailable' ? 'Your request could not be processed' : 'The work was stopped as you asked'
+    return `${outcome}${detail ? `${chinese ? '：' : ': '}${detail}` : ''}${chinese ? '。' : '.'}`
+  }
 }
