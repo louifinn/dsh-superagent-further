@@ -133,7 +133,10 @@ export class Runtime extends Service implements SourceHost {
       // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
       const schedule = ctx.get('schedule') as ScheduleService | undefined
       this.automations = schedule === undefined ? undefined : new Automations({ schedule, store: store.automations, masterId,
-        logger: ctx.logger, projects: () => store.settings().executor.projects.map(project => project.id) })
+        logger: ctx.logger, projects: () => store.settings().executor.projects.map(project => project.id),
+        project: id => store.settings().executor.projects.find(project => project.id === id),
+        // The Lead Session must exist before the Host task targets it; the closure runs after Sessions is constructed.
+        lead: async project => (await runtime.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id })
       const commands = this.commands = new Commands(() => setup.deployment, setup.commandEnvironment, this.lifetime)
       const board = this.board
       const effects = this.effects = new Effects(store, board)
@@ -340,6 +343,7 @@ export class Runtime extends Service implements SourceHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+      automations: this.automations,
       leadOverview: () => runtime.leadOverview(),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },

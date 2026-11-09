@@ -408,8 +408,8 @@ export interface AutomationAudit {
   by: string
   detail: string
 }
-/** The scope of an automation task; only installation-level tasks exist in P1 (docs/011 B3.1). */
-export type AutomationScope = 'installation'
+/** The scope of an automation task: the installation main Session, or one registered project's Lead (docs/011 B3.1). */
+export type AutomationScope = 'installation' | 'project'
 /** Which Session a task's Host schedule targets: the installation main Session, or (P2) a project Lead. */
 export type AutomationHost = 'orchestrator' | 'lead'
 /** The Host schedule task's lifecycle as the plugin last read it. */

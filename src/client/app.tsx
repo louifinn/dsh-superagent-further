@@ -17,6 +17,7 @@ import { SetupWizard } from './setup-wizard.tsx'
 import { SetupWizardButton, useSetupWizard } from './setup-wizard-entry.tsx'
 import { SourceStatus } from './source.tsx'
 import { actorName, errorText, reasonLabel, valueLabel, type T, readableMarkers } from './text.ts'
+import { TasksPage } from './tasks.tsx'
 import { ThreadPage } from './thread.tsx'
 import { TicketPage } from './ticket.tsx'
 import { TriggerStatus } from './trigger.tsx'
@@ -160,6 +161,7 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
       case 'execution': return route.id !== undefined ? <TicketPage key={route.id} id={route.id} />
         : state ? <ExecutionStatus filter={route.query?.filter ?? 'open'} state={state} reload={reload} /> : waiting
       case 'memory': return <MemoryPage />
+      case 'tasks': return <TasksPage />
       case 'settings': return state ? <SettingsPage key={state.masterId} group={route.query.group} query={route.query} state={state}
         deploymentForm={deploymentForm} /> : waiting
     }

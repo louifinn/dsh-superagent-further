@@ -326,13 +326,15 @@ export class Sessions {
       text: () => languageContext(host.store.settings()),
     }))
     // Automations are volatile like memory: a create, edit or delivery changes their snapshot, so they travel in runtime
-    // context instead of rewriting the system prompt. Only the installation main Session can create or change them.
-    if (master && host.automations !== undefined) {
+    // context instead of rewriting the system prompt. The main Session sees installation tasks and may create or change them;
+    // a project Lead sees only its own project's tasks, which are report-only (docs/011 B-D2).
+    if ((master || project) && host.automations !== undefined) {
       const automations = host.automations
+      const projectId = project?.id
       binding.disposers.push(agent.ctx.systemPrompt.context({
         name: AUTOMATION_CONTEXT,
         order: AUTOMATION_CONTEXT_ORDER,
-        text: () => automations.context(),
+        text: () => automations.context(projectId),
       }))
     }
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.

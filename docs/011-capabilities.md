@@ -1,6 +1,6 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **partly implemented — Part A P1/P2/P3 and Part B P1 implemented; decisions settled** (2026-11-09). The survey behind this
+Status: **partly implemented — Part A P1/P2/P3 and Part B P1/P2 implemented; decisions settled** (2026-11-09). The survey behind this
 document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
@@ -14,8 +14,8 @@ reason/actor/proposal audit in the history. Part A P3 (per-block restore and the
 reminder) is implemented without a schema change: `Settings.restore` reads a saved revision's block
 value and saves it through the panel save path with `restoredFrom`, `POST settings/<block>/restore`
 exposes it, the panel's history rows offer a confirmed Restore action, and the pending-proposal
-count is shown on every settings group. Parts B P2/P3 remain
-proposals. Every claim below names the
+count is shown on every settings group. Part B P3 remains
+a proposal. Every claim below names the
 file and line it comes from. Repo evidence is the checkout at `b4f2dbe` (dsh-superagent 0.2.0; the
 plugin is now dsh-superagent-further 0.3.0). Host evidence is DeepSeek
 Harness **0.2.2-rc.1**, the version installed on this machine; its packages are read from the packed
@@ -65,7 +65,25 @@ Session exists without recreating or adopting one. `automationTools`
 (`src/app/tools/automation.ts`) registers `automation_create`, `automation_list`, `automation_view`
 and `automation_edit` for the main Session only when `ctx.get('schedule')` exists. `Sessions` adds the
 `dsh-superagent-further-automation` runtime-context contribution at order 320. The rest of Part B
-(project scope, the panel and per-delivery notices) remains a proposal.
+(per-delivery notices and delivery history) remains a proposal.
+
+**Part B P2 implemented without a schema change.** `Automations` now creates both scopes: an
+`installation` task still targets the main Session, and a `project` task validates the project id
+against the registered projects, calls `Sessions.ensureLead(project.id, project.workspace,
+`Lead · <name>`)` before the Host task, and targets `lead-<projectId>`. Project tasks are report-only
+by decision B-D2: the envelope is `[AUTOMATION auto-… · project <projectId>]`, and the delivered
+instruction is prefixed with the rule that the Lead inspects and reports only, changes no repository,
+Settings, Tickets or Policy, and states what the Orchestrator should do; installation tasks are
+unchanged. The row records the scope and project, list/view show them with `report_only`, and an edit
+cannot re-target an existing task. Reconciliation resolves project targets by their recorded project
+id, marks a removed project or an archived target Session orphaned, and reports a target that is not
+the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and remain
+the only four automation tools. `GET automations`, `POST automations` and `PUT automations/:id` sit
+behind the same-origin check; the new Automations page lists scope, project, human-readable schedule,
+enabled switch, created and last delivery, shows orphan warnings, and creates or edits a task without
+running or deleting it. Without `ctx.get('schedule')` the tools are absent, the page says the
+service is unavailable, and the routes answer 503. Tests are in `tests/automations.spec.ts`,
+`tests/tools.spec.ts`, `tests/http.spec.ts` and `tests/panel-tasks.spec.tsx`.
 
 ## Why
 
@@ -460,7 +478,7 @@ audit TEXT NOT NULL DEFAULT '[]'  -- last 20 {at, kind, by, detail} entries
 ```
 
 `host` is derived, not chosen: installation scope uses `masterId` and the Orchestrator; project scope
-in P2 will use `lead-<projectId>` and the project Lead. `project` must exist in
+uses `lead-<projectId>` and the project Lead. `project` must exist in
 `settings.executor.projects` (`src/projects.ts:11-24`) at create time; a later removal marks the row
 `orphaned`, it never deletes work silently.
 
@@ -473,13 +491,15 @@ do not mount the Host's schedule tools either.
 
 | Tool | Inputs | Behavior |
 |---|---|---|
-| `automation_create` | `title`, `instruction`, `rrule`, `enabled` (default `true`) | validates the fields and the 20-task limit, calls the Host service `create` with `timing: {kind:'rrule', rrule}` and `target: {kind:'session', sessionId: masterId}`, stores the row, and returns `{id, dsh_task, next_occurrence}`; a failed row write deletes the Host task |
-| `automation_list` | `enabled?` | lists our installation rows with `title`, `rrule`, `enabled`, `orphaned`, `next_at`, `last_delivery_at` and `last_error`, plus `unrecorded`: installation-shaped Host tasks this plugin has no row for |
-| `automation_view` | `id` | one row with its whole instruction, plus the Host status and next occurrence when `view` succeeds |
-| `automation_edit` | `id`, `action: update`, `title?`, `instruction?`, `rrule?`, `enabled?`, `expectedRevision?` | `update` sends the changed fields to the Host `edit` with `expectedUpdatedAt`; enable/disable sends the `active` patch; a stale revision changes nothing, and a `schedule_conflict` refreshes the row's Host metadata and reports drift instead of overwriting the Host's change |
+| `automation_create` | `title`, `instruction`, `rrule`, `enabled` (default `true`), `project?` | validates the fields and the 20-task limit, calls the Host service `create` with `timing: {kind:'rrule', rrule}` and `target: {kind:'session', sessionId: masterId}`; a registered `project` first ensures that project's Lead Session and targets `lead-<projectId>`, and stores a report-only row; returns `{id, dsh_task, next_occurrence}`; a failed row write deletes the Host task |
+| `automation_list` | `enabled?`, `project?` | lists rows with `scope`, `project`, `report_only`, `title`, `rrule`, `enabled`, `orphaned`, `next_at`, `last_delivery_at` and `last_error`, plus `unrecorded`: Host tasks this plugin has no row for; `project` filters to one project |
+| `automation_view` | `id` | one row with its scope, project, report-only flag, whole instruction, plus the Host status and next occurrence when `view` succeeds |
+| `automation_edit` | `id`, `action: update`, `title?`, `instruction?`, `rrule?`, `enabled?`, `expectedRevision?` | `update` sends the changed fields to the Host `edit` with `expectedUpdatedAt`; enable/disable sends the `active` patch; a stale revision changes nothing, and a `schedule_conflict` refreshes the row's Host metadata and reports drift instead of overwriting the Host's change; scope and project are fixed |
 
-P1 has no `project` input and no `delete` action: the scope is installation only and a task is paused
-or resumed through `enabled`. Project scope and its delete path arrive with P2.
+The tools have no `project` re-target and no `delete` action: an existing task keeps the scope and
+project it was created with, and is paused or resumed through `enabled`. To target another project,
+disable the old task and create a new one. The Host's own delete path is used only to compensate a
+failed row write.
 
 `automation_run` is deliberately absent: the Host `run` only enqueues and reports
 `schedule_execution_pending` (`dsh-schedule/README.md:75`; `lib/index.js:2346`), so a tool would
@@ -505,10 +525,27 @@ Session already has. Do not change settings, Policy, or Sources because of this 
 outcome in this Session; do not wait for anyone.
 ```
 
-A new runtime-context contribution, `dsh-superagent-further-automation` (order 320, after language at 310),
-is registered for the Orchestrator only in P1, in the same way as memory and language
-(`src/app/sessions.ts:328-337`). It explains the marker, lists the enabled installation tasks with
-their next run when known, and says:
+A project-scope delivery uses the marker `[AUTOMATION auto-1a2b3c4d · project <projectId>]` and prefixes the
+stored instruction with the report-only rule:
+
+```text
+Explore the failed builds and report what needs attention.
+```
+
+becomes:
+
+```text
+Report only for project default: inspect and report in this Session; do not modify the repository,
+Settings, Tickets, or Policy. If action is needed, state what the Orchestrator should do.
+
+Explore the failed builds and report what needs attention.
+```
+
+The runtime-context contribution, `dsh-superagent-further-automation` (order 320, after language at 310),
+is registered for the Orchestrator and for each project Lead, in the same way as memory and language
+(`src/app/sessions.ts:328-339`). The main Session's text explains the installation marker and lists the
+enabled installation tasks with their next run; a Lead's text explains the project marker, repeats the
+report-only rule, and lists only its own project's enabled tasks. The main Session text says:
 
 ```text
 ## automations
@@ -613,14 +650,11 @@ work still flows through Sources and admission.
   service's `run` from a test harness); verify the Orchestrator performs it and the row's
   `last_delivery_at` updates; disable the task and verify no further delivery.
 
-**P2 — project scope + panel.**
+**P2 — project scope + panel, implemented.**
 
-- `automation` rows with `project`; `sessions.ensureLead` before create; the Lead runtime-context
-  section; read-only reachability rules for Lead-hosted instructions.
-- Panel: a Tasks section listing rows with project, human-readable schedule, enabled toggle, orphan
-  warning, last delivery; HTTP routes guarded by the same `sameOrigin` rule (`src/app/http.ts:85`).
-- Tests: `tests/automations.spec.ts` (Lead target, project removal, archived Session),
-  `tests/panel-*.spec.tsx` (new panel test), `tests/http.spec.ts`.
+- `automation` rows with `project`; `sessions.ensureLead` before create; the Lead runtime-context section; report-only reachability rules for Lead-hosted instructions (B-D2).
+- Panel: an Automations page listing rows with scope and project name, human-readable schedule, enabled toggle, orphan warning, created and last delivery, and creating or editing a row without re-target; HTTP routes guarded by the same `sameOrigin` rule (`src/app/http.ts:85`); a missing `schedule` service shows the unavailable state and answers 503.
+- Tests: `tests/automations.spec.ts` (Lead target, project removal, archived Session), `tests/panel-tasks.spec.tsx` (list, project create, edit, toggle, service missing), `tests/http.spec.ts`; modules and context in `src/app/automations.ts`, `src/app/tools/automation.ts`, `src/app/views/automations.ts`, `src/app/sessions.ts` and `src/client/tasks.tsx`.
 
 **P3 — delivery history, notices, optional run.**
 
@@ -644,8 +678,8 @@ work still flows through Sources and admission.
   row as the authority; drift is detected, not prevented. Accepting this is decision B-D4.
 - **Dirty project clone.** A Lead-hosted automation that delegates work creates worker children in
   the Lead's working directory (the project clone), not in a Ticket's worktree; the work is not a
-  Ticket and leaves no PR through the normal flow. Until decision B-D2 is settled, project
-  automations should be report-only, and the envelope/prompt should say so.
+  Ticket and leaves no PR through the normal flow. Decision B-D2 settles this: project
+  automations are report-only, and the envelope and Lead prompt say so.
 - **Cost.** Every delivery starts a model turn. A per-minute task is a per-minute Agent. The tool
   description and the panel should show the next few occurrences and refuse intervals the Host
   refuses (60-second floor).
@@ -709,8 +743,8 @@ The operator approved every recommendation and the suggested order.
 10. B-D5 — session turns only in the first release; no Feishu or panel notice per delivery.
 
 Implementation order: A-P2 (done, schema 18) → B-P1 (done, schema 19, installation-scope automation
-tasks) → A-P3 (done, per-block restore and the panel reminder) → B-P2 (project scope and the panel) →
-B-P3 (history and delivery notices).
+tasks) → A-P3 (done, per-block restore and the panel reminder) → B-P2 (done, project scope and the
+panel) → B-P3 (delivery history and notices).
 
 ## Non-goals
 

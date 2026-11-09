@@ -6,6 +6,9 @@ import { z } from 'zod'
 import { record } from '../kv.ts'
 import { MEMORY_SORTS } from '../memory.ts'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
+import { AutomationCreateSchema, AutomationLimitError, AutomationUpdateSchema, UnknownAutomationError, UnknownProjectError,
+  type Automations } from './automations.ts'
+import type { AutomationsView } from './views/automations.ts'
 import { sourceSkills } from './context.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInParts, defaultPrompts, savePrompts, type Prompts }
@@ -44,6 +47,8 @@ export interface HttpHost {
   readonly executor: Pick<DshExecutor, 'activeCount'>
   /** One row per registered project: its Lead Session, and the executors and messages it holds. */
   leadOverview(): LeadRow[]
+  /** The plugin's automation tasks; absent when the Host's `schedule` service is not installed. */
+  readonly automations?: Automations
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -63,10 +68,10 @@ export interface HttpHost {
   models(): Promise<ModelCatalog>
 }
 /**
- * Represents a client-facing 400 or 404 error raised during management route parsing or lookup.
- * Route handlers throw it when request bodies are malformed or target records are missing, and registerHttp serializes its status and message in the HTTP response.
+ * Represents a client-facing refusal raised during management route parsing or lookup, with the HTTP status the route answers.
+ * Route handlers throw it when request bodies are malformed, records are missing, or a Host service is unavailable.
  */
-class RouteError extends Error { constructor(readonly status: 400 | 404, message: string) { super(message) } }
+class RouteError extends Error { constructor(readonly status: 400 | 404 | 409 | 503, message: string) { super(message) } }
 async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<unknown> {
   let size = 0; const chunks: Buffer[] = []
   for await (const chunk of req) {
@@ -93,6 +98,9 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   }
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
+  if (error instanceof UnknownProjectError) return [400, { error: error.message, code: 'projectNotRegistered' }]
+  if (error instanceof UnknownAutomationError) return [404, { error: error.message }]
+  if (error instanceof AutomationLimitError) return [400, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
   if (error instanceof SettingsRevisionNotFound) return [404, { error: error.message }]
   if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
@@ -134,7 +142,13 @@ const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources:
 const setupState = (runtime: HttpHost): SetupState => ({ deployment: runtime.configured() ? runtime.deployment : undefined,
   problem: runtime.setupProblem, feishuProblem: runtime.feishuProblem })
 export type StateView = ReturnType<typeof stateView>
-/** Builds a ticket's detail view; `environment` is empty while waiting for setup because it requires the resolved deployment. */
+/** The Automations page's response: the tasks, unrecorded Host tasks, and the projects a new task can target. */
+async function automationsPage(runtime: HttpHost): Promise<AutomationsView> {
+  if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+  const list = await runtime.automations.list()
+  return { service: true, items: list.items, unrecorded: list.unrecorded,
+    projects: runtime.store.settings().executor.projects.map(({ id, name }) => ({ id, name })) }
+}
 function ticketPage(runtime: HttpHost, id: string) {
   const detail = ticketDetail(views(runtime), id), ticket = runtime.store.tickets.get(id)
   if (!detail || !ticket) throw new RouteError(404, 'Ticket not found')
@@ -277,6 +291,20 @@ function routes(runtime: HttpHost): Routes {
       return savePrompts(runtime, request.config, request.baseRevision, 'panel')
     },
     'POST prompts/preview': async input => runtime.prompts.preview(await promptBody(input)),
+    // Automations share the service the main Session's tools use; the panel is another client of the same code path. A missing
+    // Host schedule service is a 503 instead of a broken page, and no route can re-target scope or project.
+    'GET automations': () => automationsPage(runtime),
+    'POST automations': async ({ body }) => {
+      if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+      return runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')
+    },
+    'PUT automations/:id': async ({ params, body }) => {
+      if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
+      const update = AutomationUpdateSchema.parse(await body())
+      const result = await runtime.automations.edit({ id: params.id, action: 'update', ...update }, 'panel')
+      if ('conflict' in result) throw new RouteError(409, result.warning)
+      return result
+    },
   }
 }
 function decoded(segment: string): string {
