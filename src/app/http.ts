@@ -39,7 +39,7 @@ export interface HttpHost {
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
-  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
+  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels' | 'proposals' | 'proposal' | 'applyProposal' | 'rejectProposal'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
   /** One row per registered project: its Lead Session, and the executors and messages it holds. */
@@ -180,6 +180,17 @@ function routes(runtime: HttpHost): Routes {
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
+    'GET settings/proposals': () => runtime.settings.proposals(),
+    'POST settings/proposals/:id/apply': async ({ params }) => {
+      const result = await runtime.settings.applyProposal(params.id)
+      if (result === undefined) throw new RouteError(404, 'Settings proposal not found')
+      return result
+    },
+    'POST settings/proposals/:id/reject': ({ params }) => {
+      const proposal = runtime.settings.rejectProposal(params.id)
+      if (proposal === undefined) throw new RouteError(404, 'Settings proposal not found')
+      return { proposal }
+    },
     'POST sources/:id/labels': ({ params }) => runtime.settings.refreshLabels(params.id),
     'GET threads': ({ query }) => {
       const { filter, offset, limit } = ThreadsQuery.parse(query)

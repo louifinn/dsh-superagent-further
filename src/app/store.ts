@@ -7,7 +7,7 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
   type Request, type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18, tooOld } from './migration.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { Versions } from './versions.ts'
@@ -29,6 +29,21 @@ export interface SettingsVersion {
   actor?: string
   /** The operator's words that asked for the save (docs/011 A5.3). */
   reason?: string
+  /** The approved settings proposal this save applied, when the operator approved one (docs/011 A5.3). */
+  proposal?: string
+}
+/** Lifecycle state of a settings proposal; only `pending` proposals can be approved or rejected. */
+export type ProposalStatus = 'pending' | 'applied' | 'rejected' | 'superseded' | 'expired'
+/** One field a settings proposal would change, as the panel's pending-proposal diff shows it. */
+export interface ProposalChange { path: string; from?: unknown; to?: unknown }
+/**
+ * A tier-B settings change a tool proposed and only the operator can approve in the management panel (docs/011 A5.2).
+ * `value` is the whole proposed block value, so applying it re-enters the ordinary panel save path.
+ */
+export interface Proposal {
+  id: string; block: SettingsSave; value: unknown; diff: ProposalChange[]; reason: string; base_revision: number; actor: string
+  status: ProposalStatus; created_at: string; expires_at: string
+  decided_at?: string; decided_by?: string; applied_revision?: number; error?: string
 }
 /**
  * Generated columns and partial indexes defining active working sets so passes scan only active rows.
@@ -61,16 +76,19 @@ export class Store implements Repositories {
   readonly leads: LeadMessages
   /** Facts, decisions, preferences and lessons that outlive a Session and are recalled by tools and the prompt. */
   readonly memories: Memories
+  /** Tier-B settings proposals awaiting the operator's approval and the decisions already taken (docs/011 A5.2). */
+  readonly proposals: Proposals
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (17), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (18), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     this.leads = new LeadMessages(this.db)
     this.memories = new Memories(this.db, () => this.settings().memory)
+    this.proposals = new Proposals(this.db)
     this.read = storeReads(this.db)
     // Windows ignores the directory mode above, so the directory and the database are given an owner-only ACL; on Unix this is
     // the 0700 directory and 0600 file mode the rest of the code expects.
@@ -106,10 +124,15 @@ export class Store implements Repositories {
             CREATE TABLE IF NOT EXISTS memory (id TEXT PRIMARY KEY, scope TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', ticket TEXT NOT NULL DEFAULT '',
               kind TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, at TEXT NOT NULL, expires TEXT NOT NULL DEFAULT '', value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS memory_scope_at ON memory(scope, project, ticket, at);
+            CREATE TABLE IF NOT EXISTS settings_proposal (id TEXT PRIMARY KEY, block TEXT NOT NULL, base_revision INTEGER NOT NULL,
+              value TEXT NOT NULL, diff TEXT NOT NULL, reason TEXT NOT NULL, actor TEXT NOT NULL, status TEXT NOT NULL,
+              created_at TEXT NOT NULL, expires_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, applied_revision INTEGER,
+              error TEXT);
+            CREATE INDEX IF NOT EXISTS settings_proposal_status ON settings_proposal(status, block);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {
@@ -314,6 +337,53 @@ export class Store implements Repositories {
      */
     withdraw: (id: string): boolean =>
       Number(this.db.prepare("DELETE FROM outbox WHERE id = ? AND value ->> '$.status' = 'pending'").run(id).changes) > 0,
+  }
+}
+/** Parses one row of the `settings_proposal` table into a `Proposal`. */
+function proposalOf(row: Record<string, unknown>): Proposal {
+  const optional = (name: string) => row[name] === null || row[name] === undefined ? {} : { [name]: String(row[name]) }
+  return {
+    id: String(row.id), block: row.block as SettingsSave, base_revision: Number(row.base_revision),
+    value: JSON.parse(String(row.value)), diff: JSON.parse(String(row.diff)) as ProposalChange[],
+    reason: String(row.reason), actor: String(row.actor), status: row.status as ProposalStatus,
+    created_at: String(row.created_at), expires_at: String(row.expires_at), ...optional('decided_at'), ...optional('decided_by'),
+    ...row.applied_revision === null || row.applied_revision === undefined ? {} : { applied_revision: Number(row.applied_revision) },
+    ...row.error === null || row.error === undefined ? {} : { error: String(row.error) },
+  }
+}
+/**
+ * Stores tier-B settings proposals: new rows are inserted and later upserted as their status changes (applied, rejected,
+ * superseded, expired). Every save goes through `Settings`, so the pending set never contains two proposals for one block.
+ */
+export class Proposals {
+  constructor(private readonly db: DatabaseSync) {}
+  /** One proposal by id in any state. */
+  get(id: string): Proposal | undefined {
+    const row = this.db.prepare('SELECT * FROM settings_proposal WHERE id=?').get(id) as Record<string, unknown> | undefined
+    return row === undefined ? undefined : proposalOf(row)
+  }
+  /** Proposals in any state, newest first. */
+  list(limit = 50): Proposal[] {
+    return (this.db.prepare('SELECT * FROM settings_proposal ORDER BY rowid DESC LIMIT ?').all(limit) as Record<string, unknown>[])
+      .map(proposalOf)
+  }
+  /** Pending proposals, newest first, optionally for one settings block. */
+  pending(block?: SettingsSave): Proposal[] {
+    const rows = block === undefined
+      ? this.db.prepare("SELECT * FROM settings_proposal WHERE status='pending' ORDER BY rowid DESC").all()
+      : this.db.prepare("SELECT * FROM settings_proposal WHERE status='pending' AND block=? ORDER BY rowid DESC").all(block)
+    return (rows as Record<string, unknown>[]).map(proposalOf)
+  }
+  /** Inserts a new proposal or replaces the stored state of one already recorded. */
+  save(proposal: Proposal): void {
+    this.db.prepare(`INSERT INTO settings_proposal (id, block, base_revision, value, diff, reason, actor, status, created_at, expires_at,
+      decided_at, decided_by, applied_revision, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET block=excluded.block, base_revision=excluded.base_revision, value=excluded.value, diff=excluded.diff,
+        reason=excluded.reason, actor=excluded.actor, status=excluded.status, created_at=excluded.created_at, expires_at=excluded.expires_at,
+        decided_at=excluded.decided_at, decided_by=excluded.decided_by, applied_revision=excluded.applied_revision, error=excluded.error`)
+      .run(proposal.id, proposal.block, proposal.base_revision, JSON.stringify(proposal.value), JSON.stringify(proposal.diff), proposal.reason,
+        proposal.actor, proposal.status, proposal.created_at, proposal.expires_at, proposal.decided_at ?? null, proposal.decided_by ?? null,
+        proposal.applied_revision ?? null, proposal.error ?? null)
   }
 }
 export { key, threadKey }

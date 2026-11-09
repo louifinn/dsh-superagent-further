@@ -168,11 +168,11 @@ Its interfaces are grouped by purpose:
 - **Domain repositories:** `atomic`, plus `triggers`, `threads`, `tickets` and `decisions`, each with `get`, `save` and list queries. Indexed working sets are `threads.active()`, `tickets.open()`, `tickets.active()` and `read.subscribedThreads`.
 - **Read queries:** `read` serves views, tools and Source polls through methods such as `threadTriggers`, `triggerStats`, `search` and `droppedReplies`. These methods never write.
 - **Source metadata:** `threads.describe` and `threads.patchMeta` update Source-owned Thread metadata.
-- **Settings:** `settings`, `saveSettings`, `blockRevision` and `settingsHistory`. Settings and prompts use numbered `Versions` (`src/app/versions.ts`).
+- **Settings:** `settings`, `saveSettings`, `blockRevision`, `settingsHistory` and `proposals`, which lists and stores the `settings_proposal` records the panel decides. Settings and prompts use numbered `Versions` (`src/app/versions.ts`).
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16 and 16 to 17).
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16, 16 to 17 and 17 to 18, which adds the `settings_proposal` table the Store creates).
 
 ### Effects
 
@@ -229,7 +229,9 @@ Its `context`, `read` and `decide` methods serve `orchestrator_eval`, `orchestra
 
 ### Settings
 
-`Settings` (`src/app/settings.ts`) reads and writes revisioned settings blocks. `current` and `view` read them; `save(block, value, revision, origin)` validates a save; `pause(paused, origin)` changes the separate `paused` setting.
+`Settings` (`src/app/settings.ts`) reads and writes revisioned settings blocks. `current` and `view` read them; `save(block, value, revision, origin, audit?)` validates a save; `pause(paused, origin, audit?)` changes the separate `paused` setting.
+
+`propose(block, value, reason, actor)` records a pending `settings_proposal` for a change that includes a tier-B path, superseding the block's older pending proposal; `proposals`, `proposal(id)`, `applyProposal(id)` and `rejectProposal(id)` serve the panel, the HTTP routes and the `settings/proposals` read resource. Applying re-checks the block revision and calls `save(..., 'panel', { actor, reason, proposal })`, recording the audit in the history and on the proposal; a failed save keeps the proposal pending with its error.
 
 Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or fields listed in `SETUP_FIELDS` (`src/deployment.ts`).
 
@@ -510,6 +512,7 @@ One SQLite file, `<stateDir>/orchestrator.sqlite`, which only the Store opens.
 | `decision` | Decisions, by Thread | Engine |
 | `effect` | The effect queue: per kind and key, the payload, its order, failed attempts with the last error, and when it is due | Effects; the schema 11 migration queues what earlier versions kept for the main Session |
 | `outbox` | The receipt of each message for a Channel, by id, with the Ticket it is for and its `status`, `pending`, `sent` or `dropped`, kept so an id is never queued twice; for a dropped message, when and why, as the generated column `dropped`, its time, and a reason code. A message that waits has a `reply` effect, which holds its attempts | The Outbox |
+| `settings_proposal` | Settings proposals: the block, the proposed value and its per-field diff, the requester's reason and Session id, the base revision, status (`pending`, `applied`, `rejected`, `superseded` or `expired`), creation and expiry times, and the panel's decision with the applied revision or the error | `Settings`, from `orchestrator_settings_propose`; the panel applies or rejects one |
 | `kv` | Every other record, by key | The part that names it |
 
 A generated column is computed from its row's JSON and is empty outside its set, and each has an index over its set, so a pass reads only active work. A database that predates a column gets it when the Store opens it.
@@ -530,15 +533,15 @@ Dismissal is stored on its Decision. Input text is rendered from the Ticket when
 
 Read caches use bounded in-memory `TextCache` instances and are lost on restart. A Session paging through an original Source record or prompt preview must reread offset 0 after a restart. Feishu links resolved after intake are cached the same way; link-based search finds them only after that link has been read during the current process lifetime.
 
-Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request.
+Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request. Settings proposals are not pruned either: an expired, rejected or superseded row stays as the record of what was asked.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
 
 ## Model-facing interfaces
 
 ### Main Session tools
 
-The main Session has 14 application tools:
+The main Session has 15 application tools:
 
 | Purpose | Tools |
 | --- | --- |
@@ -547,11 +550,11 @@ The main Session has 14 application tools:
 | Re-evaluate | `orchestrator_trigger_requeue` |
 | Assess proactive work | `orchestrator_eval`, `orchestrator_eval_read`, `orchestrator_eval_decide` |
 | Communicate and unsubscribe | `orchestrator_reply`, `orchestrator_thread_unsubscribe` |
-| Configure | `orchestrator_settings_save`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
+| Configure | `orchestrator_settings_save`, `orchestrator_settings_propose`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
 
 `orchestrator_route` accepts 1–20 decisions in order. Each accept, attach, stop or ignore runs as a separate Engine command. It also permits ignoring an inferred candidate directly from its card. `orchestrator_ticket_note` sends a fact as context, not authority. `orchestrator_read tickets` lists every Ticket newest first, end included, so a request that refers to earlier work is judged against the stored record rather than the current conversation.
 
-Settings saves select `policy`, `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A prompt save with `preview: true` composes text without saving.
+Settings saves select `policy`, `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A tool save carries the person's `reason`; one that changes a tier-B path is refused with `approvalRequired` and has to go through `orchestrator_settings_propose`, which records a pending proposal instead of saving. A prompt save with `preview: true` composes text without saving.
 
 The main Session also has DeepSeek Harness's `skill`, `bash`, `read`, `read_image`, `job_output`, `job_list` and `job_kill`. Avoiding code reads is a prompt rule, not a tool restriction.
 
@@ -608,7 +611,7 @@ Ticket cards use the closed `TICKET_STATES` set from `src/app/cards.ts`: an open
 | `trigger/<id>` | Message text, replied-to Trigger and neighboring messages, excluding CI runs |
 | `ticket/<id>` | Related ids, source-batch Triggers, Threads, and first pages of Assignments and Inputs |
 | Ticket subresources | `/assignments`, `/inputs`, `/assignment`, `/result`, `/report/<assignment id>`, `/transcript`, `/message/<n>`, `/input/<id>` |
-| `settings`, `settings/<block>` | Revisions and summaries, or a complete block ready to save |
+| `settings`, `settings/<block>`, `settings/proposals` | Revisions and summaries, a complete block ready to save, or the pending proposals with their per-field diffs |
 | `prompts`, `prompts/<revision>`, `prompts/current`, `prompts/defaults`, `prompt-preview/<id>` | Prompt configurations and composed text |
 | `models`, `models/<provider>` | Available models |
 | `feishu/<trigger id>/…`, `github/…` | Original Source records, described in the Source skills |
@@ -644,7 +647,7 @@ Workers receive assignments and Inputs inline. The first message includes the ti
 
 ### Panel-only actions
 
-There is no tool for dismissing an unavailable Decision, rerunning setup, refreshing Source display names, or sending an Executor-owned human follow-up to Eval. The last action is deliberately refused by `orchestrator_trigger_requeue`. Other panel actions have equivalent tools.
+There is no tool for dismissing an unavailable Decision, rerunning setup, refreshing Source display names, applying or rejecting a pending settings proposal, or sending an Executor-owned human follow-up to Eval. The last action is deliberately refused by `orchestrator_trigger_requeue`. Other panel actions have equivalent tools.
 
 Most built-in instructions live in `prompts/*.md`, with one sentence per line joined by `promptFile`. Source skills live in `skills/dsh-superagent-further-*/SKILL.md`. Tool descriptions and fixed notices such as restart recovery notes remain in code. Assessment instructions live only in `prompts/admission.md`.
 

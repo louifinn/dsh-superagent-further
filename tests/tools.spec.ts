@@ -289,6 +289,36 @@ it('saves a tier-A settings block by name and a Source\'s block with the Source\
   expect(await save({ block: 'pause', value: { paused: false }, revision: 0, reason: 'The person asked to keep working' })).toEqual({ paused: false })
 })
 
+it('proposes a tier-B settings change for the panel and reads the pending proposal with its field diff', async () => {
+  const propose = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_settings_propose', args)
+  const tool = h.tools.get(h.runtime.masterId)!.get('orchestrator_settings_propose') as unknown as
+    { description: string; parameters: { required?: string[]; properties?: Record<string, unknown> } }
+  expect(tool.description).toContain('management panel')
+  expect(tool.parameters.required).toEqual(expect.arrayContaining(['block', 'value', 'reason']))
+  expect(tool.parameters.properties).not.toHaveProperty('revision')
+  const evaluation = h.runtime.settings.block('eval').value as { mode: string }
+  const mode = evaluation.mode === 'auto' ? 'observe' : 'auto'
+  const reason = 'The person asked to run the evaluator in the other mode'
+  const proposal = await propose({ block: 'eval', value: { ...evaluation, mode }, reason }) as
+    { proposal_id: string; block: string; base_revision: number; expires_at: string; diff: { path: string; from: unknown; to: unknown }[] }
+  expect(proposal).toMatchObject({ block: 'eval', base_revision: h.runtime.store.blockRevision('eval'),
+    diff: [{ path: 'eval.mode', from: evaluation.mode, to: mode }] })
+  expect(proposal.proposal_id).toMatch(/^pr-[0-9a-f]{8}$/)
+  const listed = JSON.parse(((await read('settings/proposals')) as { text: string }).text) as
+    { items: { id: string; status: string; reason: string; actor: string; diff: unknown[] }[] }
+  expect(listed.items).toContainEqual(expect.objectContaining({ id: proposal.proposal_id, status: 'pending', reason,
+    actor: h.runtime.masterId, diff: proposal.diff }))
+  expect(await read('settings')).toMatchObject({ eval: expect.objectContaining({ value: evaluation }) })
+
+  const executor = h.runtime.settings.block('executor').value as { directory: string }
+  await expect(propose({ block: 'executor', value: { ...(h.runtime.settings.block('executor').value as object), directory: '/tmp/elsewhere' }, reason }))
+    .rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+  await expect(propose({ block: 'eval', value: { ...evaluation, timeoutSeconds: 240 }, reason })).rejects.toThrow('saved directly')
+  await expect(propose({ block: 'eval', value: { ...evaluation, mode }, reason: '   ' })).rejects.toThrow()
+  await expect(propose({ block: 'source', block_revision: 0 })).rejects.toThrow()
+  expect(executor.directory).toBe(h.runtime.store.settings().executor.directory)
+})
+
 it('previews a prompt configuration without saving it, and saves one only against the revision it edits', async () => {
   const save = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_prompts_save', args)
   const config = { ...h.runtime.prompts.current().config, scope: 'Finish what was asked.' }

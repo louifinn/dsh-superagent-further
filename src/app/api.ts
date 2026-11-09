@@ -2,6 +2,8 @@
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { PromptConfig, Prompts } from './prompts.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'
+import type { ProposalsView } from './settings.ts'
+import type { Proposal } from './store.ts'
 import type { HistoryView } from './settings-history.ts'
 import type { MemorySort } from '../memory.ts'
 import type { MemoriesView } from './views/memories.ts'
@@ -38,6 +40,12 @@ export interface Api {
   'POST tickets/:id/stop': { response: { stopped: true } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
+  /** Pending tier-B settings proposals, with the per-field diff the panel shows (docs/011 A5.2). */
+  'GET settings/proposals': { response: ProposalsView }
+  /** Approve a proposal through the ordinary panel save path, recording its actor and reason on the new revision. */
+  'POST settings/proposals/:id/apply': { response: { revision: number; restarting: boolean; proposal: Proposal } }
+  /** Reject a pending proposal without changing settings. */
+  'POST settings/proposals/:id/reject': { response: { proposal: Proposal } }
   'GET policy/history': { response: HistoryView }
   'POST policy-sync/:id': { response: { policy: unknown } }
   'POST setup/check': { response: { restarting: true } }

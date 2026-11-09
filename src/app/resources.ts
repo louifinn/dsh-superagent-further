@@ -42,6 +42,7 @@ export const RESOURCES: readonly { name: string; holds: string; executor?: true 
     executor: true },
   { name: 'settings', holds: 'settings by block, each with the revision a save names: the small blocks whole, the Policy and the Source '
     + 'instances summarized' },
+  { name: 'settings/proposals', holds: 'pending settings proposals with per-field diffs, newest first' },
   { name: 'settings/<block>', holds: 'one settings block whole, as orchestrator_settings_save takes it: policy, eval, executor, pause or '
     + 'source:<id>' },
   { name: 'prompts', holds: 'the prompt revision each Session reads, the skills, and the saved versions' },
@@ -71,7 +72,7 @@ export interface ResourceHost {
 }
 export interface MainResourceHost extends ResourceHost {
   readonly sessions: Pick<Sessions, 'status' | 'modelRetry'>
-  readonly settings: Pick<Settings, 'view' | 'block'>
+  readonly settings: Pick<Settings, 'view' | 'block' | 'proposals'>
 }
 interface Read {
   host: ResourceHost; resource: string; rest: string; offset: number; limit?: number
@@ -154,6 +155,7 @@ const ROUTES: readonly Route[] = [
     return decisionDetails(decision)
   }],
   ['settings', read => main(read).settings.view()],
+  ['settings/proposals', read => text(read, JSON.stringify(main(read).settings.proposals()))],
   ['settings/', read => text(read, JSON.stringify(main(read).settings.block(read.rest)))],
   ['prompts', read => {
     const host = main(read), current = host.prompts.current(), status = host.sessions.status()

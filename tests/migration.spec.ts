@@ -639,6 +639,24 @@ it('removes the repository setting with no project registered, so setup asks for
   expect(primaryRepository(store.settings())).toBe('')
   store.close()
 })
+it('opens a schema 17 database with the settings proposal table and records proposals in it', () => {
+  const path = join(directory, 'proposals.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value='17' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(18)
+  const proposal = { id: 'pr-00000001', block: 'eval' as const, base_revision: 0, value: { mode: 'observe' }, diff: [],
+    reason: 'The person asked for this', actor: 'master', status: 'pending' as const, created_at: '2026-01-01T00:00:00.000Z',
+    expires_at: '2026-01-08T00:00:00.000Z' }
+  store.proposals.save(proposal)
+  expect(store.proposals.get(proposal.id)).toMatchObject({ id: proposal.id, block: 'eval', status: 'pending', actor: 'master' })
+  expect(store.proposals.pending('eval').map(item => item.id)).toEqual([proposal.id])
+  expect(store.proposals.pending('executor')).toEqual([])
+  store.close()
+})
+
 it('ends the Request of a Ticket that had already ended before Requests existed', () => {
   const path = join(directory, 'request-ends.sqlite')
   new Store(path).close()

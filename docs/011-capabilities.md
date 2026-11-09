@@ -1,13 +1,17 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **proposal — Part A P1 implemented; decisions settled** (2026-11-09). The survey behind this
+Status: **proposal — Part A P1 and P2 implemented; decisions settled** (2026-11-09). The survey behind this
 document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
 implemented without a schema change: field tiers in `src/policy.ts`, tier refusals and the required
 tool reason in `src/app/settings.ts`, actor/reason audit fields in the settings history and panel, and
-tests in `tests/settings.spec.ts`, `tests/tools.spec.ts` and `tests/runtime.spec.ts`. The rest of
-Part A (proposal records, restore) and all of Part B remain proposals. Every claim below names the
+tests in `tests/settings.spec.ts`, `tests/tools.spec.ts` and `tests/runtime.spec.ts`. Part A P2
+(proposal records and the panel confirmation surface) is implemented in schema 18: the
+`settings_proposal` table and its accessors, `migrateTo18`, `orchestrator_settings_propose`, the
+`settings/proposals` read resource, Apply/Reject routes and panel section with per-field diffs, and
+reason/actor/proposal audit in the history. The rest of Part A (restore) and all of Part B remain
+proposals. Every claim below names the
 file and line it comes from. Repo evidence is the checkout at `b4f2dbe` (dsh-superagent 0.2.0; the
 plugin is now dsh-superagent-further 0.3.0). Host evidence is DeepSeek
 Harness **0.2.2-rc.1**, the version installed on this machine; its packages are read from the packed
@@ -20,8 +24,19 @@ settings path as A, B or C. `settings.save` refuses a `tool`-origin change to a 
 `UserError('approvalRequired')` and to a C path with the existing `panelOnly…` code; the tool
 `orchestrator_settings_save` now requires a `reason` (1–280 chars) and records it with the Session id
 as `actor`. The panel's `PUT settings/<block>` route keeps saving with origin `panel`, without a
-reason. This slice adds no SQLite migration: `SCHEMA_VERSION` stays 17, so every table described
-below as `settings_proposal` or `automation` would be created by a later schema 18.
+reason.
+
+**Part A P2 implemented in schema 18.** `SCHEMA_VERSION` is 18: the Store creates
+`settings_proposal`, `migrateTo18` keeps its place in the sequence, and `Proposals` reads and writes
+the rows. `Settings.propose` classifies the changed paths again: a C path keeps its existing
+`panelOnly…` code, a change with no B path is refused because its A fields save directly, an older
+pending proposal for the same block is superseded, and a pending proposal expires after seven days.
+`Settings.applyProposal` re-checks the block revision and calls `save(block, value, base_revision,
+'panel', { actor, reason, proposal })`, so every guard, model check, Policy effect, notification and
+restart decision still runs; a failed save leaves the proposal pending with its `error`.
+`orchestrator_settings_propose` and the `settings/proposals` read resource expose the list to the
+main Session, and only the panel can apply or reject it. The history row names the proposal, actor
+and reason. The `automation` table remains a proposal for Part B.
 
 ## Why
 
@@ -191,11 +206,12 @@ New SQLite table `settings_proposal` (schema 18, on top of the current schema 17
 id TEXT PRIMARY KEY,            -- pr-<8 hex>
 block TEXT NOT NULL,            -- SettingsBlock, never 'pause' or a C field
 value TEXT NOT NULL,            -- JSON of the proposed block value
-reason TEXT NOT NULL,           -- the Agent's quoted human request, ≤280 chars
+diff TEXT NOT NULL,             -- JSON [{path, from, to}], the panel's per-field diff
+reason TEXT NOT NULL,           -- the requester's words, ≤280 chars
 base_revision INTEGER NOT NULL, -- block revision at creation
-requested_by TEXT NOT NULL,     -- Session id (the Orchestrator's masterId)
-requested_at TEXT NOT NULL,
+actor TEXT NOT NULL,            -- Session id (the Orchestrator's masterId)
 status TEXT NOT NULL,           -- pending | applied | rejected | superseded | expired
+created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
 decided_at TEXT, decided_by TEXT, applied_revision INTEGER, error TEXT
 ```
 
@@ -205,6 +221,12 @@ revision and the field tiers, then calls the existing `settings.save(block, valu
 'panel')` path so every guard, model check, Policy effect, notification, and restart decision keeps
 working (`src/app/settings.ts:168-216`). A failed apply stores the error on the proposal and leaves
 the settings untouched.
+
+Implemented in `src/app/store.ts` (`settings_proposal`, `Proposals`), `src/app/migration.ts`
+(`migrateTo18`), `src/app/settings.ts` (`propose`, `proposals`, `proposal`, `applyProposal`,
+`rejectProposal`), `src/app/api.ts` and `src/app/http.ts`, with the panel in
+`src/client/settings-kit.tsx` and coverage in `tests/settings.spec.ts`, `tests/tools.spec.ts`,
+`tests/http.spec.ts`, `tests/migration.spec.ts` and `tests/panel-settings.spec.tsx`.
 
 #### A5.3 Audit
 
@@ -224,7 +246,10 @@ label (which already has a `tool` label at `src/client/locales.ts:67`).
 
 A **panel notice** is added for pending proposals (a small badge on Settings and a line in the
 history), so a B proposal cannot go unnoticed. Direct A saves do not page the operator; they appear in
-the history.
+the history. Implemented: the settings page renders the pending list with its count above the group
+content, each row carries the block, reason, requesting Session and expiry, and a history row shows
+the proposal id, actor and reason. A proposal that is superseded, rejected or applied stops appearing
+in the list.
 
 #### A5.4 Restore
 
@@ -261,7 +286,7 @@ field shows "Save" or "Propose".
 4. Tests: `tests/settings.spec.ts` (tool refusals per field, no partial save), `tests/tools.spec.ts`
    (schema/description), `tests/policy.spec.ts` (policy still changes only from panel).
 
-**P2 — proposals (schema 18).**
+**P2 — proposals (schema 18). Implemented 2026-11-09.**
 
 1. `settings_proposal` table, store accessors, `migrateTo18` (with `SCHEMA_VERSION` 18 in
    `src/app/migration.ts:23` and the chain at `src/app/store.ts:108`).
@@ -637,9 +662,9 @@ The operator approved every recommendation and the suggested order.
    scheduler.
 10. B-D5 — session turns only in the first release; no Feishu or panel notice per delivery.
 
-Implementation order: A-P2 (proposals and the confirmation surface) → B-P1 (installation-scope
-automation tasks) → A-P3 (per-block restore and notices) → B-P2 (project scope and the panel) →
-B-P3 (history and delivery notices).
+Implementation order: A-P2 (done, schema 18) → B-P1 (installation-scope automation tasks) → A-P3
+(per-block restore and notices) → B-P2 (project scope and the panel) → B-P3 (history and delivery
+notices).
 
 ## Non-goals
 

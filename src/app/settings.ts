@@ -1,5 +1,6 @@
-/** Block-scoped settings validation, optimistic concurrency saves, processing pause control, and source policy synchronization. */
+/** Block-scoped settings validation, optimistic concurrency saves, settings proposals, processing pause control, and source policy synchronization. */
 import type { Context } from '@deepseek-ai/cordis'
+import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import { UserError, type EngineForSettings } from '../core/index.ts'
 import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, fieldTier, policyEffects, policyVersion } from '../policy.ts'
@@ -12,6 +13,7 @@ import { changedPaths, settingsNotice } from './notices.ts'
 import type { Sessions } from './sessions.ts'
 import { setupChanged, type Setup } from './setup.ts'
 import type { Store } from './store.ts'
+import type { Proposal } from './store.ts'
 import { KV } from '../kv.ts'
 
 /**
@@ -20,7 +22,16 @@ import { KV } from '../kv.ts'
  */
 export class SettingsConflict extends Error {}
 /** Who requested a save and the operator's words that asked for it, recorded with the new revision (docs/011 A5.3). */
-export interface SettingsAudit { actor?: string; reason?: string }
+export interface SettingsAudit { actor?: string; reason?: string; proposal?: string }
+/** Seven days after it was requested, a pending settings proposal stops being actionable (docs/011 A5.2). */
+const PROPOSAL_TTL = 7 * 24 * 60 * 60 * 1000
+/** Pending settings proposals as the panel and `orchestrator_read settings/proposals` list them, newest first. */
+export type ProposalsView = { items: Proposal[] }
+/** Reads one dot-separated path from a settings value, for the per-field diff a proposal shows. */
+function readPath(value: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((current, key) => current !== null && typeof current === 'object'
+    ? (current as Record<string, unknown>)[key] : undefined, value)
+}
 const now = (): string => new Date().toISOString()
 /** Executor settings that control shell execution paths, prepare commands, command shims, and the registered projects. */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
@@ -71,22 +82,23 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 's
   },
 }
 
+/** Current settings with a Source's config re-validated against the current schema, so a retired key it drops is not a change. */
+function normalized(block: SettingsBlock, id: string, current: SettingsValue, sources: SourceRegistry): SettingsValue {
+  if (!block.startsWith('source:')) return current
+  return {
+    ...current,
+    sources: { ...current.sources,
+      [id]: sources.validate(id, { enabled: current.sources[id]?.enabled ?? true, config: current.sources[id]?.config ?? {} }) },
+  }
+}
+
 /**
  * Refuses a tool-origin save that touches any field outside tier A (docs/011 A5.5). Confirmation-tier fields name
  * themselves so the model can ask the operator to save them in the panel; panel-only fields keep their existing code.
  * A Source is compared after validation, so dropping a retired config key is not a change the tool has to ask for.
  */
 function refuseToolFields(block: SettingsBlock, id: string, current: SettingsValue, candidate: SettingsValue, sources: SourceRegistry): void {
-  const before = block.startsWith('source:')
-    ? {
-        ...current,
-        sources: {
-          ...current.sources,
-          [id]: sources.validate(id, { enabled: current.sources[id]?.enabled ?? true, config: current.sources[id]?.config ?? {} }),
-        },
-      }
-    : current
-  const changed = changedPaths(before, candidate)
+  const changed = changedPaths(normalized(block, id, current, sources), candidate)
   const confirmation = changed.filter(path => fieldTier(block, path) === 'B')
   if (confirmation.length) throw new UserError('approvalRequired', { block, fields: confirmation.join(', ') })
   if (changed.some(path => fieldTier(block, path) === 'C')) {
@@ -96,7 +108,7 @@ function refuseToolFields(block: SettingsBlock, id: string, current: SettingsVal
 
 /** Host dependencies used by `Settings`. */
 export interface SettingsHost {
-  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get'>
+  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get' | 'proposals'>
   readonly sources: SourceRegistry
   /** Notified when a settings save changes the policy version. */
   readonly engine: EngineForSettings
@@ -182,6 +194,114 @@ export class Settings {
     return { block, revision: store.blockRevision(block as SettingsSave), value }
   }
   /**
+   * Records a tier-B settings proposal for the operator's approval in the management panel (docs/011 A5.2). The value is
+   * validated against the block's current schema and diffed against current settings, so the proposal lists only fields it
+   * changes and the panel can show each old and new value. A tool may propose only while it changes at least one tier-B
+   * field; a tier-A-only change is refused because the tool may save it directly, and a panel-only field keeps its code.
+   * A new proposal supersedes every older pending proposal for the same block.
+   * @param reason - The operator's words that asked for the change, recorded with the proposal and on the revision that
+   * applying it saves.
+   * @param actor - The Session that requested the proposal.
+   */
+  propose(block: SettingsBlock, value: unknown, reason: string, actor: string): Proposal {
+    const { store, sources } = this.host
+    const text = reason.trim()
+    if (!text) throw new UserError('reasonRequired')
+    if (text.length > 280) throw new Error('A settings proposal reason may be at most 280 characters')
+    if ((block as string) === 'pause') throw new Error('Pause is a tier-A setting: save it directly with orchestrator_settings_save')
+    const id = block.startsWith('source:') ? block.slice(7) : block
+    const kind = block.startsWith('source:') ? 'source' : block
+    if (!(kind in BLOCKS)) throw new UserError('unknownBlock', { block })
+    if (kind === 'source' && !sources.kind(id)) throw new UserError('sourceNotInstalled', { source: id })
+    const rules = BLOCKS[kind as keyof typeof BLOCKS]
+    const parsed = rules.parse(value, sources, id)
+    const current = store.settings()
+    const candidate = rules.merge(current, parsed, id)
+    const changed = changedPaths(normalized(block, id, current, sources), candidate)
+    if (!changed.length) throw new Error('The proposed settings value changes nothing')
+    const tiers = changed.map(path => fieldTier(block, path))
+    if (tiers.includes('C')) throw new UserError(block.startsWith('source:') ? 'panelOnlyAccounts' : 'panelOnlyEnvironment')
+    if (!tiers.includes('B')) {
+      throw new Error(`These settings can be saved directly with orchestrator_settings_save: ${changed.join(', ')}`)
+    }
+    const at = now()
+    const created = Date.now()
+    const proposal: Proposal = { id: `pr-${randomBytes(4).toString('hex')}`, block, base_revision: store.blockRevision(block),
+      value: parsed, diff: changed.map(path => ({ path, from: readPath(current, path), to: readPath(candidate, path) })),
+      reason: text, actor, status: 'pending', created_at: new Date(created).toISOString(),
+      expires_at: new Date(created + PROPOSAL_TTL).toISOString() }
+    store.atomic(() => {
+      for (const older of store.proposals.pending(block)) store.proposals.save({ ...older, status: 'superseded', decided_at: at })
+      store.proposals.save(proposal)
+    })
+    return proposal
+  }
+  /**
+   * Pending settings proposals, newest first. A pending proposal older than seven days is recorded expired as it is read,
+   * so an ignored proposal stops being actionable without a background job.
+   */
+  proposals(): ProposalsView {
+    const items = this.host.store.proposals.pending().map(proposal => this.expire(proposal))
+    return { items: items.filter(proposal => proposal.status === 'pending') }
+  }
+  /** One settings proposal in any state, or undefined; a pending past-expiry proposal is recorded expired when read. */
+  proposal(id: string): Proposal | undefined {
+    const proposal = this.host.store.proposals.get(id)
+    return proposal === undefined ? undefined : this.expire(proposal)
+  }
+  private expire(proposal: Proposal): Proposal {
+    if (proposal.status !== 'pending' || Date.parse(proposal.expires_at) > Date.now()) return proposal
+    const expired: Proposal = { ...proposal, status: 'expired', decided_at: now() }
+    this.host.store.proposals.save(expired)
+    return expired
+  }
+  /**
+   * Applies a pending proposal through the ordinary panel save path, so validation guards, model checks, policy effects,
+   * notifications, and restarts behave exactly as if the operator had saved the block. The new revision records the
+   * proposal's actor and reason and the proposal id (docs/011 A5.3).
+   * @returns The saved revision and the applied proposal, or undefined when no proposal has that id.
+   * @throws SettingsConflict when the proposal is no longer pending or its base revision moved; a failed save is recorded
+   * on the proposal as `error` and leaves it pending for a retry.
+   */
+  async applyProposal(id: string): Promise<{ revision: number; restarting: boolean; proposal: Proposal } | undefined> {
+    const { store } = this.host
+    const pending = this.proposal(id)
+    if (pending === undefined) return undefined
+    if (pending.status !== 'pending') throw new SettingsConflict(`Settings proposal ${id} is ${pending.status}, not pending`)
+    const block = pending.block
+    if (block === 'pause') {
+      store.proposals.save({ ...pending, status: 'expired', decided_at: now() })
+      throw new SettingsConflict('Pause is a tier-A setting: save it directly with orchestrator_settings_save')
+    }
+    if (pending.base_revision !== store.blockRevision(block)) {
+      store.proposals.save({ ...pending, status: 'expired', decided_at: now() })
+      throw new SettingsConflict('Settings changed. Reload before saving.')
+    }
+    try {
+      const saved = await this.save(block, pending.value, pending.base_revision, 'panel',
+        { actor: pending.actor, reason: pending.reason, proposal: pending.id })
+      const proposal: Proposal = { ...pending, status: 'applied', decided_at: now(), decided_by: 'panel', applied_revision: saved.revision }
+      store.proposals.save(proposal)
+      return { revision: saved.revision, restarting: saved.restarting, proposal }
+    } catch (error) {
+      store.proposals.save({ ...pending, error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
+  /**
+   * Rejects a pending proposal without touching settings.
+   * @returns The rejected proposal, or undefined when no proposal has that id.
+   * @throws SettingsConflict when the proposal is no longer pending (already applied, rejected, superseded, or expired).
+   */
+  rejectProposal(id: string): Proposal | undefined {
+    const pending = this.proposal(id)
+    if (pending === undefined) return undefined
+    if (pending.status !== 'pending') throw new SettingsConflict(`Settings proposal ${id} is ${pending.status}, not pending`)
+    const proposal: Proposal = { ...pending, status: 'rejected', decided_at: now(), decided_by: 'panel' }
+    this.host.store.proposals.save(proposal)
+    return proposal
+  }
+  /**
    * Validates and saves one settings block against its `revision`; a no-op save records no new revision, a changed policy
    * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI) or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent-further` so setup runs again.
@@ -229,7 +349,8 @@ export class Settings {
     const notified = [...effects.keys()]
     store.atomic(() => {
       store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified,
-        ...(audit.actor === undefined ? {} : { actor: audit.actor }), ...(audit.reason === undefined ? {} : { reason: audit.reason }) })
+        ...(audit.actor === undefined ? {} : { actor: audit.actor }), ...(audit.reason === undefined ? {} : { reason: audit.reason }),
+        ...(audit.proposal === undefined ? {} : { proposal: audit.proposal }) })
       if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })

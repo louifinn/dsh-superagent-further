@@ -151,6 +151,7 @@ export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; v
             { version: item.policyVersion.slice(0, 8) })}</>}</div>
           {item.reason && <Hint>{t('historyReason', { reason: item.reason })}</Hint>}
           {item.actor && <Hint>{t('historyActor', { actor: item.actor })}</Hint>}
+          {item.proposal && <Hint>{t('historyProposal', { proposal: item.proposal })}</Hint>}
           {item.changes === null ? <Hint>{t('historyNoBaseline')}</Hint> : item.changes.length
             ? <ul className="dt-changes">{item.changes.map((change, index) => <li key={index}>{changeText(t, change, sources)}</li>)}</ul>
               : <Hint>{t('historyNoChanges')}</Hint>}
@@ -160,6 +161,54 @@ export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; v
       </>}
     </div>
   </DisclosureRow>
+}
+
+type Proposal = ApiResponse<'GET settings/proposals'>['items'][number]
+/**
+ * Pending tier-B settings proposals with the per-field diff of each, and the panel's Apply/Reject actions (docs/011
+ * A5.2); the management panel is the only approval surface, so a tool's proposal waits here until the operator decides.
+ * The section doubles as the Settings badge: its heading names how many proposals are waiting, and it renders nothing
+ * when none is.
+ */
+export function SettingsProposals() {
+  const { t, call, notify } = usePanel()
+  const { data, error, reload } = usePoll(() => call('GET settings/proposals'), [call])
+  const [failure, setFailure] = useState<string>()
+  const [busy, setBusy] = useState<string>()
+  const items = data?.items ?? []
+  if (!items.length) return error ? <p className="dt-error">{error.message}</p> : null
+  const shown = (item: unknown) => item === undefined ? t('unsetValue') : typeof item === 'string' ? item : JSON.stringify(item)
+  const decide = async (proposal: Proposal, action: 'apply' | 'reject') => {
+    setBusy(proposal.id); setFailure(undefined)
+    try {
+      if (action === 'apply') await call('POST settings/proposals/:id/apply', { id: proposal.id })
+      else await call('POST settings/proposals/:id/reject', { id: proposal.id })
+      notify(t(action === 'apply' ? 'proposalApplied' : 'proposalRejected'))
+      await reload()
+    } catch (error) { setFailure(errorText(error)) } finally { setBusy(undefined) }
+  }
+  return <section>
+    <h3 className="dt-settings-title">{t('proposalsTitle')} · {items.length}</h3>
+    <Hint>{t('proposalsIntro')}</Hint>
+    {failure && <p className="dt-error" role="alert">{failure}</p>}
+    <ul className="dt-timeline">{items.map(proposal => <li key={proposal.id} className="dt-event">
+      <div className="dt-row-title">{t('proposalBlock', { block: proposal.block })} · {t('proposalPending')}</div>
+      <Hint>{t('proposalReason', { reason: proposal.reason })}</Hint>
+      <Hint>{t('proposalRequestedBy', { actor: proposal.actor })} · {t('proposalExpires', { time: when(proposal.expires_at, t('lang')) })}</Hint>
+      {proposal.error && <p className="dt-error">{t('proposalError', { error: proposal.error })}</p>}
+      <table className="dt-table">
+        <thead><tr><th>{t('proposalField')}</th><th>{t('proposalFrom')}</th><th>{t('proposalTo')}</th></tr></thead>
+        <tbody>{proposal.diff.map(change => <tr key={change.path}><td className="dt-mono">{change.path}</td>
+          <td>{shown(change.from)}</td><td>{shown(change.to)}</td></tr>)}</tbody>
+      </table>
+      <div className="dt-row-actions">
+        <Button variant="outline" size="sm" disabled={busy === proposal.id} onClick={() => void decide(proposal, 'apply')}>
+          {t('proposalApply')}</Button>
+        <Button size="sm" disabled={busy === proposal.id} onClick={() => void decide(proposal, 'reject')}>
+          {t('proposalReject')}</Button>
+      </div>
+    </li>)}</ul>
+  </section>
 }
 
 type Row = Record<string, string>

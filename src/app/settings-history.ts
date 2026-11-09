@@ -104,6 +104,7 @@ export function policyHistory(store: Store, sources: SourceRegistry, policyVersi
       const previous = versions[index + 1]
       return { revision: version.revision, savedAt: version.savedAt, source: version.source, block: version.block,
         ...(version.actor === undefined ? {} : { actor: version.actor }), ...(version.reason === undefined ? {} : { reason: version.reason }),
+        ...(version.proposal === undefined ? {} : { proposal: version.proposal }),
         policyVersion: version.policyVersion, policyChanged: version.policyChanged, notified: version.notified.map(id => ({ id, title: store.tickets.get(id)?.title ?? id })),
         changes: previous && previous.revision === version.revision - 1 ? changesOf(previous.settings, version.settings, sources) : null }
     }) }
