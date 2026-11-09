@@ -168,7 +168,7 @@ Its interfaces are grouped by purpose:
 - **Domain repositories:** `atomic`, plus `triggers`, `threads`, `tickets` and `decisions`, each with `get`, `save` and list queries. Indexed working sets are `threads.active()`, `tickets.open()`, `tickets.active()` and `read.subscribedThreads`.
 - **Read queries:** `read` serves views, tools and Source polls through methods such as `threadTriggers`, `triggerStats`, `search` and `droppedReplies`. These methods never write.
 - **Source metadata:** `threads.describe` and `threads.patchMeta` update Source-owned Thread metadata.
-- **Settings:** `settings`, `saveSettings`, `blockRevision`, `settingsHistory` and `proposals`, which lists and stores the `settings_proposal` records the panel decides. Settings and prompts use numbered `Versions` (`src/app/versions.ts`).
+- **Settings:** `settings`, `saveSettings`, `blockRevision`, `settingsVersion`, `settingsHistory` and `proposals`, which lists and stores the `settings_proposal` records the panel decides. Settings and prompts use numbered `Versions` (`src/app/versions.ts`).
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
@@ -232,6 +232,8 @@ Its `context`, `read` and `decide` methods serve `orchestrator_eval`, `orchestra
 `Settings` (`src/app/settings.ts`) reads and writes revisioned settings blocks. `current` and `view` read them; `save(block, value, revision, origin, audit?)` validates a save; `pause(paused, origin, audit?)` changes the separate `paused` setting.
 
 `propose(block, value, reason, actor)` records a pending `settings_proposal` for a change that includes a tier-B path, superseding the block's older pending proposal; `proposals`, `proposal(id)`, `applyProposal(id)` and `rejectProposal(id)` serve the panel, the HTTP routes and the `settings/proposals` read resource. Applying re-checks the block revision and calls `save(..., 'panel', { actor, reason, proposal })`, recording the audit in the history and on the proposal; a failed save keeps the proposal pending with its error.
+
+`restore(block, revision, audit?)` reads that block's value from the saved settings snapshot at the global `revision` (`Store.settingsVersion`), then calls `save(block, value, blockRevision, 'panel', { ...audit, restore: { block, from: revision } })`. It therefore runs every guard, account check, Policy effect and restart decision of a manual panel save, and the new revision records `restoredFrom`. A revision, or that block's value in it, that is not retained throws `SettingsRevisionNotFound` (HTTP 404); a restore whose value already matches throws `SettingsConflict` (HTTP 409), so every successful restore writes a new revision. The settings history is the audit trail; a restore writes no separate audit record and sends no Feishu or other IM message.
 
 Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or fields listed in `SETUP_FIELDS` (`src/deployment.ts`).
 
@@ -354,8 +356,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/effects.ts` | Effects |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |
 | `src/app/cache.ts` | `TextCache`: texts kept in memory within a size, the least recently used dropped first |
-| `src/app/settings.ts` | Settings: revisioned saves by block, the guard of each block's environment and account fields, the tier-A-only rule and required reason for a tool-origin save, and the audit actor and reason recorded with it |
-| `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before, and the actor and reason a tool-origin save recorded |
+| `src/app/settings.ts` | Settings: revisioned saves by block, the guard of each block's environment and account fields, the tier-A-only rule and required reason for a tool-origin save, the audit actor and reason recorded with it, and the per-block restore from a saved revision |
+| `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before, the actor and reason a tool-origin save recorded, and the revision a restore came from |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
@@ -477,7 +479,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools, including the settings save's required reason and tier-A limit |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the status of each kind of failure, the body limit, path parameters and queries |
-| `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, the tier-A, tier-B and tier-C refusals of a tool-origin save with nothing written, the required reason and recorded audit, and the refusals of the pause, a sync and a block |
+| `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, the tier-A, tier-B and tier-C refusals of a tool-origin save with nothing written, the required reason and recorded audit, the refusals of the pause, a sync and a block, and a per-block restore with its `restoredFrom` history row, tier-C panel restore, setup-field restart and 404/409 outcomes |
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |
 | `tests/migration.spec.ts` | The schema migrations: every stored record in its current shape, each Ticket's project filled in, the localization of untouched built-in rules on read, and the refusal of older schemas |
@@ -492,7 +494,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/batch.spec.ts`, `tests/acl.spec.ts` | Batch-file CLIs through `cmd.exe` with an exact argument round trip, and owner-only state files as POSIX modes or Windows ACLs |
 | `tests/client.spec.tsx`, `tests/navigation.spec.ts`, `tests/controls.spec.tsx` | The client plugin's registration and polling, Session navigation and route memory, the local controls, and the panel's imports, which have no cycle |
 | `tests/panel-overview.spec.tsx`, `panel-source.spec.tsx`, `panel-trigger.spec.tsx`, `panel-eval.spec.tsx`, `panel-execution.spec.tsx` | Each page of the panel, against a fake management API answered by route |
-| `tests/panel-settings.spec.tsx`, `panel-prompts.spec.tsx`, `panel-deployment.spec.tsx`, `panel-panel.spec.tsx` | The settings groups, drafts and history, the prompts, the Deployment page, and the panel's search, glossary and route memory |
+| `tests/panel-settings.spec.tsx`, `panel-prompts.spec.tsx`, `panel-deployment.spec.tsx`, `panel-panel.spec.tsx` | The settings groups, drafts and history, a confirmed per-block restore and its restored-from row, the pending-proposal badge on every settings group, the prompts, the Deployment page, and the panel's search, glossary and route memory |
 | `tests/panel-setup-wizard.spec.tsx` | The setup wizard: opening by itself on a first run once per browser session, the header entry, a skip recorded on the server, registering the first project, moving back and skipping steps, the Feishu switch, and the default language save |
 | `tests/draft.spec.ts`, `tests/prompt-config.spec.ts`, `tests/markdown.spec.ts`, `tests/marks.spec.ts` | Draft states, merges and the save bar's line; the prompt configuration by section and the line diff; the Markdown subset and its links; the mark of every state the views classify |
 | `tests/locales.spec.ts`, `tests/styles.spec.ts` | The copy in both languages, the stylesheet |
@@ -526,7 +528,7 @@ A generated column is computed from its row's JSON and is empty outside its set,
 | Records | Keys or contents |
 | --- | --- |
 | Schema | Current schema version |
-| Settings versions | `settings-revision`, `settings-version:<n>`, `settings-block-revision:<block>`; snapshots include origin, Policy version and affected Tickets |
+| Settings versions | `settings-revision`, `settings-version:<n>`, `settings-block-revision:<block>`; snapshots include origin, Policy version and affected Tickets, and a restored block's `restoredFrom` |
 | Prompt versions | `prompt-revision`, `prompt-version:<n>` |
 | Main Session | `master-id` |
 | Session prompt history | `session-prompts:<session id>` |
@@ -537,7 +539,7 @@ Dismissal is stored on its Decision. Input text is rendered from the Ticket when
 
 Read caches use bounded in-memory `TextCache` instances and are lost on restart. A Session paging through an original Source record or prompt preview must reread offset 0 after a restart. Feishu links resolved after intake are cached the same way; link-based search finds them only after that link has been read during the current process lifetime.
 
-Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request. Settings proposals are not pruned either: an expired, rejected or superseded row stays as the record of what was asked.
+Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request. Every saved settings revision stays retained, so a restore can read any of them, while the panel lists only the newest 30. Settings proposals are not pruned either: an expired, rejected or superseded row stays as the record of what was asked.
 
 `SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates, then 18 to 19, which adds the `automation` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
 
@@ -559,7 +561,7 @@ The main Session has 15 application tools, plus four automation tools when the H
 
 `orchestrator_route` accepts 1–20 decisions in order. Each accept, attach, stop or ignore runs as a separate Engine command. It also permits ignoring an inferred candidate directly from its card. `orchestrator_ticket_note` sends a fact as context, not authority. `orchestrator_read tickets` lists every Ticket newest first, end included, so a request that refers to earlier work is judged against the stored record rather than the current conversation.
 
-Settings saves select `policy`, `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A tool save carries the person's `reason`; one that changes a tier-B path is refused with `approvalRequired` and has to go through `orchestrator_settings_propose`, which records a pending proposal instead of saving. A prompt save with `preview: true` composes text without saving.
+Settings saves select `policy`, `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A tool save carries the person's `reason`; one that changes a tier-B path is refused with `approvalRequired` and has to go through `orchestrator_settings_propose`, which records a pending proposal instead of saving. A prompt save with `preview: true` composes text without saving. Restoring a saved settings revision is panel-only, so no tool exposes it.
 
 The main Session also has DeepSeek Harness's `skill`, `bash`, `read`, `read_image`, `job_output`, `job_list` and `job_kill`. Avoiding code reads is a prompt rule, not a tool restriction.
 
@@ -652,7 +654,7 @@ Workers receive assignments and Inputs inline. The first message includes the ti
 
 ### Panel-only actions
 
-There is no tool for dismissing an unavailable Decision, rerunning setup, refreshing Source display names, applying or rejecting a pending settings proposal, or sending an Executor-owned human follow-up to Eval. The last action is deliberately refused by `orchestrator_trigger_requeue`. Other panel actions have equivalent tools.
+There is no tool for dismissing an unavailable Decision, rerunning setup, refreshing Source display names, applying or rejecting a pending settings proposal, restoring a saved settings revision, or sending an Executor-owned human follow-up to Eval. The last action is deliberately refused by `orchestrator_trigger_requeue`. Other panel actions have equivalent tools.
 
 Most built-in instructions live in `prompts/*.md`, with one sentence per line joined by `promptFile`. Source skills live in `skills/dsh-superagent-further-*/SKILL.md`. Tool descriptions and fixed notices such as restart recovery notes remain in code. Assessment instructions live only in `prompts/admission.md`.
 

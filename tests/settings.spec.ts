@@ -4,7 +4,7 @@ import { UserError } from '../src/core/index.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { Setup } from '../src/app/setup.ts'
 import { SetupError } from '../src/setup.ts'
-import { SettingsConflict } from '../src/app/settings.ts'
+import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
 import { policyVersion, type Settings, type SettingsBlock } from '../src/policy.ts'
 import { startRuntime, type Host } from './fixtures/host.ts'
@@ -137,6 +137,71 @@ it("refuses a tool-originated change of the registered projects, and accepts the
   const saved = await settings.save('executor', { ...executor, projects }, revision, 'panel')
   expect(saved.saved).toBe(true)
   expect(store.settings().executor.projects).toEqual(projects)
+})
+
+it('restores one block from a saved revision as a new revision and records restoredFrom in the history', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const evaluation = settings.block('eval')
+  const current = evaluation.value as Settings['eval']
+  const firstValue = current.timeoutSeconds + 30, secondValue = current.timeoutSeconds + 60
+  await settings.save('eval', { ...current, timeoutSeconds: firstValue }, evaluation.revision, 'panel')
+  // History rows name the global settings revision, not the block revision, so the restore takes that number.
+  const firstRevision = store.settingsHistory(1)[0]!.revision
+  await settings.save('eval', { ...current, timeoutSeconds: secondValue }, store.blockRevision('eval'), 'panel')
+  const restored = await settings.restore('eval', firstRevision)
+  expect(restored).toMatchObject({ saved: true, restoredFrom: firstRevision, restarting: false })
+  expect(store.settings().eval.timeoutSeconds).toBe(firstValue)
+  // The restore is a new revision; the target revision stays as it was.
+  expect(store.settingsHistory(1)[0]!.revision).toBeGreaterThan(firstRevision)
+  expect(store.settingsVersion(firstRevision)?.settings.eval.timeoutSeconds).toBe(firstValue)
+  const version = store.settingsHistory(1)[0]!
+  expect(version).toMatchObject({ source: 'panel', block: 'eval', restoredFrom: firstRevision })
+  const history = policyHistory(store, h.runtime.sources, policyVersion(store.settings()))
+  expect(history.items[0]).toMatchObject({ revision: version.revision, restoredFrom: firstRevision })
+  // Restoring the value the block already holds changes nothing, so it is a conflict rather than an empty revision;
+  // a revision that is not retained is a distinct not-found failure.
+  await expect(settings.restore('eval', firstRevision)).rejects.toBeInstanceOf(SettingsConflict)
+  await expect(settings.restore('eval', 999_999)).rejects.toBeInstanceOf(SettingsRevisionNotFound)
+  await expect(settings.restore('missing' as SettingsBlock, firstRevision)).rejects.toMatchObject({ code: 'unknownBlock' })
+})
+
+it('restores a panel-only (tier-C) executor field because the restore is a panel save', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const executor = settings.block('executor')
+  const current = executor.value as Settings['executor']
+  const workspace = process.platform === 'win32' ? 'C:/src/restored' : '/src/restored'
+  await settings.save('executor', { ...current, directory: workspace }, executor.revision, 'panel')
+  const firstRevision = store.settingsHistory(1)[0]!.revision
+  await settings.save('executor', { ...current, directory: `${workspace}-other` }, store.blockRevision('executor'), 'panel')
+  const restored = await settings.restore('executor', firstRevision)
+  expect(restored).toMatchObject({ saved: true, restoredFrom: firstRevision })
+  expect(store.settings().executor.directory).toBe(workspace)
+  // A tool-origin save of that same field would still be refused; the panel rules are not bypassed by restoring.
+  const revision = store.blockRevision('executor')
+  await expect(settings.save('executor', { ...store.settings().executor, directory: `${workspace}-tool` }, revision, 'tool',
+    { reason: 'The person asked for this directory' })).rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+})
+
+it('restores a setup field through the panel save path, checking accounts and restarting like a manual save', async () => {
+  h = await startRuntime()
+  const { settings } = h.runtime
+  const check = vi.spyOn(Setup.prototype, 'checkAccounts').mockResolvedValue(undefined)
+  const restart = vi.spyOn(Setup.prototype, 'restart').mockImplementation(() => {})
+  const github = settings.block('source:github')
+  const value = github.value as { enabled: boolean; config: Record<string, unknown> }
+  const first = await settings.save('source:github', { ...value, config: { ...value.config, cli: '/opt/bin/gh-restored' } },
+    github.revision, 'panel')
+  expect(first.restarting).toBe(true)
+  const firstRevision = h.runtime.store.settingsHistory(1)[0]!.revision
+  await settings.save('source:github', value, settings.block('source:github').revision, 'panel')
+  check.mockClear(); restart.mockClear()
+  const restored = await settings.restore('source:github', firstRevision)
+  expect(restored).toMatchObject({ saved: true, restarting: true, restoredFrom: firstRevision })
+  expect(check).toHaveBeenCalled()
+  expect(restart).toHaveBeenCalled()
+  expect(settings.block('source:github').value).toMatchObject({ config: { cli: '/opt/bin/gh-restored' } })
 })
 
 it('runs setup again when the first project changes the primary repository, and not for the other projects', async () => {

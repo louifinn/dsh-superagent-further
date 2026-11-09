@@ -9,7 +9,7 @@ import { useDraft } from './draft.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { settingsRoute } from './route.ts'
 import { errorText, localized, valueLabel, when, type T } from './text.ts'
-import { Hint, LoadState } from './widgets.tsx'
+import { ConfirmButton, Hint, LoadState } from './widgets.tsx'
 
 /** Parse a numeric input string, returning `null` when empty so the server rejects blank required numbers instead of coercing to 0. */
 export const numberOf = (text: string): number | null => text.trim() ? Number(text) : null
@@ -121,8 +121,8 @@ function changeText(t: T, change: HistoryChange, sources: SourceView[]): string 
  * Revisions saved before per-block tracking existed have no `block` and appear under `policy`.
  */
 export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; versions?: boolean; focus?: string }) {
-  const { t, call } = usePanel()
-  const { settings } = useSettings()
+  const { t, call, notify } = usePanel()
+  const { settings, reload } = useSettings()
   const { sources } = settings
   const [open, setOpen] = useState(!!focus)
   const [data, setData] = useState<HistoryView>()
@@ -132,6 +132,16 @@ export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; v
   const listed = (block: string | undefined) => block ? blocks.some(item => item === block || (item.endsWith(':')
     && block.startsWith(item))) : blocks.includes('policy')
   const items = data?.items.filter(item => (versions && item.policyChanged) || listed(item.block)) ?? []
+  // Restoring the current snapshot changes nothing and would be a conflict, so it is not offered; a block the page cannot
+  // save, or the separate pause setting, gets no Restore action either. Every other listed revision can be restored.
+  const restorable = (item: HistoryView['items'][number]) => item.block !== 'pause' && item.revision !== data?.current
+    && listed(item.block ?? 'policy')
+  const restore = async (block: string, revision: number) => {
+    await call('POST settings/:block/restore', { block, body: { revision } })
+    notify(t('restored'))
+    await reload()
+    setData(await call('GET policy/history'))
+  }
   // Match the oldest save that produced the focused Policy version (where that version originated).
   const target = focus ? items.filter(item => item.policyChanged && item.policyVersion.startsWith(focus)).at(-1) : undefined
   const scroll = (element: HTMLLIElement | null) => { if (element
@@ -152,11 +162,17 @@ export function ConfigHistory({ blocks, versions, focus }: { blocks: string[]; v
           {item.reason && <Hint>{t('historyReason', { reason: item.reason })}</Hint>}
           {item.actor && <Hint>{t('historyActor', { actor: item.actor })}</Hint>}
           {item.proposal && <Hint>{t('historyProposal', { proposal: item.proposal })}</Hint>}
+          {item.restoredFrom !== undefined && <Hint>{t('historyRestoredFrom', { revision: item.restoredFrom })}</Hint>}
           {item.changes === null ? <Hint>{t('historyNoBaseline')}</Hint> : item.changes.length
             ? <ul className="dt-changes">{item.changes.map((change, index) => <li key={index}>{changeText(t, change, sources)}</li>)}</ul>
               : <Hint>{t('historyNoChanges')}</Hint>}
           {item.notified.length > 0 && <Hint>{t('historyNotified', { count: item.notified.length,
             titles: item.notified.map(ticket => ticket.title).join(t('listSeparator')) })}</Hint>}
+          {restorable(item) && <div className="dt-row-actions">
+            <ConfirmButton label={t('restore')} title={t('restoreTitle')} variant="outline" icon="history"
+              message={t('restoreConfirm', { block: item.block ?? 'policy', revision: item.revision })}
+              onConfirm={() => restore(item.block ?? 'policy', item.revision)} />
+          </div>}
         </li>)}</ul> : <Hint>{t('historyEmpty')}</Hint>}
       </>}
     </div>

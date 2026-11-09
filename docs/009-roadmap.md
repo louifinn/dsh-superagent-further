@@ -266,3 +266,14 @@ The approved capability proposal's Part B P1 lands installation-scope automation
 - [x] Tests and docs: `tests/automations.spec.ts`, plus the runtime-context, tool-absence and schema-19 migration cases; [006 Deployment](006-deployment.md), [007 Architecture](007-architecture.md) and `docs/011-capabilities.md` describe the operator flow, the modules and the remaining P2/P3 work. Covered by `tests/docs.spec.ts`.
 - [x] `pnpm check` green, including the new automation tests.
 
+## Sprint 16 checklist
+
+The approved capability proposal's Part A P3 lands per-block restore from a saved settings revision and the pending-proposal reminder, with no schema change. A restore goes through the panel save path and records the revision it read in the same settings history that serves as the audit; the panel is the only restore and approval surface, and no Feishu or other IM notification is sent. It ends with `pnpm check` green.
+
+- [x] Restore service: `Settings.restore(block, revision, audit?)` reads the block's value from `Store.settingsVersion(revision)` and calls the ordinary `save(..., 'panel', { ...audit, restore: { block, from: revision } })`; the new revision and its `policyHistory` row record `restoredFrom`. A revision or block value that is not retained throws `SettingsRevisionNotFound` (404), and a restore whose value already matches throws `SettingsConflict` (409), so a successful restore always writes a new revision. Covered by `tests/settings.spec.ts`.
+- [x] Guards: a restored setup field checks accounts and restarts exactly as a manual panel save; tier-C fields are allowed because the origin is panel; the tool origin cannot restore and the history is the only audit record. Covered by `tests/settings.spec.ts`.
+- [x] HTTP: `POST settings/<block>/restore` with `{revision, reason?}` sits behind the same-origin check and returns the new block revision, `restarting` and `restoredFrom`; an invalid block or revision answers 400, an unknown source 404, an unretained revision 404 and a no-op 409. `src/app/api.ts` types the route. Covered by `tests/http.spec.ts`.
+- [x] Panel: each history row for a listed block offers Restore after a confirmation naming the block and revision; after it the panel reloads settings and history, shows the restored-from revision, and hides Restore for the current row and for blocks it cannot save. The pending-proposal count is shown on every settings group, with no other reminder channel. Covered by `tests/panel-settings.spec.tsx`.
+- [x] Tests and docs: restore round-trip, tier-C panel restore, setup-field restart, 404/409, the HTTP route, the panel confirmation and badge; [006 Deployment](006-deployment.md), [007 Architecture](007-architecture.md) and `docs/011-capabilities.md` describe the operator flow, the modules and the remaining Part B P2/P3 work. Covered by `tests/docs.spec.ts`.
+- [x] `pnpm check` green, including the new restore and badge tests.
+

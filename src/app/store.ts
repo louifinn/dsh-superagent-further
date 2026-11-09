@@ -32,6 +32,8 @@ export interface SettingsVersion {
   reason?: string
   /** The approved settings proposal this save applied, when the operator approved one (docs/011 A5.3). */
   proposal?: string
+  /** The earlier revision this save restored a block from, when the operator restored one (docs/011 A5.3). */
+  restoredFrom?: number
 }
 /** Lifecycle state of a settings proposal; only `pending` proposals can be approved or rejected. */
 export type ProposalStatus = 'pending' | 'applied' | 'rejected' | 'superseded' | 'expired'
@@ -254,6 +256,8 @@ export class Store implements Repositories {
   }
   /** Saved settings revisions, newest first; revisions predating settings history are absent. */
   settingsHistory(limit = 20): SettingsVersion[] { return this.settingsVersions.list(limit) }
+  /** One saved settings revision, or undefined when no retained revision has that number (docs/011 A5.3). */
+  settingsVersion(revision: number): SettingsVersion | undefined { return this.settingsVersions.get(revision) }
 
   readonly triggers = {
     get: (id: string): Trigger | undefined => { const row = this.db.prepare('SELECT value FROM trigger WHERE id=?').get(id); return row ? JSON.parse(String(row.value)) as Trigger : undefined },

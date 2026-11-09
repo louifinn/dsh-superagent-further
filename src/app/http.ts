@@ -11,7 +11,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInParts, defaultPrompts, savePrompts, type Prompts }
   from './prompts.ts'
 import { policyVersion } from '../policy.ts'
-import { SettingsConflict, type Settings } from './settings.ts'
+import { SettingsConflict, SettingsRevisionNotFound, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
 import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
@@ -39,7 +39,7 @@ export interface HttpHost {
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
-  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels' | 'proposals' | 'proposal' | 'applyProposal' | 'rejectProposal'>
+  readonly settings: Pick<Settings, 'view' | 'save' | 'restore' | 'pause' | 'sync' | 'refreshLabels' | 'proposals' | 'proposal' | 'applyProposal' | 'rejectProposal'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
   /** One row per registered project: its Lead Session, and the executors and messages it holds. */
@@ -94,6 +94,7 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
+  if (error instanceof SettingsRevisionNotFound) return [404, { error: error.message }]
   if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
   return [500, { error: error instanceof Error ? error.message : String(error) }]
 }
@@ -125,6 +126,8 @@ export function stateView(runtime: HttpHost) {
   return { setup: setupView(runtime), load: { ...executorLoad(runtime.store, runtime.executor.activeCount()),
     maxWorkers: settings.executor.maxWorkers },
     wizard: wizardView(runtime),
+    // The pending-proposal count is the Settings badge on the groups without a settings body; those with one show the list's own heading.
+    proposals: runtime.store.proposals?.pending().length ?? 0,
     masterId: runtime.masterId, paused: settings.paused, health: runtime.health }
 }
 const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources: runtime.sources, links: runtime.links() })
@@ -168,6 +171,7 @@ const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
+const RestoreRequest = z.object({ revision: z.number().int().nonnegative(), reason: z.string().trim().max(280).optional() })
 
 function routes(runtime: HttpHost): Routes {
   const { store } = runtime
@@ -231,6 +235,15 @@ function routes(runtime: HttpHost): Routes {
       if (!known) throw new RouteError(404, 'Source not found')
       const request = SaveRequest.parse(await body())
       return runtime.settings.save(block, request.value, request.revision, 'panel')
+    },
+    // Restore one block from a saved revision through the ordinary panel save path (docs/011 A5.3); the history is the audit.
+    'POST settings/:block/restore': async ({ params, body }) => {
+      const block = SettingsBlockSchema.parse(params.block)
+      const known = !block.startsWith('source:') || runtime.sources.instances().some(instance => `source:${instance.id}` === block)
+      if (!known) throw new RouteError(404, 'Source not found')
+      const request = RestoreRequest.parse(await body())
+      const saved = await runtime.settings.restore(block, request.revision, request.reason ? { reason: request.reason } : {})
+      return { revision: saved.revision, restarting: saved.restarting, restoredFrom: saved.restoredFrom }
     },
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
     'POST policy-sync/:id': async ({ params }) => ({ policy: await runtime.settings.sync(params.id) }),

@@ -21,8 +21,17 @@ import { KV } from '../kv.ts'
  * Thrown by `Settings.save` and `Settings.sync` and translated into an HTTP 409 response by the management routes.
  */
 export class SettingsConflict extends Error {}
+/**
+ * Indicates that a requested settings revision, or a block within it, is not retained, so it cannot be restored.
+ * Thrown by `Settings.restore` and translated into an HTTP 404 response by the management routes.
+ */
+export class SettingsRevisionNotFound extends Error {}
 /** Who requested a save and the operator's words that asked for it, recorded with the new revision (docs/011 A5.3). */
-export interface SettingsAudit { actor?: string; reason?: string; proposal?: string }
+export interface SettingsAudit {
+  actor?: string; reason?: string; proposal?: string
+  /** The earlier revision a restore took this block from; recorded on the new revision and its history row (docs/011 A5.3). */
+  restore?: { block: SettingsBlock; from: number }
+}
 /** Seven days after it was requested, a pending settings proposal stops being actionable (docs/011 A5.2). */
 const PROPOSAL_TTL = 7 * 24 * 60 * 60 * 1000
 /** Pending settings proposals as the panel and `orchestrator_read settings/proposals` list them, newest first. */
@@ -108,7 +117,7 @@ function refuseToolFields(block: SettingsBlock, id: string, current: SettingsVal
 
 /** Host dependencies used by `Settings`. */
 export interface SettingsHost {
-  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get' | 'proposals'>
+  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'settingsVersion' | 'atomic' | 'tickets' | 'get' | 'proposals'>
   readonly sources: SourceRegistry
   /** Notified when a settings save changes the policy version. */
   readonly engine: EngineForSettings
@@ -192,6 +201,35 @@ export class Settings {
       : instance ? { enabled: instance.enabled, config: instance.config } : undefined
     if (value === undefined) throw new UserError('unknownBlock', { block })
     return { block, revision: store.blockRevision(block as SettingsSave), value }
+  }
+  /**
+   * Restores one settings block to the value it held in a saved revision, as a new revision through the ordinary panel save
+   * path (docs/011 A5.3). Every guard still runs: a setup field is checked and restarts the application, Policy effects are
+   * applied, and tier-C fields are accepted only because this is a panel-origin save. The new revision records
+   * `restoredFrom`, and the settings history is the audit trail; there is no separate audit table.
+   * @param revision - A retained settings revision, as `GET policy/history` lists the newest 30; the API accepts any retained one.
+   * @param audit - The Session that asked for the restore and the operator's words that asked for it, when any.
+   * @returns The ordinary save outcome plus `restoredFrom`.
+   * @throws SettingsRevisionNotFound when the revision, or that block's value in it, is not retained.
+   * @throws SettingsConflict when the block already has that value (a restore always saves a new revision) or changed meanwhile.
+   * @throws UserError when the block is unknown, the Source is not installed, or a save guard refuses the value.
+   */
+  async restore(block: SettingsBlock, revision: number, audit: Pick<SettingsAudit, 'actor' | 'reason'> = {}) {
+    const { store, sources } = this.host
+    const id = block.startsWith('source:') ? block.slice('source:'.length) : block
+    const kind = block.startsWith('source:') ? 'source' : block
+    if (!(kind in BLOCKS)) throw new UserError('unknownBlock', { block })
+    if (kind === 'source' && !sources.kind(id)) throw new UserError('sourceNotInstalled', { source: id })
+    const snapshot = store.settingsVersion(revision)
+    if (snapshot === undefined) throw new SettingsRevisionNotFound(`No settings revision ${revision} is retained`)
+    const stored = kind === 'source' ? snapshot.settings.sources[id] : undefined
+    const value = kind === 'source'
+      ? stored === undefined ? undefined : { enabled: stored.enabled, config: stored.config }
+      : snapshot.settings[block as 'policy' | 'eval' | 'executor' | 'memory' | 'language']
+    if (value === undefined) throw new SettingsRevisionNotFound(`Settings revision ${revision} does not contain ${block}`)
+    const saved = await this.save(block, value, store.blockRevision(block), 'panel',
+      { ...audit, restore: { block, from: revision } })
+    return { ...saved, restoredFrom: revision }
   }
   /**
    * Records a tier-B settings proposal for the operator's approval in the management panel (docs/011 A5.2). The value is
@@ -319,6 +357,7 @@ export class Settings {
     const id = block.startsWith('source:') ? block.slice(7) : block
     const kind = block.startsWith('source:') ? 'source' : block
     if (!(kind in BLOCKS)) throw new UserError('unknownBlock', { block })
+    if (audit.restore && audit.restore.block !== block) throw new Error('A restore audit must name the block being saved')
     const rules = BLOCKS[kind as keyof typeof BLOCKS]
     if (kind === 'source' && !sources.kind(id)) throw new UserError('sourceNotInstalled', { source: id })
     const parsed = rules.parse(value, sources, id)
@@ -338,6 +377,8 @@ export class Settings {
     const old = store.settings()
     const settings = rules.merge(old, parsed, id)
     if (JSON.stringify(SettingsSchema.parse(settings)) === JSON.stringify(old)) {
+      // A restore always creates a revision so the history records where it came from; restoring the current value is a conflict.
+      if (audit.restore) throw new SettingsConflict(`Settings already match revision ${audit.restore.from}; nothing to restore`)
       const delivery = await sessions.delivery(`settings:${block}`)
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
@@ -350,7 +391,8 @@ export class Settings {
     store.atomic(() => {
       store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified,
         ...(audit.actor === undefined ? {} : { actor: audit.actor }), ...(audit.reason === undefined ? {} : { reason: audit.reason }),
-        ...(audit.proposal === undefined ? {} : { proposal: audit.proposal }) })
+        ...(audit.proposal === undefined ? {} : { proposal: audit.proposal }),
+        ...(audit.restore === undefined ? {} : { restoredFrom: audit.restore.from }) })
       if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })
