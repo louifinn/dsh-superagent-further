@@ -785,7 +785,7 @@ surface; it does not upload arbitrary files from the host.
 - **Limits:** only an existing regular file inside a registered project's workspace; the bot must
   already be in the target chat; no file creation, deletion or upload from elsewhere on the host.
 
-## Part E — Project-level Requests and lead-dispatched work (approved 2026-11-10, Sprint 22, in progress)
+## Part E — Project-level Requests and lead-dispatched work (approved 2026-11-10, Sprint 22, implemented)
 
 The operator approved a program that lets a worker raise a project-level Request that its project Lead
 disposes, makes a Lead reply mandatory, carries architecture work through a human approval gate, opens
@@ -806,10 +806,12 @@ whitelisted mention or direct message. The design spec (decisions D1–D10 and t
   ignore, unavailable and stop decisions also send exactly one short notice on that channel.
 - **Architecture gate:** an architecture request first produces a design Ticket; the proposal goes to
   the root channel and the implementation Request is created only after a recorded human approval.
-- **External Session bridge:** a `session` Source kind and a submission tool let an independent DSH
-  Session ask the Orchestrator for work; the existing admission rules apply, every outcome is answered,
-  and a completed Request reports back to that Session. Feasibility is gated on the installed DSH Host
-  API; if it exposes no usable global-tool or cross-Session message surface, the blocker is documented.
+- **External Session bridge:** the `session` Source kind and the global `superagent_submit` tool let an
+  independent DSH Session ask the Orchestrator for work under the existing admission rules; the tool
+  refuses managed Sessions, subagents and a mismatched `session_id`, every decision outcome is answered
+  on that Session, and a completed Request reports back to it.
+
+Schema 21 and the engine commands, the worker and Lead tools with their prompts, the aggregate report and explicit always-reply, the architecture approval round trip and the session bridge are implemented and merged (missions M13–M17). `tests/project-requests.spec.ts`, `tests/lead.spec.ts`, `tests/request-notices.spec.ts` and `tests/sources/session.spec.ts` cover them; `pnpm check` is green and the README records the suite totals.
 
 ## Decisions requested
 

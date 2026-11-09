@@ -33,10 +33,11 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 | --- | --- |
 | Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 79 spec files, **1437 passed / 5 skipped (1442)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
+| Checks | `pnpm check`: 84 spec files, **1475 passed / 5 skipped (1480)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
 | Release | `0.3.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.3.0.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
-| State schema | 20 (`10 → 11 → … → 19 → 20` migrate in place; `scripts/verify-install` reports the schema read-only) |
+| Project requests | a worker raises a durable `project_request` when its Ticket needs a decision, a new deliverable or another project's work; its project Lead must reply and disposes it, an accepted work request creates a Request and staged Tickets confined to the project, an architecture request waits for a person's recorded approval, and an independent DSH Session can submit work and always receives an answer |
+| State schema | 21 (`10 → 11 → … → 20 → 21` migrate in place; `scripts/verify-install` reports the schema read-only) |
 
 ## What it does
 
@@ -93,12 +94,15 @@ Orchestrator (main Session, `orchestrator-<hash>`)
     └── executors as hidden subagents (durable DSH Sessions, `worker-<ticketId>`)
 ```
 
-- The **Orchestrator** keeps Sources, Eval, admission, Policy and cross-project priority. It creates Requests and
-  Tickets and dispatches Tickets to Leads; it does not do project-level execution.
+- The **Orchestrator** keeps Sources, Eval, admission, Policy and cross-project priority. It creates cross-project
+  Requests and Tickets and dispatches Tickets to Leads; a project's Lead disposes its own project requests and never
+  takes cross-project work.
 - A **Lead** owns one project: its context, its Session and the executors that run as its children. It carries the
-  project's clone, repository and base branch in its prompt, receives each dispatched Ticket, and exposes the
-  read-only `lead_status` tool. It never changes Policy or settings. A person can open it from the panel and write
-  to it directly; that is the project's highest-priority human input.
+  project's clone, repository and base branch in its prompt, receives each dispatched Ticket, and exposes
+  `lead_status` plus the project-request tools. It answers the requests its workers raise with mandatory replies,
+  creates the project's Tickets only by accepting those requests, carries architecture work through a person's
+  approval, and never changes Policy or settings. A person can open it from the panel and write to it directly;
+  that is the project's highest-priority human input.
 - Executors are subagents of their Lead. They keep their own Session, checkout and worker preset, but they do not
   appear in the ordinary session list; the Lead is their parent, reports settle through it, and input reaches them
   through it instead of prompting a Session the Lead owns. Sessions are recovered after a restart and children are
@@ -141,7 +145,7 @@ the local history started from a byte-identical import, so every change below wa
 | Scale | One repository, one host, one state dir | Many projects polled by one Source, per-project checkouts and Leads, per-project concurrency; one host at a time enforced | Teams work in several repositories; a second profile or a second agent would be more concepts and more noise |
 | Execution | Root worker Session per Ticket | Orchestrator → persistent Lead per project → hidden executor subagents, adoption after restart | Cleaner Session list, project context that persists, and a total Orchestrator free of project labour |
 | Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
-| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 20`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
+| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 21`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
 | Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs | Unattended use needs visible, scriptable operations on every platform |
 | Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest | "Every failure visible" means an operator can see the trend, not only the state |
 | Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
@@ -191,28 +195,42 @@ The Lead is the fork's main architectural addition, and it is deliberately a **l
 domain still has Sources, Threads, Triggers, Tickets, Assignments, Reports and Attentions. A Lead is a durable Session
 bound to one project, with (1) its own prompt section carrying the project's clone, repository and base branch,
 (2) the preset tools it uses to reach and message its child executors — an executor's input is delivered
-through it, not by prompting a Session it owns — (3) the read-only `lead_status` tool,
-(4) dispatch records in `lead_message`, schema 13, and (5) no way to change Policy or settings.
-Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. The panel shows one row per project
-(Lead Session, running executors, waiting messages) and opens the Lead when a person clicks it. Lead-hosted input and
-report routing were the P3 work; removing the root worker path was P4, finished on 2026-11-08, so onboarding now
-requires a project and there is one execution path.
+through it, not by prompting a Session it owns — (3) `lead_status` and the project-request tools
+(`lead_requests`, `lead_request_decide`, `lead_request_reply`, `lead_request_complete`,
+`lead_request_approval`, `lead_request_approve`), (4) dispatch records in `lead_message`, schema 13, and
+(5) no way to change Policy or settings.
+Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. A worker raises a project request
+when its Ticket needs a decision, a new deliverable or another project's work, and the Lead must answer it. The panel
+shows one row per project (Lead Session, running executors, waiting messages) and opens the Lead when a person clicks
+it. Lead-hosted input and report routing were the P3 work; removing the root worker path was P4, finished on
+2026-11-08, so onboarding now requires a project and there is one execution path. Project requests and their
+approval flow are Part E of [011](docs/011-capabilities.md), specified in [012](docs/012-project-requests.md).
 
 ### Requests above Tickets
 
 The prototype's Ticket is the unit of authorized work and one delivery. It stays that way. A Request is the accepted
 human ask that may need several deliveries: it holds the Ticket ids, the single acknowledgement and the single final
-result. Only the Orchestrator creates Tickets; a Lead never adds one, it asks or hands back. Dependencies are simple
+result. The Orchestrator creates cross-project Tickets; a Lead creates a project's Tickets only by accepting one of
+its workers' project requests, and every such Ticket is confined to that project. Dependencies are simple
 `after` edges, not a workflow engine, because the philosophy does not add a concept for a business need that an
 attribute plus a prompt can express. The live proof: one GitHub request created Request `90df28d6…` with two Tickets
 in `louifinn/project-check` and `louifinn/Napkid-Derivate`; PR #18 and PR #12 merged at `00:09Z`, and the Request
 ended `done` at `00:10:25Z`, reporting both pull requests once.
 
+A project request is the upward path for a worker. It is a durable record, not a Ticket or a Trigger, so it bypasses
+the admission gate and the Policy; accepting it creates an ordinary Request and its staged Tickets under a Mandate
+whose basis is `lead`, with explicit strength and the project as its boundary. Rejecting or asking for more
+information records the reply and changes nothing else. An unanswered request is reminded twice and then recorded as
+needing attention, and the Lead closes a root request with one aggregate report on the channel the chain started
+from. Architecture requests take one extra step: a design Ticket produces a proposal, a person approves it on the
+root Thread, and only then does the implementation Request exist. An independent DSH Session can also submit work
+through the `session` Source and always receives an answer.
+
 ### Operations, state and recovery
 
-- **Migrations** — schemas 11–20 reshape records, fill Ticket projects, add Lead messages, add Requests, end
+- **Migrations** — schemas 11–21 reshape records, fill Ticket projects, add Lead messages, add Requests, end
   Requests of already-ended Tickets, add the cross-Session memory table, remove the retired GitHub `repository`
-  setting, and add the settings-proposal, automation and automation-delivery tables. Each step runs in the opening
+  setting, and add the settings-proposal, automation, automation-delivery and project-request tables. Each step runs in the opening
   transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
   too-new database visible instead of mysterious.
 - **One host** — the state lock message names the other host, its state directory and the switch command; an
@@ -241,9 +259,9 @@ allow list and a test repository, as the responsibility section of the philosoph
 
 ### Engineering and distribution
 
-`pnpm check` is the single check: typecheck, 79 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
+`pnpm check` is the single check: typecheck, 84 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1442 tests; it drives real timers and SQLite, so timeouts are
+bundle and attaches it to a GitHub release. The suite is 1480 tests; it drives real timers and SQLite, so timeouts are
 30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
 fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
 lists every source file and spec. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package
@@ -289,9 +307,9 @@ healthy state takes no space).
 
 ```text
 src/
-  sources/          GitHub and Feishu adapters: poll, intake, threads, triggers, channels, digest
+  sources/          GitHub, Feishu and session adapters: poll, intake, threads, triggers, channels, digest
   app/              runtime, management API, panel views, settings, setup, store, migrations, Lead records,
-                    Request notices, worktree reclaim
+                    project requests, Request notices, worktree reclaim
   core/             domain model and Engine: admission, tickets, assignments, reports, decisions, effects
   executor/         DshExecutor: launches, deliveries, slots, Lead dispatch, work/dispatch preparation
   infra/            worker environment, shims, command execution, paths, ACLs, batch-file CLIs

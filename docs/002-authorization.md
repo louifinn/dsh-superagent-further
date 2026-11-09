@@ -15,6 +15,8 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 - Other human messages use the admission table for their receiving scope.
 - A bot on the Source's bot list can produce an inferred candidate, never an explicit request. Other bots are not admitted.
 
+A whitelisted person who addresses the agent explicitly always learns the outcome. An ignore, unavailable or stop Decision on such an @ mention or direct message sends one notice to that Trigger's Channel, naming the outcome and the recorded reason or next step; accepted requests already promise the acknowledgement and result. The notice is queued once per Decision and Trigger. None is sent when the sender is not whitelisted or the message was not addressed.
+
 ### Subscriptions: continuing existing work
 
 Every message on a subscribed Thread reaches its subscribed Tickets as context, including messages from bots and CI. This delivery bypasses the gate and grants no new authority. Each Ticket remains limited by its Mandate.
@@ -43,11 +45,19 @@ An Executor can follow a related Thread, such as another Issue or pull request, 
 
 Human messages that reach no Ticket, including Threads whose Tickets were stopped by a person, take the Eval path. Bot messages take that path independently of their delivery to subscribed Tickets.
 
+## Project requests
+
+A project's Lead Session can dispose of work that the admission gate does not carry. A worker raises a project request when its Ticket needs a decision, a new deliverable or another project's work. A project request is a durable record, not a Trigger or a Request, so it takes no Eval and no admission cell. Its project's Lead answers it: every disposition carries a non-empty reply, and a request left unanswered when the Lead stops is reminded at most twice before the host records it as needing attention.
+
+Accepting a work request creates an ordinary domain Request and its staged Tickets under a Mandate whose basis is `{ via: 'lead', project, project_request_id }` with explicit strength. Every Ticket stays confined to that project and its Threads. Accepting an architecture request creates only a standalone design Ticket; the implementation Request and its Tickets exist only after a person approves the proposal on the root Thread (003 Execution describes the round trip). Work that belongs to another project, or that only the Orchestrator may authorize, stays an Orchestrator Request: the Lead escalates instead of widening its own request.
+
+The raising Session receives the Lead's reply, and the worker names the requests it leaves open in its completion report. When the root request and its derived work have ended, the Lead closes it with one aggregate report to the Channels the chain started from.
+
 ## Strength
 
 | Strength | Cases |
 | --- | --- |
-| explicit | A person on the list addresses the agent, or follows up on a Thread that already has a Ticket; a cell of the admission table set to explicit request |
+| explicit | A person on the list addresses the agent, or follows up on a Thread that already has a Ticket; a cell of the admission table set to explicit request; a project request accepted by its project's Lead |
 | inferred | A person not on the list follows up on a Thread with a Ticket, unless their cell of the admission table is explicit; a cell of the admission table set to inferred candidate; a message of a bot on the Source's bot list that addresses the agent or arrives where the Source receives every message |
 | not admitted | Any other bot's message, everything the admission table ignores, and every inferred case while the accept mode is `off` |
 
@@ -59,6 +69,7 @@ Each Source's Policy has an admission table. Its rows are receiving scopes:
 
 - **Feishu:** each configured chat, other chats the bot receives mentions from, and direct messages. Other chats are received only when **其他群** is set to **仅 @** on the Feishu card.
 - **GitHub:** new Issues, new pull requests, comments and the default branch's CI.
+- **DSH Sessions:** one `workspace` row. A submission from an independent Session has no sender, so it is never explicit; the row's unlisted, unaddressed cell decides whether it becomes an inferred candidate, defaults to ignore, and can be set to inferred. Every decision outcome is reported back to the Session.
 
 A row has up to three cells. Each cell decides whether a message becomes an explicit request, an inferred candidate or nothing:
 
@@ -166,6 +177,7 @@ Only three operations change a Mandate: accept creates it, a person's stop withd
 The Source must still listen to the original Thread. The remaining checks depend on the Mandate's basis:
 
 - An explicit follow-up Mandate passes.
+- A `lead` Mandate passes while its project request is still accepted; every Ticket stays confined to that project.
 - An inferred Mandate needs `auto` mode and its matched rules still enabled.
 - A Mandate admitted by a table cell must still receive at least its original strength under today's table and sender membership. Removing a sender from the list can therefore revoke a Mandate accepted through the listed-sender cell.
 - A bot's Mandate requires that bot to remain on the Source's bot list. Inferred table and bot Mandates also need `auto` mode and enabled matched rules.

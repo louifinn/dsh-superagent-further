@@ -103,9 +103,21 @@ The Ticket is done when none of the pull requests it opened remain open. If it o
 
 A close does not end the Ticket while resumed, retried or recovered work is unfinished. It also waits if the Executor acknowledged or answered a follow-up it owns but has not since made a non-progress Report or ended a turn after reading that message. A later `ready` Report ends the Ticket once the same pull-request completion rule is satisfied.
 
-Chat Channels receive one final notice about the pull-request outcome. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
+Chat Channels receive one final notice about the pull-request outcome, and a root project Request adds one aggregate report across its Tickets and derived requests when its Lead completes it. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
 
 "Awaiting review" therefore means a `ready` Report with a pull request.
+
+### Project requests
+
+A worker that finds a missing decision, a new deliverable or work for another project raises one durable project request with `request_create({ title, instruction, kind?, parent?, evidence? })` instead of guessing or widening its Ticket. The request names its project and its raising Ticket or Session. A repeated title on the same Ticket returns the existing open request, and optional evidence is kept with the instruction. The worker's completion report lists the requests it leaves open in `requests`; a non-progress report that omits an open unanswered request is refused with "Name the unanswered project requests this report leaves behind in requests: <ids>".
+
+The project Lead answers through its project-request tools. Every disposition carries a non-empty reply, which is delivered to the raising Session; the runtime re-prompts a Lead whose turn ends with an unanswered request, at most twice, and then records the request as needing attention without closing it. Accepting a work request creates the domain Request and its staged Tickets under a Lead Mandate confined to that project. Up to eight `deliverables` become Tickets in that project, keeping their `after` edges; the statement sets the work's scope. Rejecting or asking `needs-info` records the decision and the reply and changes nothing else. A derived request raised by a worker of that Request's Tickets keeps the root pointer, and its own Tickets count toward the root's report.
+
+When the root request and all derived work have ended, the Lead completes it with one summary; the host sends one aggregate message per Channel of the root request and its originating Trigger, listing every Ticket with its pull-request outcome when it has one, every derived request and the summary. The ordinary `request.ended` notices still describe each Request on its own.
+
+An architecture request follows the same raise and accept path, but its accept creates one standalone design Ticket instead of a Request. When the design ends, the Lead sends the proposal to the root Thread and marks the request `awaiting-approval`; a person's reply on that Thread is routed to the Lead, and `lead_request_approve` records the approval only from a human Trigger written after the proposal. Approval creates the implementation Request and its staged Tickets; rejection records the answer and ends the request.
+
+A request the Lead leaves unanswered after two reminders stays open in the store and is marked as needing attention for the Orchestrator and the panel; a later answer follows the ordinary path.
 
 ### Follow-ups and context Threads
 

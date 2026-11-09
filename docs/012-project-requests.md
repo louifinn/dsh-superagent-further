@@ -1,7 +1,8 @@
 # 012 — Project-level Requests and lead-dispatched work (Sprint 22)
 
-Status: approved by the operator on 2026-11-10 (Tower mode, mission chain M13–M18). This document is the spec the
-missions implement; `docs/011-capabilities.md` Part E records the decision summary.
+Status: approved by the operator on 2026-11-10 (Tower mode, mission chain M13–M18) and implemented. Missions M13–M17
+are merged; M18 updates the documentation and README counts and runs the full check. `docs/011-capabilities.md` Part E
+records the decision summary.
 
 ## Why
 
@@ -188,14 +189,15 @@ only in a conversation.
 
 ## Phases / missions
 
-- M13 (P1) — schema 21 `project_request` store, engine APIs (`raise`, `decide` on a request, `complete`), migration,
-  unit tests. No tools.
-- M14 (P2) — worker `request_create` + report `requests`; Lead tools (D5); mandatory-reply enforcement at the Lead
-  activation boundary; prompts; tests.
-- M15 (P3) — aggregate origin-channel report (D6) + R4 explicit-always-reply (D8) + tests.
-- M16 (P4) — architecture approval flow (D7) + tests.
-- M17 (P5) — external DSH Session bridge survey + implementation (D9); may be split into survey + build.
-- M18 (P6) — docs (002/004/007/009/011), CHANGELOG, README counts, full `pnpm check`, six-combination CI, live smoke.
+- M13 (P1) — **done**: schema 21 `project_request` store, engine APIs (`raise`, `decide` on a request, `complete`),
+  migration, unit tests. No tools.
+- M14 (P2) — **done**: worker `request_create` + report `requests`; Lead tools (D5); mandatory-reply enforcement at the
+  Lead activation boundary; prompts; tests.
+- M15 (P3) — **done**: aggregate origin-channel report (D6) + R4 explicit-always-reply (D8) + tests.
+- M16 (P4) — **done**: architecture approval flow (D7) + tests.
+- M17 (P5) — **done**: external DSH Session bridge (D9) through the `session` Source kind and `superagent_submit`.
+- M18 (P6) — **done**: docs (002/003/004/007/009/011), CHANGELOG, README counts, full `pnpm check`; the six-combination
+  CI and live smoke run under the tower after the chain merges.
 
-Phases merge in order (M13 → M14 → M15 → M16 → M17 → M18); scopes overlap in `src/core`, `src/app`, `tests` and
-`docs`, so Tower serializes them.
+Phases merged in order (M13 → M14 → M15 → M16 → M17 → M18); scopes overlapped in `src/core`, `src/app`, `tests` and
+`docs`, so Tower serialized them.

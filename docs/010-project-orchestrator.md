@@ -6,6 +6,13 @@ Sessions in the session list; and the panel's GitHub Source card showed one watc
 though the Source polls every registered project. The card is fixed (`2b36d37`). This document plans
 the first change; the decisions below were made by the operator in two interview rounds.
 
+Update (2026-11-10, Sprint 22): the project-request program (`docs/012-project-requests.md`, and Part E
+of `docs/011-capabilities.md`) extends this design's Lead authority. A worker can raise a durable
+project request, and a Lead that accepts one creates that project's Request and Tickets under a Lead
+Mandate; "only the Orchestrator creates Tickets" below therefore means cross-project Tickets. The Lead
+also carries architecture work through a person's recorded approval, and a root request closes with one
+aggregate report. The rest of this document is unchanged.
+
 ## Why
 
 Today one main Session routes every project, and every Ticket gets its own root DSH Session

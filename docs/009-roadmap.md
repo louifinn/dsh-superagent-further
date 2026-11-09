@@ -6,10 +6,11 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent-further.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1437 passed and 5 skipped (1442) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), and the bounded delivery history with panel-only notices (schema 20); Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1475 passed and 5 skipped (1480) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), and the bounded delivery history with panel-only notices (schema 20); Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
+- Project-level work is live (schema 21): a worker raises a durable `project_request` when a decision, a new deliverable or another project's work blocks its Ticket, and its project Lead must answer with a non-empty reply before the request can be disposed. An accepted work request creates the ordinary Request and its staged Tickets under a Lead Mandate confined to that project; an architecture request produces a design Ticket and needs a person's recorded approval on the root Thread before the implementation Request exists; an unanswered request is reminded twice, then marked as needing attention. A root request is closed with one aggregate report on the channel the chain started from, and an independent DSH Session can submit work through the `session` Source and always receives an answer (`docs/012-project-requests.md`).
 - The deployment has one primary repository, derived from the first registered project rather than configured on the GitHub Source: schema 17 removes the Source's own `repository` setting from the stored settings and every saved revision, setup verifies push access to the first project's repository, and unqualified `github:<n>` Thread ids belong to it while every other project's ids are qualified `owner/name#<ref>`.
 - A memory layer outlives Sessions: the main Session and each project Lead can write, search and forget memories (`memory_write`, `memory_search`, `memory_forget`), a runtime-context snapshot carries pinned and recent memories (appended after the cached history, so a write does not rewrite the system prompt), ended Tickets and Requests are remembered deterministically, and the panel's **Memory** page switches injection and automatic writing on or off, edits the limits live, and lists the stored memories as searchable, orderable cards that expand to every stored field and can be pinned or forgotten (schema 16).
 - The operator's default language is a language settings block (Settings → Language): free text, panel-only, revisioned with the other blocks, and carried to every decorated Session in the runtime-context snapshot, so a save applies to the next model request without a restart; the prompts say a Feishu or GitHub reply follows the message it answers and repository artifacts keep the repository's language.
@@ -333,23 +334,24 @@ The operator asked on 2026-11-09 for a triage rule and for design decision docum
 - [x] Docs: [002 Authorization](002-authorization.md) lists all sixteen categories, the triage boundary and the design rule's Feishu path; [005 Panel](005-panel.md) and [007 Architecture](007-architecture.md) describe the enabled set, the `sendFile` contract and its runtime/tool path; `docs/011-capabilities.md` records Part D with its limits. Covered by `tests/docs.spec.ts`.
 - [x] `pnpm check` green, including the new file, Feishu delivery and triage tests.
 
-## Sprint 22 checklist (in progress)
+## Sprint 22 checklist
 
 The operator asked on 2026-11-10 for project-level Requests raised by workers and disposed by a project Lead, for a
 mandatory Lead reply that is never ignored, for architecture work to run through a human approval gate, for a DSH
 Session outside the SuperAgent setup to submit a Request and always receive a reply, and for an explicit whitelisted
 mention or direct message to always be answered. The design spec is `docs/012-project-requests.md` (D1–D10); the Tower
-mission chain M13–M18 implements it in order, each mission merging only after its tests and `pnpm check` pass.
+mission chain M13–M18 implemented it in order, each mission merging only after its tests and `pnpm check` passed, and the
+tower runs the six-combination CI and the live smoke after the chain.
 
-- [ ] Schema 21: the `project_request` record, its store repository, migration and unit tests; no tools yet.
-- [ ] Worker and Lead tools: `request_create` and report `requests`, the Lead disposition and reply tools, and the
+- [x] Schema 21: the `project_request` record, its store repository, migration and unit tests; no tools yet.
+- [x] Worker and Lead tools: `request_create` and report `requests`, the Lead disposition and reply tools, and the
   mandatory-reply enforcement at the Lead activation boundary, with prompts and tests.
-- [ ] Aggregate origin-channel report when a root project Request and all its derived work end; explicit (whitelisted
+- [x] Aggregate origin-channel report when a root project Request and all its derived work end; explicit (whitelisted
   mention or direct message) Triggers always receive a reply, whatever the decision.
-- [ ] Architecture flow: design Ticket, human approval gate on the root channel, approval record and the
+- [x] Architecture flow: design Ticket, human approval gate on the root channel, approval record and the
   implementation Request only after approval.
-- [ ] External DSH Session bridge through a `session` Source kind and a submission tool, with the always-reply and
-  completion-report contract; if the DSH Host exposes no usable API the survey records the exact blocker.
-- [ ] Docs, CHANGELOG and README counts updated; `pnpm check` green; six-combination CI green; live smoke of the
-  project Request and approval round trip.
+- [x] External DSH Session bridge through a `session` Source kind and a submission tool, with the always-reply and
+  completion-report contract.
+- [x] Docs, CHANGELOG and README counts updated and `pnpm check` green; the six-combination CI and live smoke remain the
+  tower's post-merge gate.
 
