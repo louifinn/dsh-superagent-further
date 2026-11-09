@@ -149,23 +149,35 @@ sent when the sender is not whitelisted or the message is not addressed.
 
 ### D9. External DSH Session bridge (R3)
 
-Pending the survey (mission M17): the bridge is a `session` Source kind whose Triggers come from a tool exposed to
-independent DSH Sessions. The tool name, registration scope and reply transport depend on the DSH Host's plugin API
-(research in M17). The contract it must satisfy: `submit({ title, instruction, project?, session_id })` creates a
-Trigger received through the ordinary intake (existing admission rules apply); the Channel is the Session itself; every
-Decision outcome queues a reply to that Session (R4 semantics); a completed Request reports back to it. If DSH does
-not expose a usable global-tool or cross-Session message API, the mission reports the blocker and the feature stays
-documented as unsupported with the exact missing capability.
+Implemented in M17 as the `session` Source kind (`src/sources/session.ts`) and the global `superagent_submit` tool.
+An independent DSH Session calls it with `{ title, instruction, project?, session_id? }`; the tool builds one Trigger
+per call (`human:false`, actor id empty, the Session's ID as the Channel address, and a Thread of its own because the
+call id keeps independent submissions out of one evaluation batch) and receives it through the ordinary intake, so
+the existing Policy's admission rules apply. The `workspace` admission row reports the candidate; its
+`unlistedUnaddressed` cell decides admission and defaults to `ignore`, so an operator opts in by setting it to
+`inferred`.
 
-Feasibility pointers from the 2026-11-10 survey (0.2.2-era extract; re-verify against the installed app.asar before
-coding): Cordis plugins register model-visible tools with `ctx.tools.register(defineTool(...))` (global registration
-shows in every Session, agent-scoped registration shadows it); a tool call carries `exec.agent` and `exec.callId`;
-`ctx.sessionController.resolveAgent(sessionId)` returns a live agent or resumes a cold Session and refuses
-subagent-owned Sessions (`session/agent-busy`); queued next-turn delivery uses `AgentHandle.followup()` through
-`AgentDelivery`/`Sessions.prompt`; a Session's identity and workspace come from `exec.agent.session.header`; the reply
-target must be a root Session (an unmanaged Session is one). The `session` Source kind should mark the Channel as the
-Session itself, register a workspace admission row, and use `human:false` provenance so the submission stays a
-candidate under the existing Policy.
+Cordis plugins register model-visible tools with `ctx.tools.register(defineTool(...))`; the Runtime registers this one
+on the plugin's root context, so every unmanaged root Session sees it, while the main Session's and worker's
+`ctx.tools.restrict` allow lists hide it. The project Lead sees it but has no root identity, and the tool refuses the
+master, `lead-*` and `worker-*` Session ids, subagent Sessions (`session.header.parentSession`), and a `session_id`
+that does not name the caller. The tool is registered only when the Host exposes the root `tools` service; the Source
+kind is always registered and can be turned off like any other Source.
+
+A call carries `exec.agent` (the Session's identity and root check) and `exec.callId` (the idempotent Trigger id). Every
+Decision outcome queues an Outbox notice back to the Session: on `decision.recorded`, the Runtime finds the Decision's
+Session Triggers and sends `sessionDecisionText` (accept names the Ticket and promises the result; ignore, unavailable
+and stop explain why). The transport is `Sessions.prompt`/`AgentDelivery`, which delivers a queued message idempotently
+by message id and resumes a cold Session through `ctx.sessionController.resolveAgent`; a `session/not-found` target
+settles as gone. Completion needs no extra path: the accepted Trigger's Channel flows into the Request and the existing
+`request.ended`/`project-result` notices report the result back to the same Session. Filtered Triggers never reach a
+Decision and get no reply.
+
+Feasibility pointers from the 2026-11-10 survey that remain useful: `ctx.tools.register(defineTool(...))` global versus
+agent-scoped registration; `exec.agent` and `exec.callId`; `ctx.sessionController.resolveAgent(sessionId)` for a live or
+resumed Session, refusing subagent-owned Sessions (`session/agent-busy`); `AgentHandle.followup()` through
+`AgentDelivery`/`Sessions.prompt`; Session identity and workspace from `exec.agent.session.header`; a reply target must
+be a root Session.
 
 ### D10. Matt Pocock-style flow mapping
 

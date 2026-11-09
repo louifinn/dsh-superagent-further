@@ -216,6 +216,8 @@ Registry configuration methods include `kind`, `instances`, `instance`, `validat
 
 Generic code accesses Source behavior through the registry. `send(message, commands)` calls the kind's Channel and returns `sent`, `gone` or `waiting` if the kind is not installed. `link` resolves its Channel link. `threadContext` pairs a kind's reader with its configuration, or returns nothing when the kind has no reader. `labels` applies existing labels to the work a Trigger names: the GitHub adapter (`src/sources/github-labels.ts`) checks that every added label exists in the repository, batches additions and removes each named label through the GitHub API; the main Session calls it through `Runtime.label(triggerId, change)` and the `orchestrator_label` tool. Invalid stored configuration disables the instance. `sendFile` delivers an existing file inside a project's workspace to a Feishu chat: `src/sources/feishu-file.ts` runs the CLI with the file's directory as its working directory, and the main Session calls it through `Runtime.sendFile(...)` and the `orchestrator_send_file` tool.
 
+The `session` kind (`src/sources/session.ts`) is registered by the Runtime rather than a bundle entry, because its Channel needs the live `Sessions` delivery path. An independent root DSH Session calls the global `superagent_submit` tool with `{title, instruction, project?, session_id?}`. Each call becomes one Trigger with `human: false`, an empty actor id (a non-empty one would be read as an unlisted bot), the call's own Thread (so independent submissions are not batched into one Eval), and the Session's ID as the Channel address. Its `scope` reports the `workspace` admission row, whose `unlistedUnaddressed` cell (default `ignore`) decides whether a submission becomes a candidate. A Channel `send` calls `Sessions.prompt` with the message ID, so `AgentDelivery` delivers idempotently and resumes a cold Session through `sessionController.resolveAgent`; `session/not-found` settles as gone. On `decision.recorded` the Runtime queues one notice per Session Trigger with `sessionDecisionText`, and acceptance/completion use the ordinary Request result notices. The Runtime registers the tool on the plugin context only when the Host exposes the root `tools` service; the kind itself is always registered and can be disabled like any other Source. The main Session's and worker's tool restrictions hide it there, and the tool refuses the master, `lead-*` and `worker-*` IDs, subagents and a mismatched `session_id`.
+
 Plugins receive `SourceHost`: the registry and `context(kind)`. The kind itself uses a narrower `SourceContext`, built by `sourceContextOf` in `src/app/source-context.ts`.
 
 That context supplies deployment and commands, setup readiness (`ready`, `configured`, `problem`), configuration, `receive`, `atomic`, and typed `state`. It also exposes Thread reads and metadata writes, Ticket reads and binding/closure commands, Trigger reads, `notify` through Outbox, and `report` for declared health entries.
@@ -284,7 +286,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
-| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, and messages into CLI calls |
+| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/session.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, messages into CLI calls, and an independent DSH Session's `superagent_submit` call into one Trigger |
 | `src/app/files.ts`, `src/sources/feishu-file.ts` | A workspace-relative path into a validated local file, and that file into a Feishu chat through the CLI |
 | `src/deployment.ts`, `src/setup.ts`, `src/infra/` | Setup probes and problems, CLI transport, the agent's process environment |
 
@@ -415,6 +417,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/infra/health.ts` | The `HealthBoard`, every part's health entry, each claimed by its one writer |
 | `src/sources/kind.ts` | The `SourceKind` protocol |
 | `src/sources/registry.ts` | `SourceRegistry` |
+| `src/sources/session.ts` | The `session` kind and the global `superagent_submit` tool: one call is one Trigger whose Channel is the Session; `sessionDecisionText` writes the always-reply notice; the tool refuses subagents, managed Sessions, unknown projects and a disabled Source |
 | `src/sources/host.ts` | `SourceHost`, `SourceContext`, `Health`, `health` and the fixed health texts |
 | `src/sources/poll.ts` | What GitHub and Feishu polling share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `lagged` (a read position stays `READ_LAG_MS` behind the newest item read, so an item GitHub indexes late is listed again and its deterministic Trigger id drops the duplicate), and `pollThreads`, which keeps a failure on its Thread as `pollError` |
 | `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications and of the primary repository's and every registered project repository's streams, the pull requests of open Tickets with their CI, and subscribed Threads; other projects' Thread ids carry `owner/name#<ref>` |
@@ -460,7 +463,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/locales.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
 | `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
 
-`src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled.
+`src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled. The `session` kind has no bundle entry: the main plugin's Runtime registers it, because its Channel calls `Sessions.prompt` and its tool needs the Host's root `tools` service.
 
 ## Tests
 
@@ -486,6 +489,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations, the localized default rules and their upgrade, and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
 | `tests/sources.spec.ts` | The Feishu and GitHub Sources on a `SourceContext`: translation, polls and read positions, the pull request rules, health |
+| `tests/sources/session.spec.ts` | The `session` Source and `superagent_submit`: Trigger shape and per-call Thread, scope/channel/policy row, always-reply text, tool guards, and an end-to-end submission whose decision and completed Request are delivered back into the calling Session |
 | `tests/commands.spec.ts` | CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls |
 | `tests/feishu-digest.spec.ts` | The Feishu daily digest's text and its once-a-day send, through a fake Source context |
 | `tests/trust.spec.ts` | The trust boundary: a message body changes no gate decision, and the prompts keep saying bodies are data |
@@ -623,6 +627,12 @@ Each Executor has seven application tools:
 A hand-back returns `queued: false` if another Ticket still owns the message, or this Ticket never owned it. For example, a bot message went to Eval independently. A report that ends the Ticket may not leave an open request of that Ticket unanswered: it names each one in `requests`, and the Lead gets a report message for each request so its reply and the report stay together.
 
 The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
+
+### Global Session tool
+
+One site-wide tool, `superagent_submit`, lets an independent root DSH Session ask dsh-superagent-further for work. It takes `title`, `instruction`, an optional registered `project` and an optional `session_id` that must name the caller. It returns `{trigger_id, state, title}`, where `state` is the ordinary intake result (`stored`, `duplicate` or `filtered`), so a retried call with the same call id does not create a second Trigger. The tool refuses a call without `exec.agent`, a subagent (`agent.session.header.parentSession`), the master, `lead-*` or `worker-*` Sessions, an unknown project, a Session Source that is off, and a runtime that is waiting for setup or paused.
+
+Registration is global on the plugin context, so an unmanaged root Session sees it; the main Session's and worker's allow lists hide it, and the project Lead sees but cannot pass the managed-id check. Every Decision outcome is delivered back into the calling Session as an Outbox notice; an accepted request reports its final result through the same ordinary Request notice path. The `session` Source appears in Sources settings and Policy like the other kinds; its `workspace` admission row controls whether submissions are ignored, inferred or explicit candidates.
 
 ### Result shapes and assessment context
 

@@ -47,6 +47,7 @@ import { Setup } from './setup.ts'
 import { feishuSettings } from '../sources/feishu.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
+import { SOURCE as SESSION_SOURCE, sessionDecisionText, sessionKind, sessionSubmitTool } from '../sources/session.ts'
 import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
@@ -190,6 +191,18 @@ export class Runtime extends Service implements SourceHost {
             const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
             if (request) for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
           }
+          // Always answer a Session submission: an independent DSH Session sees every outcome, including the ones that
+          // start no work, and an accept promises the final result in the same Session (docs/012 D9). Filtered triggers
+          // never reach a Decision, so nothing is queued for them.
+          if (event.type === 'decision.recorded') {
+            const decision = store.decisions.get(event.data.decisionId)
+            if (decision) for (const triggerId of new Set(decision.triggerIds)) {
+              const trigger = store.triggers.get(triggerId)
+              if (trigger?.source !== SESSION_SOURCE || !trigger.channel) continue
+              outbox.send({ id: key('session-reply', decision.id, trigger.id), channel: trigger.channel, kind: 'notice',
+                text: sessionDecisionText(decision, trigger) })
+            }
+          }
           // Report a completed project request's whole derived chain once, through the Channels it started in (docs/012 D6).
           if (event.type === 'project-request.completed') {
             const root = store.projectRequests.get(event.data.projectRequestId)
@@ -279,6 +292,28 @@ export class Runtime extends Service implements SourceHost {
         sendFile: request => this.sendFile(request),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
+      // The `session` Source and its global tool: an independent DSH Session submits through the ordinary intake, and
+      // every Decision plus the final Request report is delivered back into that Session. The kind is registered
+      // unconditionally so intake, replies and completion work even when the Host exposes no root tools service.
+      const sessionHost = {
+        receive: (trigger: Trigger): ReceiveResult | Promise<ReceiveResult> => this.receive(trigger),
+        accepting: (): { ok: true } | { ok: false; reason: string } => runtime.closing()
+          ? { ok: false, reason: 'dsh-superagent-further is stopping.' }
+          : !setup.configured() ? { ok: false, reason: 'dsh-superagent-further is waiting for setup to finish.' }
+            : store.settings().paused ? { ok: false, reason: 'dsh-superagent-further is paused.' }
+              : runtime.sources.instance(SESSION_SOURCE)?.enabled === false
+                ? { ok: false, reason: 'The DSH Session Source is off; enable it in dsh-superagent-further\'s Sources settings.' }
+                : { ok: true },
+        projects: () => store.settings().executor.projects,
+        // Master, project Lead and ticket worker Sessions are managed by this plugin; their models call its tools.
+        managed: (sessionId: string) => sessionId === masterId || sessionId.startsWith('lead-') || sessionId.startsWith('worker-'),
+      }
+      this.disposers.push(this.sources.register(sessionKind((sessionId, requestId, text) =>
+        this.sessions.prompt(sessionId, requestId, text, 'queue'))))
+      // A Session's model only sees a global tool; agent-scoped registrations exist only in managed Sessions.
+      const sessionTool = ctx.inject(['tools'], child =>
+        child.effect(() => child.tools.register(sessionSubmitTool(sessionHost)), 'session: submission tool'))
+      this.disposers.push(() => { void sessionTool.dispose().catch(() => {}) })
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
