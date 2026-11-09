@@ -157,6 +157,16 @@ Decision outcome queues a reply to that Session (R4 semantics); a completed Requ
 not expose a usable global-tool or cross-Session message API, the mission reports the blocker and the feature stays
 documented as unsupported with the exact missing capability.
 
+Feasibility pointers from the 2026-11-10 survey (0.2.2-era extract; re-verify against the installed app.asar before
+coding): Cordis plugins register model-visible tools with `ctx.tools.register(defineTool(...))` (global registration
+shows in every Session, agent-scoped registration shadows it); a tool call carries `exec.agent` and `exec.callId`;
+`ctx.sessionController.resolveAgent(sessionId)` returns a live agent or resumes a cold Session and refuses
+subagent-owned Sessions (`session/agent-busy`); queued next-turn delivery uses `AgentHandle.followup()` through
+`AgentDelivery`/`Sessions.prompt`; a Session's identity and workspace come from `exec.agent.session.header`; the reply
+target must be a root Session (an unmanaged Session is one). The `session` Source kind should mark the Channel as the
+Session itself, register a workspace admission row, and use `human:false` provenance so the submission stays a
+candidate under the existing Policy.
+
 ### D10. Matt Pocock-style flow mapping
 
 Our mapping from the referenced skills workflow: spec/decision document (this file, `design` rule) → tickets
