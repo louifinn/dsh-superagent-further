@@ -727,6 +727,35 @@ work still flows through Sources and admission.
 5. **B-D5 Delivery surface:** session turns only in the first release, or also a Feishu/panel notice
    per delivery? The former is cheaper and keeps the panel as the source of truth.
 
+## Part C — GitHub Issue and pull request labels (approved 2026-11-09, Sprint 20)
+
+Research found one missing surface before a triage rule can work: the agent can comment on and read
+GitHub Issues and pull requests, and the workers can run `gh` themselves, but the main Session had no
+deliberate, bounded way to apply a label. Operators asked for labels as part of triage, so this Part
+adds one narrow capability rather than shell access.
+
+- **Contract:** `SourceKind.labels?(host, trigger, change, signal?)` applies a
+  `SourceLabelChange { add?, remove? }` to the work a Trigger names and returns
+  `SourceLabelResult { added, removed, labels }`. A kind without `labels` cannot triage.
+- **GitHub implementation:** `src/sources/github-labels.ts` reads the Trigger's Issue or pull request
+  (owner/name repository from `meta.repository`, falling back to the primary repository), requires
+  every added label to already exist in that repository (the repository spelling wins), requires every
+  removed label to be on the target, refuses a name in both directions, and applies at most ten names
+  each way. It writes through `Commands.apiWrite` (POST/DELETE on that repository), never creates a
+  label, and returns the target's labels after the change. CI Triggers and non-GitHub Triggers are
+  refused.
+- **Application surface:** `Runtime.label(triggerId, change)` resolves the Trigger and the installed
+  kind, then calls its adapter. The main Session's `orchestrator_label` tool
+  (`orchestrator_label { trigger_id, add?, remove? }`) is the only tool-side entry; it is for an
+  explicit human request to label or triage and changes nothing else about the work.
+- **Tests:** `tests/github-labels.spec.ts` covers repository spelling, no-op additions, case-insensitive
+  removals, project-repository targets, refused unknown labels, refused absent removals, empty and
+  contradictory changes, and non-labelable triggers; `tests/tools.spec.ts` and
+  `tests/model-surface.spec.ts` cover the Runtime path and the tool's registration.
+- **Limits:** labels are not created, deleted or renamed; the tool cannot close, merge or comment; and
+  it does not decide a candidate. A repository with more than one page of labels is still checked
+  against the first hundred, so an add beyond that page is refused rather than guessed.
+
 ## Decisions requested
 
 The operator's answers decide how much of Parts A and B lands in Sprint 9 and in what order. The

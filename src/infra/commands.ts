@@ -164,6 +164,17 @@ export class Commands {
   async apiInput(path: string, body: unknown): Promise<void> {
     await this.run(this.deployment.github.cli, ['api', this.path(path), '--method', 'POST', '--input', '-'], undefined, JSON.stringify(body))
   }
+  /**
+   * Sends one GitHub API write (POST or DELETE) against `repository` (owner/name), a repository the caller names.
+   * Sources use it for label changes on a project repository, which the configured-repository restriction of `api`
+   * would refuse; the path may not leave that repository.
+   */
+  async apiWrite(repository: string, method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<string> {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('GitHub calls are restricted to an owner/name repository')
+    if (/^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)/i.test(path)) throw new Error('GitHub calls are restricted to repository paths')
+    return this.run(this.deployment.github.cli, ['api', '--method', method, `repos/${repository}/${path}`,
+      ...(body === undefined ? [] : ['--input', '-'])], undefined, body === undefined ? undefined : JSON.stringify(body))
+  }
   private path(path: string): string {
     const outside = /^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)/i.test(path)
     if (outside) throw new Error('GitHub calls are restricted to the configured repository')

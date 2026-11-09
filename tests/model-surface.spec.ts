@@ -39,9 +39,11 @@ interface Skill { name: string; description: string; content: string }
  */
 // The orchestrator budget rose from 59,000 with the three memory tools (memory_write, memory_search, memory_forget),
 // which add about 2,200 characters of schemas and no prompt text: attention stays bounded, the capability is real.
+// It rose from 62,000 with orchestrator_label, which adds about 1,000 characters of schema for the GitHub label
+// capability approved on 2026-11-09; deleting the label capability would let the budget drop back.
 // The worker budget rose from 40,500 with the 0.3.0 rename: the package name appears in the preset, skill and
 // tool text the model reads, and the longer registration ids add about 30 characters at this size.
-const BUDGET: Record<Role, number> = { orchestrator: 62_000, worker: 40_600 }
+const BUDGET: Record<Role, number> = { orchestrator: 63_500, worker: 40_600 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -390,7 +392,7 @@ it('collects both roles\' tools, prompts, skills and inputs', () => {
   expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
     'orchestrator_thread_follow',
     'orchestrator_thread_unrelated', 'orchestrator_trigger_handback'])
-  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply']))
+  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label']))
   // The one routing tool takes the place of four.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {
     expect(toolsOf('orchestrator').has(name)).toBe(false)

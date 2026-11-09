@@ -16,12 +16,19 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   tool list (six automation tools). A Host refusal to run or delete keeps the record and is reported; deleting an already
   missing Host task is fine.
 
+- GitHub Issue and pull request labels for the main Session: `orchestrator_label` adds or removes labels the repository
+  already defines on the work a Trigger names, through the new `SourceKind.labels` contract and its GitHub adapter. It
+  never creates, renames or deletes labels, and it changes nothing else about the Issue.
+
 ### Changed
 
-- The built-in accept rule set now has twelve categories: `settings` (更改 SuperAgent 配置) and `automation`
-  (项目 dsh 自动化任务) join the existing ten, and every built-in rule ships enabled instead of only `copy` and `visual`.
-  Existing installations whose stored rules are still exactly the 0.3.0 ten-rule defaults are upgraded to the
-  all-enabled twelve-rule set when settings are read; operator-edited, renamed, added or removed rules are preserved.
+- The built-in accept rule set now has fifteen categories: `settings` (更改 SuperAgent 配置), `automation`
+  (项目 dsh 自动化任务), `deps` (依赖与工具链升级), `pr-feedback` (审查意见修复) and `design` (方案设计与架构决策) join the
+  existing ten, and every built-in rule ships enabled instead of only `copy` and `visual`. A large or cross-project
+  refactor first produces a staged plan and rollback points under `design`, and the cross-project part becomes a Request.
+  Existing installations whose stored rules are still exactly the 0.3.0 ten-rule defaults or the earlier twelve-category
+  defaults are upgraded to the all-enabled fifteen-rule set when settings are read; operator-edited, renamed, added or
+  removed rules are preserved.
 
 
 ## [0.3.0] - 2026-11-09

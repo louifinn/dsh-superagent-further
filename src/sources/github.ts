@@ -8,6 +8,7 @@ import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullCheck
 import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, githubThread, githubThreadRef, issueTrigger, IssueSchema, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
+import { setGithubLabels } from './github-labels.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
 import { observePull, readPull, type Pull } from './github-pull.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
@@ -71,6 +72,10 @@ export const githubKind: SourceKind<GithubConfig> = {
   health: ['github'],
   channel: { send: sendGithub, link: githubLink },
   threadContext: githubThreadContext,
+  labels: async (host, trigger, change) => {
+    const context = sourceContext(host, githubKind)
+    return setGithubLabels(context.commands, context.deployment, trigger, change)
+  },
   // `#12`, `12`, or the page of an Issue or PR, of any repository, names Thread 12.
   find: query => {
     const number = (/^#?(\d+)$/.exec(query.trim()) ?? /github\.com\/[^/]+\/[^/]+\/(?:pull|issues)\/(\d+)/.exec(query))?.[1]

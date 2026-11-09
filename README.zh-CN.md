@@ -28,7 +28,7 @@ dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，
 | --- | --- |
 | 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：76 个 spec 文件，**1417 passed / 5 skipped（1422）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 检查 | `pnpm check`：77 个 spec 文件，**1427 passed / 5 skipped（1432）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.3.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.3.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
 | 状态数据库 | 架构版本 20（`10 → 11 → … → 19 → 20` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
@@ -201,9 +201,9 @@ worker 环境是有范围限制并被文档化的。凭据仍然比理想状态�
 
 ### 工程与分发
 
-`pnpm check` 是唯一的检查：类型检查、76 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
+`pnpm check` 是唯一的检查：类型检查、77 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
 和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，`release.yml` 打包插件包并附加到 GitHub release。
-测试套件共 1422 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
+测试套件共 1432 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
 Linux 套件，是本 fork 证据的一部分。文档也被测试：[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求
 007 列出每个源文件与 spec。插件包保留其配置形态与 CLI 可见行为；0.3.0 把包名与全部注册 id 改为
 `dsh-superagent-further`，已有安装按 006 的迁移步骤处理。新增内容是增量设置与面板行，并配有 `CHANGELOG` 与 semver。

@@ -21,6 +21,14 @@ it('registers no automation tools when the Host has no schedule service', async 
   await expect(h.runTool(h.runtime.masterId, 'automation_list', {})).rejects.toThrow('Tool automation_list is not registered')
 })
 
+it('labels work only through a Source kind that supports it, and names the Trigger it was given', async () => {
+  const trigger = feishu('labels-1', 'Please label this')
+  h.runtime.store.triggers.save(trigger)
+  await expect(h.runtime.label(trigger.id, { add: ['bug'] })).rejects.toThrow('The feishu Source cannot label work')
+  await expect(h.runtime.label('no-such-trigger', { add: ['bug'] })).rejects.toThrow('Unknown trigger')
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_label')).toBe(true)
+})
+
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
   const { ticket, trigger } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   await h.acceptedTicket(feishu('2', '@bot 再修一个'))

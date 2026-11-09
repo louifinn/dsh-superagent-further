@@ -43,6 +43,7 @@ import { Passes } from './passes.ts'
 import { Setup } from './setup.ts'
 import { feishuSettings } from '../sources/feishu.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
+import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
 import { Sessions } from './sessions.ts'
 import { Settings } from './settings.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
@@ -239,6 +240,7 @@ export class Runtime extends Service implements SourceHost {
         automations: this.automations,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
+        label: (triggerId, change) => this.label(triggerId, change),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize()
@@ -252,6 +254,17 @@ export class Runtime extends Service implements SourceHost {
   /** Aborted when dsh-superagent-further stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
   context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
+  /**
+   * Applies existing labels to the Issue or pull request `triggerId` names, through that Source kind's label adapter.
+   * Throws for an unknown Trigger or a Source kind that cannot label work.
+   */
+  async label(triggerId: string, change: SourceLabelChange): Promise<SourceLabelResult> {
+    const trigger = this.store.triggers.get(triggerId)
+    if (trigger === undefined) throw new Error(`Unknown trigger ${triggerId}`)
+    const kind = this.sources.kind(trigger.source)
+    if (kind?.labels === undefined) throw new Error(`The ${trigger.source} Source cannot label work`)
+    return kind.labels(this, trigger, change)
+  }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }
   configured(): boolean { return this.setup.configured() }

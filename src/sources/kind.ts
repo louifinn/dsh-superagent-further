@@ -82,6 +82,10 @@ export interface TriggerContext {
   image(agent: Agent, commands: Commands, message: { id: string; text: string }, key: string, stateDir: string,
     signal: AbortSignal): Promise<unknown>
 }
+/** One label change a Source kind applies to the Issue or pull request a Trigger names; only labels that already exist. */
+export interface SourceLabelChange { add?: readonly string[]; remove?: readonly string[] }
+/** Labels actually added and removed, plus the target's labels after the change. */
+export interface SourceLabelResult { added: string[]; removed: string[]; labels: string[] }
 /** Pluggable source kind descriptor registered with SourceRegistry. */
 export interface SourceKind<C extends Record<string, unknown> = Record<string, unknown>> {
   /** Stable ID; a default instance with the same ID exists when none is stored. */
@@ -109,6 +113,8 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   policy?: SourcePolicyPart<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
   /** Rereads display names for row keys (such as chat names), stores the resolved names in `KV.sources.labels(kind)`, and returns them. */
   refreshLabels?(host: SourceHost, signal?: AbortSignal): Promise<Record<string, string>>
+  /** Applies existing labels to the Issue or pull request a Trigger names; kinds without label support cannot triage. */
+  labels?(host: SourceHost, trigger: Trigger, change: SourceLabelChange, signal?: AbortSignal): Promise<SourceLabelResult>
   /** Variables the kind registers with the execution environment and how their values are computed. */
   environment?: { variables: readonly VariableSpec[]; values(input: EnvironmentInput<C>): Record<string, string> }
 }

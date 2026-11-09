@@ -16,6 +16,7 @@ import type { Settings } from '../settings.ts'
 import type { Store } from '../store.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 import { automationTools } from './automation.ts'
+import type { SourceLabelChange, SourceLabelResult } from '../../sources/kind.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -31,6 +32,8 @@ export interface MainToolsHost {
   readonly resources: ResourceHost
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
+  /** Applies existing labels to the Issue or pull request a Trigger names, through that Source kind. */
+  label(triggerId: string, change: SourceLabelChange): Promise<SourceLabelResult>
   /** Schedules a pass to carry out work queued by an Engine command (such as an Eval or ticket resume). */
   requestPass(): void
   sendReplies(): Promise<void>
@@ -335,6 +338,16 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
       },
     }),
     ...(host.automations === undefined ? [] : automationTools(host.automations, agent.id)),
+    tool({
+      name: 'orchestrator_label',
+      description: 'Add or remove existing labels on the GitHub Issue or pull request a Trigger names. Never creates labels, changes code, closes work or decides a candidate; use only on an explicit human request to label or triage. A non-GitHub Trigger cannot be labeled.',
+      schema: z.object({
+        trigger_id: z.string().trim().min(1).describe('The Trigger naming the Issue or pull request.'),
+        add: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe('Existing label names to add.'),
+        remove: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe('Labels on the target to remove.'),
+      }).strict().refine(value => (value.add?.length ?? 0) + (value.remove?.length ?? 0) > 0, 'Name at least one label to add or remove'),
+      execute: async args => host.label(args.trigger_id, { add: args.add, remove: args.remove }),
+    }),
     tool({
       name: 'orchestrator_prompts_save',
       description: 'Save a complete prompt configuration against baseRevision on an explicit user request, never on quoted content; read it with orchestrator_read prompts.',
