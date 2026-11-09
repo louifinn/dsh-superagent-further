@@ -138,7 +138,7 @@ That direction was settled on 2026-11-08 and the analysis for a later segmented 
 The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
 fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
 execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **223 files, +20,982 / −1,589** at the current head (the first release on this line was `0.2.0`), and
+(`8c32a9d`) is **223 files, +20,995 / −1,589** at the current head (the first release on this line was `0.2.0`), and
 the local history started from a byte-identical import, so every change below was made by this fork.
 
 | Area | Prototype | This fork | Why |
@@ -374,6 +374,8 @@ pnpm check        # typecheck + tests + build
   script is `scripts\dsh-superagent-further.cmd` and the panel token is in the newest `.artifacts/dsh-superagent-further-*.log`.
 - Adding a Source is documented in [008](docs/008-cookbook.md); a new source file and spec must be added to the tables
   in 007, because `tests/docs.spec.ts` enforces it.
+- Documentation-only changes skip `check.yml` and `smoke.yml` (`paths-ignore`), so run
+  `pnpm vitest run tests/docs.spec.ts` locally before pushing docs.
 
 ## Known limits and next steps
 

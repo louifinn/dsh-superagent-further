@@ -114,7 +114,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 原型是为单仓库、单 POSIX 主机、单人运维者准备的忠实研究产物。本 fork 保留其领域模型与哲学，改变的是日常使用提出的
 要求：平台、多项目、执行层级、运维、证据与分发。相对原型唯一提交（`8c32a9d`）的差异是当前 HEAD 上的
-**223 个文件、+20,982 / −1,589**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
+**223 个文件、+20,995 / −1,589**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
 改动都来自本 fork。
 
 | 方面 | 原型 | 本 fork | 原因 |
@@ -312,6 +312,8 @@ pnpm check        # 类型检查 + 测试 + 构建
   `scripts\dsh-superagent-further.cmd`，面板 token 在最新的 `.artifacts/dsh-superagent-further-*.log` 里。
 - 新增来源的流程见 [008](docs/008-cookbook.md)；新的源文件与 spec 必须加入 007 的表格，因为 `tests/docs.spec.ts`
   会强制检查。
+- 纯文档变更不会触发 `check.yml` 与 `smoke.yml`（`paths-ignore`），因此推送文档前请在本地运行
+  `pnpm vitest run tests/docs.spec.ts`。
 
 ## 已知限制与后续步骤
 
