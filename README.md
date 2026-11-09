@@ -33,7 +33,7 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 | --- | --- |
 | Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 84 spec files, **1479 passed / 5 skipped (1484)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
+| Checks | `pnpm check`: 84 spec files, **1480 passed / 5 skipped (1485)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
 | Release | `0.3.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.3.0.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
 | Project requests | a worker raises a durable `project_request` when its Ticket needs a decision, a new deliverable or another project's work; its project Lead must reply and disposes it, an accepted work request creates a Request and staged Tickets confined to the project, an architecture request waits for a person's recorded approval, and an independent DSH Session can submit work and always receives an answer |
@@ -261,7 +261,7 @@ allow list and a test repository, as the responsibility section of the philosoph
 
 `pnpm check` is the single check: typecheck, 84 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1484 tests; it drives real timers and SQLite, so timeouts are
+bundle and attaches it to a GitHub release. The suite is 1485 tests; it drives real timers and SQLite, so timeouts are
 30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
 fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
 lists every source file and spec. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package

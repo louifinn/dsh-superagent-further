@@ -19,6 +19,12 @@ export const githubThreadRef = (thread: string): { repository?: string; ref: str
 }
 /** The ref half of a Thread id, which is what a Trigger's 	hreads[].id holds (the core prefixes the source). */
 export const githubThreadId = (repository: string, primary: string, ref: string): string => githubThread(repository, primary, ref).slice(SOURCE.length + 1)
+/**
+ * The repository qualifier a Trigger id carries before its natural key: empty for the deployment's repository, whose ids
+ * are stored already and stay legacy, and the project repository for any other, so equal numbers cannot collide.
+ */
+const triggerScope = (repository: string, primary: string): string[] =>
+  !repository || sameName(repository, primary) ? [] : [repository]
 /** GitHub reply address: issue/PR conversation, or a review thread when `url` points at a discussion comment. */
 export const githubChannel = (number: number, url?: string): ChannelRef => githubChannelOf('', '', number, url)
 /** GitHub reply address in one project repository; the address names the repository when it is not the deployment's. */
@@ -83,7 +89,7 @@ const author = (user: { login: string; type?: string }, agent: string) =>
 export function commentTrigger(comment: GithubComment, ref: PullRef, kind: 'conversation' | 'inline' | 'review', agent: string, repository = '', primary = repository): Trigger {
   const at = comment.updated_at ?? comment.submitted_at ?? comment.created_at ?? new Date().toISOString()
   const version = comment.updated_at ?? comment.submitted_at ?? ''
-  const id = key('github-comment', comment.html_url ?? `github:${ref.number}`, String(comment.id), version)
+  const id = key('github-comment', comment.html_url ?? githubThread(repository, primary, String(ref.number)), String(comment.id), version)
   return { id, source: SOURCE, threads: [{ source: SOURCE, id: githubThreadId(repository, primary, String(ref.number)) }], ...author(comment.user, agent), at,
     text: commentText(comment, kind),
     ...(mentions(comment.body ?? '', agent) ? { addressed: 'mention' as const } : {}),
@@ -95,11 +101,12 @@ export function commentTrigger(comment: GithubComment, ref: PullRef, kind: 'conv
 }
 /**
  * Builds the trigger for a newly opened Issue's title and body.
- * The ID is the same as when Issue bodies were stored previously, so already-stored bodies are not ingested again.
+ * The ID keeps the deployment's legacy number-only form so already-stored bodies are not ingested again, and qualifies
+ * another project repository so an equal number there is a different trigger.
  */
 export function issueTrigger(issue: Opened, agent: string, repository = '', primary = repository): Trigger {
   const body = issue.body ?? ''
-  return { id: key('github-issue', String(issue.number)), source: SOURCE,
+  return { id: key('github-issue', ...triggerScope(repository, primary), String(issue.number)), source: SOURCE,
     threads: [{ source: SOURCE, id: githubThreadId(repository, primary, String(issue.number)) }], ...author(issue.user, agent), at: issue.created_at,
     text: `${issue.title}\n\n${body}`,
     ...(mentions(body, agent) ? { addressed: 'mention' as const } : {}),
@@ -114,12 +121,12 @@ export function pullTrigger(pull: Opened, agent: string, repository = '', primar
 }
 /** Builds a trigger for a default-branch CI transition; default-branch CI has no person to reply to, so it has no `channel`. */
 export function branchCiTrigger(branch: string, sha: string, revision: number, summary: string, url: string, repository = '', primary = repository): Trigger {
-  return { id: key('github-ci', `branch:${branch}`, String(revision)), source: SOURCE,
+  return { id: key('github-ci', ...triggerScope(repository, primary), `branch:${branch}`, String(revision)), source: SOURCE,
     threads: [{ source: SOURCE, id: githubThreadId(repository, primary, `ci:${branch}`) }], actor: { source: SOURCE, id: '' }, human: false, at: new Date().toISOString(),
     text: summary, url, meta: { ci: true, branch, sha, revision, ...(repository ? { repository } : {}) } }
 }
 export function ciTrigger(pr: { number: number; html_url: string; user: { login: string } }, revision: number, summary: string, repository = '', primary = repository): Trigger {
-  return { id: key('github-ci', String(pr.number), String(revision)), source: SOURCE, threads: [{ source: SOURCE, id: githubThreadId(repository, primary, String(pr.number)) }],
+  return { id: key('github-ci', ...triggerScope(repository, primary), String(pr.number), String(revision)), source: SOURCE, threads: [{ source: SOURCE, id: githubThreadId(repository, primary, String(pr.number)) }],
     actor: { source: SOURCE, id: '' }, human: false, at: new Date().toISOString(),
     text: summary, channel: githubChannelOf(repository, primary, pr.number), url: pr.html_url,
     meta: { number: pr.number, isPr: true, ...(repository ? { repository } : {}), prAuthor: pr.user.login, ci: true, revision } }

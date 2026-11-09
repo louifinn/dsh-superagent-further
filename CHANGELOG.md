@@ -56,6 +56,7 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   sixteen-rule set when settings are read; operator-edited, renamed, added or removed rules are preserved.
 
 ### Fixed
+- Trigger IDs for GitHub Issues, pull requests, comments and CI are scoped by repository, so an Issue in one project whose number another project already used is no longer dropped as a duplicate by the intake; the deployment's repository keeps its stored number-only IDs.
 
 - A GitHub repository stream could skip an item and then stay blind to it: the read saved the listing's ETag even when it
   took nothing in, and every later conditional read was answered 304. A stream now saves an ETag only when the read

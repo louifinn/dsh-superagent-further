@@ -6,7 +6,7 @@ import { KV } from '../src/kv.ts'
 import { apply as applyFeishu, pollThreads as pollFeishuThreads, type FeishuConfig } from '../src/sources/feishu.ts'
 import { admissionImageKeys } from '../src/sources/feishu-image.ts'
 import { runFeishu } from '../src/sources/feishu-loops.ts'
-import { commentTrigger, githubAddress, githubChannel, issueTrigger, type GithubComment, type GithubIssue } from '../src/sources/github-trigger.ts'
+import { commentTrigger, githubAddress, githubChannel, issueTrigger, branchCiTrigger, type GithubComment, type GithubIssue } from '../src/sources/github-trigger.ts'
 import { claimPull, observePull, pullEndNotices, pullOf, ticketBranch, type Pull } from '../src/sources/github-pull.ts'
 import { ciCounts, ciFact, ciSummary } from '../src/sources/github-read.ts'
 import { apply as applyGithub, githubKind, pollFailure, pollRound, repairStreamEtags } from '../src/sources/github.ts'
@@ -933,6 +933,22 @@ describe('github source', () => {
     expect(h.engine.candidate(id)?.strength).toBe('explicit')
     expect(h.store.threads.get('github:12')!.meta).toMatchObject({ title: 'Login fails', label: '#12 Login fails' })
     h.store.close()
+  })
+  it('keeps equal Issue numbers in different project repositories apart', () => {
+    const payload = issue(1)
+    const deployment = issueTrigger(payload, 'agent-bot')
+    const primary = issueTrigger(payload, 'agent-bot', 'acme/widgets', 'acme/widgets')
+    const project = issueTrigger(payload, 'agent-bot', 'acme/other', 'acme/widgets')
+    // The deployment's repository keeps its stored number-only ID, another project adds its own repository.
+    expect(deployment.id).toBe(key('github-issue', '1'))
+    expect(primary.id).toBe(deployment.id)
+    expect(project.id).toBe(key('github-issue', 'acme/other', '1'))
+    expect(project.id).not.toBe(deployment.id)
+    expect(project.threads).toEqual([{ source: 'github', id: 'acme/other#1' }])
+    expect(branchCiTrigger('main', 'sha', 3, 'CI passed', 'https://example.test', 'acme/other', 'acme/widgets').id)
+      .toBe(key('github-ci', 'acme/other', 'branch:main', '3'))
+    expect(issueTrigger(payload, 'agent-bot', 'acme/other', 'acme/widgets').id)
+      .not.toBe(issueTrigger(payload, 'agent-bot', 'acme/third', 'acme/widgets').id)
   })
   it('takes in a comment on an earlier Issue from its notification, without the Issue body', async () => {
     const h = host()
