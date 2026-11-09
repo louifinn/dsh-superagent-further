@@ -8,6 +8,23 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Project requests (schema 21): `request_create` lets a worker raise a durable project request when its Ticket needs a
+  decision, a new deliverable or another project's work, and its completion report names the requests it leaves open
+  in `requests`. Project requests bypass the admission gate and grant no wider authority than the Lead already owns.
+  The project Lead answers through `lead_requests`, `lead_request_decide`, `lead_request_reply`,
+  `lead_request_complete`, `lead_request_approval` and `lead_request_approve`; every disposition carries a non-empty
+  reply delivered to the raising Session, an unanswered request is reminded twice and then recorded as needing
+  attention, and an accepted work request creates the ordinary Request and its staged Tickets under a Lead Mandate
+  confined to that project. A rejected or `needs-info` request records the answer and changes nothing else.
+
+- The project-request report and approval flow: a root request is closed with one aggregate report on the Channels its
+  chain started from, listing every Ticket, its pull-request outcome and every derived request; an architecture
+  request first creates a design Ticket, sends the proposal to the root Thread, and creates the implementation Request
+  and Tickets only after `lead_request_approve` records a person's approval written after the proposal. An explicit
+  whitelisted @ mention or direct message now receives one notice when Eval ignores it, finds it unavailable or stops
+  it. An independent DSH Session can submit work through the `session` Source kind and the global `superagent_submit`
+  tool; every outcome is answered on that Session, and a completed Request reports back to it.
+
 - Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
   service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
   `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both

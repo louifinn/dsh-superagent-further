@@ -28,10 +28,11 @@ dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，
 | --- | --- |
 | 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：79 个 spec 文件，**1437 passed / 5 skipped（1442）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 检查 | `pnpm check`：84 个 spec 文件，**1475 passed / 5 skipped（1480）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.3.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.3.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
-| 状态数据库 | 架构版本 20（`10 → 11 → … → 19 → 20` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
+| 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复 |
+| 状态数据库 | 架构版本 21（`10 → 11 → … → 20 → 21` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
 
 ## 它做什么
 
@@ -79,11 +80,12 @@ Orchestrator（主会话，`orchestrator-<hash>`）
     └── 作为隐藏子智能体的执行器（持久 DSH 会话，`worker-<ticketId>`）
 ```
 
-- **Orchestrator** 掌握来源、评估、准入、Policy 与跨项目优先级。它创建 Request 与 Ticket，并把工单派发给 Lead；
-  它不做项目级执行。
+- **Orchestrator** 掌握来源、评估、准入、Policy 与跨项目优先级。它创建跨项目 Request 与 Ticket，并把工单派发给
+  Lead；项目 Lead 处置自己项目的项目请求，永远不接跨项目工作。
 - **Lead** 拥有一个项目：项目的上下文、它的会话，以及作为其子会话运行执行器。它把项目的 clone、仓库与基线分支放进
-  自己的提示词，接收每一张派来的工单，并暴露只读工具 `lead_status`。它永远不能修改 Policy 或设置。人可以从面板打开
-  它并直接对话；那是这个项目最高优先级的人类输入。
+  自己的提示词，接收每一张派来的工单，并暴露 `lead_status` 与项目请求工具。它必须回复 worker 提出的请求，只有接受
+  这些请求才会创建本项目的 Ticket，让架构工作经过人的批准，并且永远不能修改 Policy 或设置。人可以从面板打开它并
+  直接对话；那是这个项目最高优先级的人类输入。
 - 执行器是其 Lead 的子智能体。它们保留自己的会话、检出与 worker 预设，但不会出现在普通会话列表里；Lead 是它们的
   父会话，报告经由它落定，输入也经由它送达，而不是去 prompt 一个由 Lead 拥有的会话。重启后会恢复会话，子会话会被
   接管（adopt），否则工单会被重新派发。
@@ -120,7 +122,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 | 规模 | 单仓库、单主机、单状态目录 | 一个来源轮询多个项目、按项目检出与 Lead、按项目的并发限制；强制一主机 | 团队在多个仓库工作；第二个配置档或第二个智能体会增加概念与噪音 |
 | 执行 | 每张工单一个根 worker 会话 | Orchestrator → 每项目常驻 Lead → 隐藏执行器子智能体，重启后接管 | 会话列表更干净、项目上下文常驻，总编排器不再承担项目劳动 |
 | 跨项目 | 一次接受的请求 = 一张工单、一个目录 | Ticket 之上的 Request，每交付单元一张工单、`after` 依赖、一次确认/一次结果/一个 done | 单张工单无法合法跨越项目；而人发的仍是一个请求 |
-| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 20`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
+| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 21`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
 | 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志 | 无人值守需要每个平台上可见、可脚本化的运维 |
 | 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报 | “每个失败都可见”意味着运维者能看见趋势，而不只是状态 |
 | 信任 | 触发的字段信任问题仍列为未决问题 | 可信与不可信字段形成文档并由 `tests/trust.spec.ts` 钉住；消息正文不能改变角色、工具、Policy 或强度；属主独占的状态 ACL；批处理参数防护 | 一旦有第二个人或第二个项目，提示注入与共享机器数据就是真实问题 |
@@ -161,24 +163,34 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 Lead 是本 fork 主要的架构新增，而且它刻意是一个**层**，不是一个新领域概念：领域里仍然只有来源、Thread、触发、工单、
 派发、报告与待答。Lead 是绑定到某个项目的持久会话，带有 (1) 自己的提示词段落，承载项目的 clone、仓库与基线分支，
 (2) 用来够到并给子执行器发消息的预设工具 —— 执行器的输入经由它送达，而不是去 prompt 一个它拥有的会话 ——
-(3) 只读工具 `lead_status`，(4) 记录在 `lead_message`（架构 13）里的派发记录，以及 (5) 没有任何修改 Policy 或设置的
-途径。被接受的工作作为派发的工单到达它；执行器是它的隐藏子会话。面板为每个项目显示一行（Lead 会话、运行中的执行器、
-等待中的消息），有人点击时打开 Lead。Lead 承载的输入与报告路由是 P3 的工作；移除根 worker 路径是 P4，已于
-2026-11-08 完成，因此 onboarding 现在要求项目，并且只有一条执行路径。
+(3) `lead_status` 与项目请求工具（`lead_requests`、`lead_request_decide`、`lead_request_reply`、
+`lead_request_complete`、`lead_request_approval`、`lead_request_approve`），(4) 记录在 `lead_message`（架构 13）
+里的派发记录，以及 (5) 没有任何修改 Policy 或设置的途径。被接受的工作作为派发的工单到达它；执行器是它的隐藏子会话。
+当工单需要决定、新交付物或其他项目的工作时，worker 会提出项目请求，Lead 必须回复。面板为每个项目显示一行（Lead
+会话、运行中的执行器、等待中的消息），有人点击时打开 Lead。Lead 承载的输入与报告路由是 P3 的工作；移除根 worker
+路径是 P4，已于 2026-11-08 完成，因此 onboarding 现在要求项目，并且只有一条执行路径。项目请求与批准流程见
+[011](docs/011-capabilities.md) 的 Part E，规格在 [012](docs/012-project-requests.md)。
 
 ### Ticket 之上的 Request
 
 原型里的 Ticket 是“被授权的工作、一次交付”的单位，这一点保持不变。Request 是可能包含多次交付的、被接受的人类请求：
-它持有工单 id、唯一一次确认与唯一一个最终结果。只有 Orchestrator 创建 Ticket；Lead 永远不新增工单，它只能请求或
-交还。依赖是简单的 `after` 边，而不是工作流引擎，因为哲学不会为“一个属性加一段提示词就能表达的业务需求”新增概念。
-真实验证：一个 GitHub 请求创建了 Request `90df28d6…`，在 `louifinn/project-check` 与 `louifinn/Napkid-Derivate`
-里各有一张工单；PR #18 与 PR #12 在 `00:09Z` 合并，Request 在 `00:10:25Z` 以 `done` 结束，并且只报告一次两个
-pull request。
+它持有工单 id、唯一一次确认与唯一一个最终结果。Orchestrator 创建跨项目 Ticket；Lead 只有在接受其 worker 的项目
+请求时才创建本项目的 Ticket，而且每张这样的工单都限定在该项目内。依赖是简单的 `after` 边，而不是工作流引擎，
+因为哲学不会为“一个属性加一段提示词就能表达的业务需求”新增概念。真实验证：一个 GitHub 请求创建了 Request
+`90df28d6…`，在 `louifinn/project-check` 与 `louifinn/Napkid-Derivate` 里各有一张工单；PR #18 与 PR #12 在
+`00:09Z` 合并，Request 在 `00:10:25Z` 以 `done` 结束，并且只报告一次两个 pull request。
+
+项目请求是 worker 向上的路径。它是一条持久记录，不是 Ticket 也不是触发，因此不经过准入与 Policy；接受它会用
+`lead` 依据的 Mandate 创建一个普通 Request 及其分阶段 Ticket，强度为 explicit，边界是本项目。拒绝或要求补充信息时
+只记录回复，其他什么都不改。未答复的请求会被提醒两次，然后记录为需要关注；Lead 用一条汇总报告结束根请求，发到
+整条链开始的渠道。架构请求多一步：设计 Ticket 产出方案，人在根 Thread 上批准，之后才会存在实现 Request。独立的
+DSH 会话也可以通过 `session` 来源提交工作，并且总会收到答复。
 
 ### 运维、状态与恢复
 
-- **迁移** —— 架构 11–15 重塑记录、填入工单项目、加入 Lead 消息、加入 Request，并结束那些已有工单全部结束的 Request。
-  每一步都在打开数据库的事务里执行；`OLDEST_SCHEMA` 与 `verify-install` 让过旧或过新的数据库变得可见，而不是神秘。
+- **迁移** —— 架构 11–21 重塑记录、填入工单项目、加入 Lead 消息、加入 Request，并结束那些已有工单全部结束的 Request，
+  加入跨会话记忆表、移除已退休的 GitHub `repository` 设置，并加入设置提案、自动化、自动化投递与项目请求表。每一步
+  都在打开数据库的事务里执行；`OLDEST_SCHEMA` 与 `verify-install` 让过旧或过新的数据库变得可见，而不是神秘。
 - **单主机** —— 状态锁的错误消息会指出另一个主机、它的状态目录与切换命令；被某个存活的 DeepSeek Harness 进程持有的
   orchestrator 会话会被解释清楚，而不是无限重试。应用内主机会进程级地应用 worker 环境，006 平实地写明这一点，因为它
   改变了该应用中每个会话里 `gh` 的身份。
@@ -201,9 +213,9 @@ worker 环境是有范围限制并被文档化的。凭据仍然比理想状态�
 
 ### 工程与分发
 
-`pnpm check` 是唯一的检查：类型检查、79 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
+`pnpm check` 是唯一的检查：类型检查、84 个 spec 文件以及 tsdown 构建。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
 和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，`release.yml` 打包插件包并附加到 GitHub release。
-测试套件共 1442 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
+测试套件共 1480 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
 Linux 套件，是本 fork 证据的一部分。文档也被测试：[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求
 007 列出每个源文件与 spec。插件包保留其配置形态与 CLI 可见行为；0.3.0 把包名与全部注册 id 改为
 `dsh-superagent-further`，已有安装按 006 的迁移步骤处理。新增内容是增量设置与面板行，并配有 `CHANGELOG` 与 semver。
@@ -239,9 +251,9 @@ Thread、决策与结束状态；升级步骤在 006。
 
 ```text
 src/
-  sources/          GitHub 与飞书适配器：轮询、接入、线程、触发、渠道、摘要
+  sources/          GitHub、飞书与会话适配器：轮询、接入、线程、触发、渠道、摘要
   app/              运行时、管理 API、面板视图、设置、安装引导、存储、迁移、Lead 记录、
-                    请求通知、工作树回收
+                    项目请求、请求通知、工作树回收
   core/             领域模型与 Engine：准入、工单、派发、报告、决策、effects
   executor/         DshExecutor：启动、投递、槽位、Lead 派发、工作/派发准备
   infra/            worker 环境、shim、命令执行、路径、ACL、批处理 CLI
