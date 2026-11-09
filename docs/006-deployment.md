@@ -501,10 +501,15 @@ steps once; a fresh 0.3.0 installation does not.
    - It rewrites the `agentPreset` stored in each DSH Session log under `$DSH_HOME/sessions` from
      `dsh-superagent-worker` / `-router` / `-lead` to `dsh-superagent-further-worker` / `-router` / `-lead`, so the
      orchestrator, Lead and executor Sessions resume instead of failing with `agent-preset/not-found`. Each rewritten
-     file gets a `.pre-0.3.0.bak` copy.
+     file gets a `.pre-0.3.0` copy.
+   - It rewrites the same `agentPreset` in the DSH Session projection cache under
+     `$DSH_HOME/storages/session_projcache/sessions`. A running host resolves a Session's preset from that cache when it
+     resumes it, so an installation whose cache still names the old preset starts with
+     `Unknown agent preset: dsh-superagent-router` even after the Session log was rewritten.
 
-   Options: `--dsh-home <dir>` when the harness home is not `$DSH_HOME` or `~/.dsh`, and `--sessions-dir <dir>` when
-   the sessions live elsewhere. The default is `<dsh-home>/sessions`.
+   Options: `--dsh-home <dir>` when the harness home is not `$DSH_HOME` or `~/.dsh`, `--sessions-dir <dir>` when the
+   sessions live elsewhere (default `<dsh-home>/sessions`), and `--storages-dir <dir>` when the storage directory is
+   elsewhere (default `<dsh-home>/storages`).
 5. Refresh the profile's installed tree so the new package name resolves:
 
    ```sh

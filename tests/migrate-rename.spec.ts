@@ -58,8 +58,10 @@ function fixture() {
   homes.push(home)
   const profile = join(home, 'profiles', 'superagent')
   const session = join(home, 'sessions', 'project')
+  const caches = join(home, 'storages', 'session_projcache', 'sessions')
   mkdirSync(profile, { recursive: true })
   mkdirSync(session, { recursive: true })
+  mkdirSync(caches, { recursive: true })
   const manifest = {
     name: 'superagent-profile',
     private: true,
@@ -88,10 +90,16 @@ function fixture() {
   const manifestPath = join(profile, 'package.json')
   const patchPath = join(profile, 'cordis.patch.yml')
   const sessionPath = join(session, 'session.v4.jsonl.zstd')
+  const cache = {
+    version: 7,
+    record: { rows: { agentPreset: { ver: 1, seq: 12, val: 'dsh-superagent-router' }, turnBoundary: { ver: 2, seq: 12, val: {} } } },
+  }
+  const cachePath = join(caches, 'orchestrator-x.json')
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   writeFileSync(patchPath, patch)
   writeFileSync(sessionPath, log)
-  return { home, manifestPath, patchPath, sessionPath, manifest, patch, log }
+  writeFileSync(cachePath, `${JSON.stringify(cache, null, 2)}\n`)
+  return { home, manifestPath, patchPath, sessionPath, cachePath, manifest, patch, log, cache }
 }
 
 it('migrates the profile, the patch rows and the stored preset ids, and keeps operator data', () => {
@@ -117,28 +125,38 @@ it('migrates the profile, the patch rows and the stored preset ids, and keeps op
   // A preset id in prose is history, not a registration id: the script leaves it alone.
   expect(texts[2]).toContain('dsh-superagent-worker is mentioned in prose')
   expect(readFileSync(`${files.sessionPath}.pre-0.3.0`)).toEqual(files.log)
+
+  // The projection cache is what an installed host resumes a Session from, so it must name the new preset too.
+  const cache = JSON.parse(readFileSync(files.cachePath, 'utf8')) as typeof files.cache
+  expect(cache.record.rows.agentPreset.val).toBe('dsh-superagent-further-router')
+  expect(cache.record.rows.turnBoundary).toEqual({ ver: 2, seq: 12, val: {} })
+  expect(readFileSync(`${files.cachePath}.pre-0.3.0`, 'utf8')).toBe(`${JSON.stringify(files.cache, null, 2)}\n`)
+  expect(result.output).toContain('agentPreset dsh-superagent-router -> dsh-superagent-further-router')
   expect(result.output).toContain('migration complete')
 })
 
 it('reports a dry run without changing a file', () => {
   const files = fixture()
-  const before = [readFileSync(files.manifestPath), readFileSync(files.patchPath), readFileSync(files.sessionPath)]
+  const before = [readFileSync(files.manifestPath), readFileSync(files.patchPath), readFileSync(files.sessionPath), readFileSync(files.cachePath)]
   const result = run('--profile', 'superagent', '--dsh-home', files.home, '--dry-run')
   expect(result.status).toBe(0)
   expect(result.output).toContain('would rename')
-  expect([readFileSync(files.manifestPath), readFileSync(files.patchPath), readFileSync(files.sessionPath)]).toEqual(before)
-  for (const path of [files.manifestPath, files.patchPath, files.sessionPath]) expect(existsSync(`${path}.pre-0.3.0`)).toBe(false)
+  expect(result.output).toContain('would rewrite')
+  expect([readFileSync(files.manifestPath), readFileSync(files.patchPath), readFileSync(files.sessionPath), readFileSync(files.cachePath)]).toEqual(before)
+  for (const path of [files.manifestPath, files.patchPath, files.sessionPath, files.cachePath]) expect(existsSync(`${path}.pre-0.3.0`)).toBe(false)
 })
 
 it('is idempotent: a second run reports the profile as migrated and rewrites no session log', () => {
   const files = fixture()
   expect(run('--profile', 'superagent', '--dsh-home', files.home).status).toBe(0)
   const migrated = readFileSync(files.sessionPath)
+  const migratedCache = readFileSync(files.cachePath)
   const second = run('--profile', 'superagent', '--dsh-home', files.home)
   expect(second.status).toBe(0)
   expect(second.output).toContain('already uses dsh-superagent-further')
   expect(second.output).not.toContain('rewrote')
   expect(readFileSync(files.sessionPath)).toEqual(migrated)
+  expect(readFileSync(files.cachePath)).toEqual(migratedCache)
 })
 
 it('fails when the profile does not exist', () => {

@@ -3,18 +3,20 @@
  * Move one local dsh-superagent installation to the dsh-superagent-further names.
  *
  * Run this file with Node 22.19+ (`node scripts/migrate-rename.mjs --profile <name>`); it has no dependency beyond the
- * Node standard library. It changes three things and nothing else:
+ * Node standard library. It changes four things and nothing else:
  *
  * - the profile's `package.json`: the dependency key and the bundle in `dsh.profile.bundles`;
  * - the profile's `cordis.patch.yml`: the `id:` values of this bundle's rows, including both watch components;
- * - the `agentPreset` recorded in DSH Session logs, so the main, Lead and Executor Sessions resume.
+ * - the `agentPreset` recorded in DSH Session logs, so the main, Lead and Executor Sessions resume;
+ * - the same `agentPreset` in the DSH Session projection cache, which is what a running host resolves a Session's
+ *   preset from when it resumes it (rewriting the log alone leaves an installed host unable to start this bundle).
  *
  * The state directory, the database, the worktrees, the Source kinds, the `DSH_SUPERAGENT_*` variables and every
  * stored Thread, Ticket and Request are left alone. Each changed file gets a `.pre-0.3.0` copy first; `--dry-run`
  * reports the changes without writing them. See `docs/006-deployment.md`, "Migrating from dsh-superagent".
  *
  * Usage:
- *   migrate-rename [--profile <name>] [--dsh-home <dir>] [--sessions-dir <dir>] [--dry-run]
+ *   migrate-rename [--profile <name>] [--dsh-home <dir>] [--sessions-dir <dir>] [--storages-dir <dir>] [--dry-run]
  *
  * Exit codes: 0 nothing failed; 1 a profile or session file could not be read or written.
  */
@@ -47,6 +49,7 @@ if (flag('help') || flag('h')) {
 const profileName = option('profile', process.env.DSH_SUPERAGENT_PROFILE ?? 'superagent')
 const dshHome = option('dsh-home', process.env.DSH_HOME ?? join(homedir(), '.dsh'))
 const sessionsDir = option('sessions-dir', join(dshHome, 'sessions'))
+const storagesDir = option('storages-dir', join(dshHome, 'storages'))
 const dryRun = flag('dry-run')
 const profileDir = join(dshHome, 'profiles', profileName)
 
@@ -251,9 +254,44 @@ function migrateSessions() {
     `${dryRun ? 'to rewrite' : 'rewritten'}`)
 }
 
+/** The projection cache directory DSH keeps next to the Session logs; a cached record names the preset it resumed with. */
+const cacheDir = join(storagesDir, 'session_projcache', 'sessions')
+
+function migrateCaches() {
+  if (!existsSync(cacheDir)) {
+    console.log(`${cacheDir}: no Session projection cache; nothing to rewrite`)
+    return
+  }
+  let files = 0
+  let rewritten = 0
+  for (const entry of readdirSync(cacheDir, { withFileTypes: true })) {
+    const path = join(cacheDir, entry.name)
+    if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name.includes(BACKUP)) continue
+    files += 1
+    try {
+      const text = readFileSync(path, 'utf8')
+      const doc = JSON.parse(text)
+      const row = doc.record?.rows?.agentPreset
+      const id = typeof row?.val === 'string' ? row.val : undefined
+      const prefix = `${OLD}-`
+      const preset = id?.startsWith(prefix) ? id.slice(prefix.length) : undefined
+      if (!preset || !PRESETS.includes(preset)) continue
+      row.val = `${NEXT}-${preset}`
+      replace(path, `${JSON.stringify(doc, null, 2)}\n`)
+      rewritten += 1
+      console.log(`${dryRun ? 'would rewrite' : 'rewrote'} ${path}: agentPreset ${id} -> ${NEXT}-${preset}`)
+    } catch (error) {
+      fail(`${path}: ${error.message}`)
+    }
+  }
+  console.log(`${cacheDir}: ${files} cached Session record(s), ${rewritten} preset reference(s) ` +
+    `${dryRun ? 'to rewrite' : 'rewritten'}`)
+}
+
 console.log(`${dryRun ? 'dry run: ' : ''}migrating ${profileDir} from ${OLD} to ${NEXT}`)
 migrateProfile()
 migrateSessions()
+migrateCaches()
 
 if (failures > 0) {
   console.error(`migration incomplete: ${failures} file(s) need attention`)
