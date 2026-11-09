@@ -785,6 +785,32 @@ surface; it does not upload arbitrary files from the host.
 - **Limits:** only an existing regular file inside a registered project's workspace; the bot must
   already be in the target chat; no file creation, deletion or upload from elsewhere on the host.
 
+## Part E — Project-level Requests and lead-dispatched work (approved 2026-11-10, Sprint 22, in progress)
+
+The operator approved a program that lets a worker raise a project-level Request that its project Lead
+disposes, makes a Lead reply mandatory, carries architecture work through a human approval gate, opens
+a bridge for an independent DSH Session to submit a Request, and requires an answer to every explicit
+whitelisted mention or direct message. The design spec (decisions D1–D10 and the mission phases) is
+`docs/012-project-requests.md`.
+
+- **Record:** a separate durable `project_request` row (schema 21), not a `Request`; the Lead's
+  disposition creates the ordinary Request and its Tickets, with a lead-based Mandate basis, confined
+  to that project. Policy admission does not gate project requests; the Lead grants no wider authority
+  than it already owns, and cross-project work stays an Orchestrator Request.
+- **Mandatory reply:** every disposition carries a reply; the runtime prompts the Lead for unanswered
+  raised requests and worker reports, retries a bounded number of times and then records the item as
+  needing attention instead of dropping it. A worker's completion report names the requests it raised.
+- **Final report:** when a root project Request and all its derived work end, one aggregate report goes
+  through the source channel the chain started from, listing every Ticket and derived request outcome.
+- **Explicit always-reply:** a whitelisted sender's @ mention or direct message is an explicit request;
+  ignore, unavailable and stop decisions also send exactly one short notice on that channel.
+- **Architecture gate:** an architecture request first produces a design Ticket; the proposal goes to
+  the root channel and the implementation Request is created only after a recorded human approval.
+- **External Session bridge:** a `session` Source kind and a submission tool let an independent DSH
+  Session ask the Orchestrator for work; the existing admission rules apply, every outcome is answered,
+  and a completed Request reports back to that Session. Feasibility is gated on the installed DSH Host
+  API; if it exposes no usable global-tool or cross-Session message surface, the blocker is documented.
+
 ## Decisions requested
 
 The operator's answers decide how much of Parts A and B lands in Sprint 9 and in what order. The
