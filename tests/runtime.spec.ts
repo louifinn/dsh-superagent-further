@@ -1927,7 +1927,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
   // The panel's Lead row names the Session and the project it serves.
   expect(runtime.leadOverview()).toEqual([{ project: 'app', name: 'App', session: 'lead-app', status: expect.any(String),
-    running: 0, waiting: 0 }])
+    running: 0, waiting: 0, projectRequests: { pending: 0, automated: 0 } }])
   // The launch records the dispatch to the Lead and marks it delivered once the child runs.
   const messages = runtime.store.leads.list('app')
   expect(messages).toHaveLength(1)

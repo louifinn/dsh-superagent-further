@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent-further.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1483 passed and 5 skipped (1488) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), the bounded delivery history with panel-only notices (schema 20), the GitHub read-path repair that stops a skipped listing from staying hidden behind a saved ETag, Trigger IDs scoped by repository so equal Issue and PR numbers in different projects stay separate, and the Ticket deliverable contract (schema 22) that ends answer work with its report and requires a followed pull request for change work; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1484 passed and 5 skipped (1489) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), the bounded delivery history with panel-only notices (schema 20), the GitHub read-path repair that stops a skipped listing from staying hidden behind a saved ETag, Trigger IDs scoped by repository so equal Issue and PR numbers in different projects stay separate, the Ticket deliverable contract (schema 22) that ends answer work with its report and requires a followed pull request for change work, and the Lead-raised project request from a project automation delivery (docs/012 D11); Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
@@ -382,4 +382,21 @@ contract instead of leaving answer-only work to pay for a branch it can never me
 - [x] The panel and result notices show an ended answer Ticket as **Answered**.
 - [x] Tests cover the contract, the refusals and the migration; docs, CHANGELOG and README counts updated and
   `pnpm check` green.
+
+## Sprint 25 checklist
+
+On 2026-11-10 the operator approved A′: a project automation delivery is a standing instruction that cannot create a
+Source Trigger, so its inspection may raise and decide one project request for its own project instead of leaving the
+work it found unactionable.
+
+- [x] `lead_request_create` raises a project-scope work request, records the `automation` id from the delivery marker,
+  and returns the open request instead of a second one for the same title in one Lead Session; the Lead disposes it
+  with the mandatory reply.
+- [x] A rootless work accept creates the ordinary Request and its Tickets through `Tickets.createLead`, with empty
+  Channels, an empty Trigger id set and a `dsh-superagent:lead:<project>` Mandate actor; a rootless architecture
+  accept still refuses because the human approval needs the root Thread.
+- [x] The report-only rule permits exactly that project request and no other project write.
+- [x] The panel's Lead row shows pending project requests and how many came from automations.
+- [x] Tests cover the raise, the accept, the dedupe and the report-only text; docs, CHANGELOG and README counts
+  updated and `pnpm check` green.
 

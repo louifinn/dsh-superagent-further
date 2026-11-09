@@ -187,6 +187,26 @@ Our mapping from the referenced skills workflow: spec/decision document (this fi
 (governance `review` rule, Lead gates) → report (aggregate report D6). Decisions stay in durable specs and records, not
 only in a conversation.
 
+### D11. Lead-raised work from automation deliveries
+
+A scheduled project automation delivery is a standing instruction, not a Source Trigger, so it cannot create work by
+itself (docs/011 B-D2). A′ keeps the scheduler a scheduler: the delivered instruction tells the Lead to inspect and
+report, and when the inspection finds work the Lead raises **one work project request** for its own project with
+`lead_request_create`, passing the automation id from the delivery marker, and decides it with `lead_request_decide`.
+The Lead is both raiser and disposer; the mandatory reply and the needs-attention reminder still apply, and the
+automation provenance lives in `raised_by.automation`.
+
+Accepting a work request with no root Trigger creates the ordinary Request and its Tickets immediately through
+`Tickets.createLead`: the Request's channels are empty, its origin is `key('project-request', decisionId)`, its Trigger
+ids are empty, and the Mandate's actor falls back to `dsh-superagent:lead:<project>`. Architecture requests keep the
+root requirement even when a Lead raises them: a rootless architecture accept still refuses with
+`approvalRootRequired`, because a person's approval has to arrive on the root Thread. Repeating a raise with the same
+title in one Lead Session returns the open request instead of creating a second one.
+
+The automation delivery's write budget stays the capability decision's: raising and deciding that project request is
+the only project record it may change, while the repository, Settings, Sources, Tickets and Policy stay untouched. The
+panel's project Lead row shows the pending project-request count and how many arrived from automations.
+
 ## Phases / missions
 
 - M13 (P1) — **done**: schema 21 `project_request` store, engine APIs (`raise`, `decide` on a request, `complete`),

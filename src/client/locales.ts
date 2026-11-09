@@ -571,6 +571,8 @@ const TEXT = {
   leadAbsent: ['未启动', 'Not started'],
   leadExecutorsLabel: ['执行器', 'Executors'],
   leadWaitingLabel: ['待收消息', 'Waiting messages'],
+  leadRequestsLabel: ['待处理项目请求', 'Pending project requests'],
+  leadRequestsAutomatedLabel: ['其中来自自动化', 'From automations'],
   requestsTitle: ['待交付请求', 'Open requests'],
   requestTicketsLabel: ['工单', 'Tickets'],
   'change.projects': ['项目：{items}', 'Projects: {items}'],

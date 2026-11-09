@@ -14,7 +14,7 @@ import { mkdirSync } from 'node:fs'
 import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, threadKey, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger }
+import { Engine, key, projectRequestOpen, reasonText, threadKey, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger }
   from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
@@ -272,6 +272,7 @@ export class Runtime extends Service implements SourceHost {
       sessions.attachEngine(engine)
       // The approval tools read and write through the same Engine; bind them by the Store the Lead tools are built with.
       bindLeadApprovals(store, {
+        raise: input => engine.raiseProjectRequest(input),
         plan: (id, plan) => engine.planProjectRequest(id, plan),
         requestApproval: id => engine.requestProjectApproval(id),
         approve: (id, input) => engine.approveProjectRequest(id, input),
@@ -481,9 +482,11 @@ export class Runtime extends Service implements SourceHost {
     return this.store.settings().executor.projects.map(project => {
       const session = this.store.get(KV.lead.sessions(project.id))
       const agent = session === undefined ? undefined : this.ctx.agents.get(session as SessionId)
+      const pending = this.store.projectRequests.list(project.id).filter(request => projectRequestOpen(request.status))
       return { project: project.id, name: project.name, session: session ?? '', status: agent?.status ?? 'absent',
         running: open.filter(ticket => ticket.project === project.id && ticket.assignments.at(-1)?.state === 'running').length,
-        waiting: this.store.leads.waiting('lead', project.id).length }
+        waiting: this.store.leads.waiting('lead', project.id).length,
+        projectRequests: { pending: pending.length, automated: pending.filter(request => request.raised_by.automation !== undefined).length } }
     })
   }
   private httpHost(): HttpHost {

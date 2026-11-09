@@ -14,10 +14,14 @@ export const AUTOMATION_MARKER_PREFIX = '[AUTOMATION '
 export const AUTOMATION_CONTEXT = 'dsh-superagent-further-automation'
 /** After the memory snapshot (300) and the default language (310). */
 export const AUTOMATION_CONTEXT_ORDER = 320
-/** The rule every project-scope delivery carries: the Lead may inspect and report, never act on its own (docs/011 B-D2). */
+/**
+ * The rule every project-scope delivery carries: the Lead may inspect and report, and may raise the project requests its
+ * findings need, but never changes the repository or settings on its own (docs/011 B-D2).
+ */
 export function reportOnlyRule(project: string): string {
-  return `Report only for project ${project}: inspect and report in this Session; do not modify the repository, Settings, Tickets, `
-    + 'or Policy. If action is needed, state what the Orchestrator should do.'
+  return `Report only for project ${project}: inspect and report in this Session. When the inspection finds work, raise a project `
+    + 'request with `lead_request_create` (giving the automation id from the marker) and decide it with `lead_request_decide`; '
+    + 'that is the only project record the delivery may change. Do not modify the repository, Settings, Sources, Tickets, or Policy.'
 }
 /** A registered project a project-scope automation can target. */
 export interface AutomationProject { id: string; name: string; workspace: string }

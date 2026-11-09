@@ -316,8 +316,11 @@ export type ProjectRequestStatus = 'pending' | 'needs-info' | 'accepted' | 'reje
   | 'completed' | 'withdrawn'
 /** One reply a project Lead recorded on a ProjectRequest; a request keeps them oldest first. */
 export interface LeadReply { at: string; by: string; text: string }
-/** Who raised a ProjectRequest: its Session and, for a worker's request, the Ticket and Assignment it came from. */
-export interface ProjectRequestRaisedBy { session: string; ticket?: string; assignment?: string }
+/**
+ * Who raised a ProjectRequest: its Session and, for a worker's request, the Ticket and Assignment it came from. A Lead
+ * raising its own project's work records the automation record whose delivery found it, when one did.
+ */
+export interface ProjectRequestRaisedBy { session: string; ticket?: string; assignment?: string; automation?: string }
 /**
  * Where a root ProjectRequest came from: the source work that produced it, either the domain Request or the root
  * ProjectRequest it derives from, and the Trigger and Thread whose Channel its final report answers (docs/012 D6).

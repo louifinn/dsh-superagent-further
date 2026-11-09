@@ -58,14 +58,23 @@ describe('Lead Sessions', () => {
       expect(again.id).toBe('lead-app')
       // The Lead's application tools read its project, its Tickets and its waiting messages, and list its requests.
       expect([...host.tools.get('lead-app')!.keys()].sort()).toEqual(['lead_request_approval', 'lead_request_approve',
-        'lead_request_complete', 'lead_request_decide', 'lead_request_reply', 'lead_requests', 'lead_status', 'memory_forget',
-        'memory_search', 'memory_write'])
+        'lead_request_complete', 'lead_request_create', 'lead_request_decide', 'lead_request_reply', 'lead_requests', 'lead_status',
+        'memory_forget', 'memory_search', 'memory_write'])
       const status = await host.runTool('lead-app', 'lead_status', {}) as { project: Record<string, unknown>; tickets: { open: unknown[] };
         messages: unknown[] }
       expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })
       expect(status.tickets.open).toEqual([])
       expect(status.messages).toEqual([])
       expect(await host.runTool('lead-app', 'lead_requests', {})).toMatchObject({ project: 'app', requests: [], unanswered: [], reports: [], attention: [] })
+      // A Lead raises the work an automation delivery found; the records name the Lead Session and the automation.
+      const raised = await host.runTool('lead-app', 'lead_request_create', { title: 'Fix the flaky Windows test',
+        instruction: 'It fails only on Windows; make the wait deterministic.', automation: 'auto-1' }) as
+        { id: string; status: string; raised_by: { session: string; automation?: string } }
+      expect(raised.status).toBe('pending')
+      expect(typeof raised.raised_by.session).toBe('string')
+      expect(raised.raised_by.automation).toBe('auto-1')
+      const listed = await host.runTool('lead-app', 'lead_requests', {}) as { requests: { id: string }[] }
+      expect(listed.requests.map(request => request.id)).toContain(raised.id)
       // A Lead remembers, recalls and forgets only inside its own project; installation-wide memories belong to the
       // Orchestrator, and another project's memories are invisible unless the Lead is given that project.
       const mine = host.runtime.store.memories.save({ kind: 'fact', project: 'app', text: 'The app keeps its release notes in docs.' })

@@ -33,6 +33,15 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   `change`; only a change requires `worktree_name`). Migration to schema 22 records `change` for open Tickets and for
   ended Tickets with a followed pull request, and `answer` for any other ended Ticket.
 
+- Lead-raised project requests from automation deliveries (docs/012 D11): a project-scope automation delivery is a
+  standing instruction, not a Source Trigger, so the Lead may raise one work project request for its own project with
+  `lead_request_create` (recording the `automation` id from the delivery marker) and decide it with
+  `lead_request_decide`. Accepting a request without a root Trigger now creates the ordinary Request and its Tickets
+  through `Tickets.createLead`, with empty Channels and a `dsh-superagent:lead:<project>` Mandate actor; a rootless
+  architecture accept still refuses because the human approval needs the root Thread. The report-only rule permits
+  exactly that project request and no other project write, and the panel's Lead row shows the pending count and how
+  many came from automations.
+
 - Manual run and delete for installation- and project-scope automation tasks: `automation_run` asks the Host's `schedule`
   service to deliver one run now without moving the scheduled occurrence and reports a pending execution as a conflict;
   `automation_delete` removes the Host task, the record and its whole delivery history on an explicit human request. Both

@@ -376,7 +376,7 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     // A Lead gets the preset's native tools (including delegation) plus its project tools; an Executor Session gets the
     // application tools its worker uses.
-    const tools = project ? leadTools({ store: host.store, lead: this.lead }, project) : host.tools(agent, ticket)
+    const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id }, project) : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
       : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })

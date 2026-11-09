@@ -1,14 +1,15 @@
 /** Lead application tools: the project a Lead serves, and the Project Requests it must answer. */
 import { z } from 'zod'
-import { ticketStage, type ProjectRequest, type ProjectRequestPlan, type Ticket } from '../../core/index.ts'
+import { ticketStage, type ProjectRequest, type ProjectRequestInput, type ProjectRequestPlan, type Ticket } from '../../core/index.ts'
 import type { Project } from '../../projects.ts'
 import type { LeadDispatch } from '../lead-dispatch.ts'
 import { projectRequestView } from '../lead-dispatch.ts'
 import type { Store } from '../store.ts'
 import { tool, type Tool } from './tool.ts'
 
-/** The Engine commands the approval tools need; the runtime binds them because a Lead Session only holds its dispatch. */
+/** The Engine commands the Lead tools need; the runtime binds them because a Lead Session only holds its dispatch. */
 export interface LeadApprovalHost {
+  raise(input: ProjectRequestInput): ProjectRequest
   plan(id: string, plan: ProjectRequestPlan): ProjectRequest
   requestApproval(id: string): ProjectRequest
   approve(id: string, input: { approved: boolean; trigger_id: string }): ProjectRequest
@@ -17,10 +18,13 @@ export interface LeadApprovalHost {
 const approvals = new WeakMap<object, LeadApprovalHost>()
 export function bindLeadApprovals(store: object, host: LeadApprovalHost): void { approvals.set(store, host) }
 
-/** Host dependencies of the Lead tools: the Store's project records, its optional read-side thread history, and the Lead dispatch. */
+/** Host dependencies of the Lead tools: the Store's project records, its optional read-side thread history, the Lead dispatch, and
+ * the Lead Session those tools answer for. */
 export interface LeadToolsHost {
   readonly store: Pick<Store, 'tickets' | 'leads' | 'projectRequests'> & { readonly read?: Store['read'] }
   readonly lead: LeadDispatch
+  /** The Lead Session the tools run in; a request the Lead raises records it as its raiser. */
+  readonly session: string
 }
 
 /** What one Ticket looks like to its project's Lead: the stage a person sees and the executor's latest state. */
@@ -41,8 +45,9 @@ function requestOf(host: LeadToolsHost, project: Project, id: string): ProjectRe
 const STATUS = z.enum(['pending', 'needs-info', 'accepted', 'rejected', 'awaiting-approval', 'approved', 'completed', 'withdrawn'])
 
 /**
- * The tools a project's Lead Session gets. `lead_status` and `lead_requests` read the project; the other three record
- * the mandatory reply: a disposition (with the plan an accept carries), an extra reply, or completion.
+ * The tools a project's Lead Session gets. `lead_status` and `lead_requests` read the project; `lead_request_create` raises
+ * the work a scheduled automation's inspection finds; the remaining tools record the mandatory reply: a disposition (with
+ * the plan an accept carries), an extra reply, or completion.
  */
 export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
   return [tool({
@@ -83,6 +88,27 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
         attention: host.lead.attention(project.id).map(message => ({ request_id: message.requestId.slice('lead-attention:'.length),
           ...message.ticketId === undefined ? {} : { ticket_id: message.ticketId }, at: message.at, body: message.body })),
       }
+    },
+  }), tool({
+    name: 'lead_request_create',
+    description: 'Raise a project request when a scheduled automation delivery finds work this project needs. Pass the automation '
+      + 'id from the delivery marker. The Lead then decides it with lead_request_decide; an accepted work request creates its '
+      + 'domain Request and Tickets at once. Only work requests can be raised here: an architecture request needs a worker-raised '
+      + 'request anchored to a Trigger for its approval.',
+    schema: z.object({
+      title: z.string().trim().min(1).max(200).describe('One line naming the work the project request asks for.'),
+      instruction: z.string().trim().min(1).max(8_000).describe('What is needed, with the evidence the inspection rests on.'),
+      automation: z.string().trim().min(1).max(200).optional()
+        .describe('When this turn is an automation delivery, the automation id from its marker.'),
+    }).strict(),
+    execute: async ({ title, instruction, automation }: { title: string; instruction: string; automation?: string }) => {
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      const raised = engine.raise({
+        project: project.id, kind: 'work', title, instruction,
+        raised_by: { session: host.session, ...(automation ? { automation } : {}) },
+      })
+      return projectRequestView(raised)
     },
   }), tool({
     name: 'lead_request_decide',

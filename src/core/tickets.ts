@@ -71,6 +71,33 @@ export class Tickets extends EnginePart {
   }
 
   /**
+   * Create the work a project Lead accepted on a project request it raised itself: one Request and its delivery units'
+   * Tickets, with no Trigger Channels because nothing outside the project asked for it. The Lead owns and reports the
+   * result; its Mandate carries the project request as the basis (docs/012 D11).
+   */
+  createLead(decisionId: string, mandate: Mandate, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, at: string): Request {
+    const units = outcome.deliverables?.length ? outcome.deliverables : [{ title: outcome.title, project: outcome.project }]
+    const ids = units.map((_, index) => index === 0 ? key('ticket', decisionId, 'work') : key('ticket', decisionId, String(index)))
+    // No Trigger raised this work; the project request id stands in as the origin a panel or card can name.
+    const origin = { triggerId: key('project-request', decisionId), triggerIds: [] as string[] }
+    const request: Request = { id: key('request', decisionId), title: outcome.title, decisionId, mandate, channels: [], ticketIds: ids, createdAt: at }
+    this.repo.requests.save(request)
+    units.forEach((unit, index) => {
+      const waits = (unit.after ?? []).filter(waited => waited >= 0 && waited < index)
+      let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, deliverable: outcome.deliverable ?? 'change',
+        requestId: request.id, ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}), channels: [], assignments: [],
+        inputs: [], undelivered: [], createdAt: at, updatedAt: at, origin, ...(unit.project ? { project: unit.project } : {}) }
+      ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
+      const assignment = waits.length ? undefined : this.newAssignment(ticket)
+      this.repo.tickets.save(ticket)
+      if (assignment) this.options.executor.start(this.require(ticket.id), assignment)
+      this.emit('ticket.created', { ticketId: ticket.id, decisionId, strength: mandate.strength })
+    })
+    this.dispatchRequest(request.id)
+    return request
+  }
+
+  /**
    * Starts a Request's Tickets whose `after` edges have all ended, and ends the Request once every Ticket has ended: `done` when
    * every outcome was merged, closed or completed, `stopped` when every Ticket was stopped, `partial` otherwise.
    */

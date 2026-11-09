@@ -71,10 +71,12 @@ Part B P3 adds delivery history and panel-only notices (schema 20).
 `installation` task still targets the main Session, and a `project` task validates the project id
 against the registered projects, calls `Sessions.ensureLead(project.id, project.workspace,
 `Lead · <name>`)` before the Host task, and targets `lead-<projectId>`. Project tasks are report-only
-by decision B-D2: the envelope is `[AUTOMATION auto-… · project <projectId>]`, and the delivered
-instruction is prefixed with the rule that the Lead inspects and reports only, changes no repository,
-Settings, Tickets or Policy, and states what the Orchestrator should do; installation tasks are
-unchanged. The row records the scope and project, list/view show them with `report_only`, and an edit
+for the repository by decision B-D2: the envelope is `[AUTOMATION auto-… · project <projectId>]`, and
+the delivered instruction is prefixed with the rule that the Lead inspects and reports, and, when the
+inspection finds work, raises a project request with `lead_request_create` (recording the automation
+id) and decides it with `lead_request_decide`; it changes no repository, Settings, Sources, Tickets or
+Policy directly. Raising and deciding that project request is the delivery's only write (docs/012
+D11); installation tasks are unchanged. The row records the scope and project, list/view show them with `report_only`, and an edit
 cannot re-target an existing task. Reconciliation resolves project targets by their recorded project
 id, marks a removed project or an archived target Session orphaned, and reports a target that is not
 the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and remain the only four automation
@@ -535,8 +537,10 @@ Explore the failed builds and report what needs attention.
 becomes:
 
 ```text
-Report only for project default: inspect and report in this Session; do not modify the repository,
-Settings, Tickets, or Policy. If action is needed, state what the Orchestrator should do.
+Report only for project default: inspect and report in this Session. When the inspection finds work,
+raise a project request with `lead_request_create` (giving the automation id from the marker) and
+decide it with `lead_request_decide`; that is the only project record the delivery may change. Do not
+modify the repository, Settings, Sources, Tickets, or Policy.
 
 Explore the failed builds and report what needs attention.
 ```
@@ -810,6 +814,13 @@ whitelisted mention or direct message. The design spec (decisions D1–D10 and t
   independent DSH Session ask the Orchestrator for work under the existing admission rules; the tool
   refuses managed Sessions, subagents and a mismatched `session_id`, every decision outcome is answered
   on that Session, and a completed Request reports back to it.
+- **Lead-raised work (A′, docs/012 D11):** a project automation delivery is a standing instruction, not
+  a Source Trigger, so the Lead raises one work project request for its own project with
+  `lead_request_create` when its inspection finds work, records the automation id, and decides it with
+  `lead_request_decide`; accepting a request without a root Trigger creates the Request and its Tickets
+  through `Tickets.createLead` (empty channels, actor `dsh-superagent:lead:<project>`). Architecture
+  requests still need a root Trigger for the human approval, and the delivery changes no other project
+  record. The panel Lead row shows the pending count and how many came from automations.
 
 Schema 21 and the engine commands, the worker and Lead tools with their prompts, the aggregate report and explicit always-reply, the architecture approval round trip and the session bridge are implemented and merged (missions M13–M17). `tests/project-requests.spec.ts`, `tests/lead.spec.ts`, `tests/request-notices.spec.ts` and `tests/sources/session.spec.ts` cover them; `pnpm check` is green and the README records the suite totals.
 

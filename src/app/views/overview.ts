@@ -9,7 +9,9 @@ import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
 
 /** One project's Lead in the panel: its Session, and the executors and messages the project holds. */
-export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number }
+export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number
+  /** Open project requests pending the Lead's reply, and how many were raised by an automation delivery. */
+  projectRequests: { pending: number; automated: number } }
 /** One open Request in the panel: the accepted ask and the Tickets delivering it, so a cross-project request reads as one row. */
 export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
 import { preview } from './text.ts'

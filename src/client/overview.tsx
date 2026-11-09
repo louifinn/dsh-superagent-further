@@ -120,6 +120,8 @@ export function OverviewPage() {
                 : lead.status === 'absent' ? t('leadAbsent') : t('leadIdle')} />
               <LabelValue label={t('leadExecutorsLabel')} value={String(lead.running)} />
               <LabelValue label={t('leadWaitingLabel')} value={String(lead.waiting)} />
+              <LabelValue label={t('leadRequestsLabel')} value={String(lead.projectRequests.pending)} />
+              {lead.projectRequests.automated > 0 && <LabelValue label={t('leadRequestsAutomatedLabel')} value={String(lead.projectRequests.automated)} />}
             </div>
           </div>
         </li>)}

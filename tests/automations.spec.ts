@@ -188,8 +188,10 @@ describe('project-scope automations', () => {
     expect(schedule.creates[0]!.target).toEqual({ kind: 'session', sessionId: 'lead-default' })
     const prompt = schedule.creates[0]!.prompt
     expect(prompt.split('\n')[0]).toBe('[AUTOMATION auto-00000001 · project default]')
-    expect(prompt).toContain('Report only for project default: inspect and report in this Session; do not modify the '
-      + 'repository, Settings, Tickets, or Policy. If action is needed, state what the Orchestrator should do.')
+    expect(prompt).toContain('Report only for project default: inspect and report in this Session. When the inspection finds work, '
+      + 'raise a project request with `lead_request_create` (giving the automation id from the marker) and decide it with '
+      + '`lead_request_decide`; that is the only project record the delivery may change. Do not modify the repository, Settings, '
+      + 'Sources, Tickets, or Policy.')
     expect(prompt).toContain('Review waiting tickets and report anything urgent.')
     expect(store.automations.get(created.id)).toMatchObject({ scope: 'project', project: 'default', host: 'lead',
       target_session: 'lead-default', orphaned: false,

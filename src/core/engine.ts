@@ -162,8 +162,9 @@ export class Engine {
 
   /**
    * Record a project-level request a worker or the project Lead raises: `pending`, with no replies yet, in `project`.
-   * A worker's repeated raise for the same Ticket and title returns the open request instead of a second one (docs/012 D4),
-   * and a derived request is linked from its root request's `derived` list.
+   * A worker's repeated raise for the same Ticket and title, and a Lead's repeated raise of the same title in its Session,
+   * return the open request instead of a second one (docs/012 D4, D11); a derived request is linked from its root request's
+   * `derived` list.
    * @throws ProjectRequestError when the repository stores no project requests, the text is empty or too long, or the root
    * named is unknown, is itself derived, or belongs to another project.
    */
@@ -172,11 +173,11 @@ export class Engine {
       const store = this.projectRequestStore()
       const { title, instruction } = this.projectRequestText(input)
       // One open request per (ticket, title): a repeated call answers the request it raised before.
-      if (input.raised_by.ticket) {
-        const existing = store.list(input.project).find(request =>
-          request.raised_by.ticket === input.raised_by.ticket && request.title === title && projectRequestOpen(request.status))
-        if (existing) return existing
-      }
+      const open = store.list(input.project).filter(request => request.title === title && projectRequestOpen(request.status))
+      const existing = input.raised_by.ticket
+        ? open.find(request => request.raised_by.ticket === input.raised_by.ticket)
+        : open.find(request => request.raised_by.ticket === undefined && request.raised_by.session === input.raised_by.session)
+      if (existing) return existing
       const at = this.now()
       const parent = input.root?.project_request_id ? store.get(input.root.project_request_id) : undefined
       if (input.root?.project_request_id) {
@@ -250,8 +251,17 @@ export class Engine {
         return this.saveProjectRequestReply(store, request, disposition, at,
           { status, decision, design_ticket_id: design, tickets: [...request.tickets, design] })
       }
-      // A work request accepted without a root Trigger has no Channels to deliver from, so it stays recorded as accepted.
-      if (!request.root || !trigger) return this.saveProjectRequestReply(store, request, disposition, at, { status, decision })
+      // A work request the Lead raised itself has no root Trigger: it still creates its Request and Tickets, with no
+      // external Channels, so the project's Lead owns and reports the result (docs/012 D11).
+      if (!request.root) {
+        const decisionId = key('lead-request', request.id)
+        const created = this.tickets.createLead(decisionId, this.leadMandate(request), this.leadOutcome(request, 'work'), at)
+        return this.saveProjectRequestReply(store, request, disposition, at, {
+          status, decision, request_id: created.id, tickets: [...request.tickets, ...created.ticketIds],
+        })
+      }
+      // A root Trigger that no longer exists has no Channels to deliver from; record the accept without creating work.
+      if (!trigger) return this.saveProjectRequestReply(store, request, disposition, at, { status, decision })
       const decisionId = key('lead-request', request.id)
       this.tickets.create(key('ticket', request.id, 'work'), decisionId, this.leadMandate(request, trigger),
         { triggerIds: [trigger.id], primary: trigger.id }, this.leadOutcome(request, 'work'), at)
@@ -351,13 +361,13 @@ export class Engine {
       return approved
     })
   }
-  /** The Lead Mandate an accepted project request's Tickets run under (docs/012 D2). */
-  private leadMandate(request: ProjectRequest, trigger: Trigger): Mandate {
+  /** The Lead Mandate an accepted project request's Tickets run under (docs/012 D2); a Lead's own request has no Trigger actor. */
+  private leadMandate(request: ProjectRequest, trigger?: Trigger): Mandate {
     return {
       strength: 'explicit',
       policyVersion: this.options.policy().version,
       basis: { via: 'lead', project: request.project, project_request_id: request.id },
-      actor: { ...trigger.actor },
+      actor: trigger ? { ...trigger.actor } : { source: 'dsh-superagent', id: `lead:${request.project}` },
       scope: request.plan?.statement ?? request.title,
     }
   }

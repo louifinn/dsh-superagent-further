@@ -304,6 +304,29 @@ it('creates the implementation request when the Lead accepts a work request from
   store.close()
 })
 
+it('creates the work when the Lead accepts a work request it raised itself, without an external Channel', () => {
+  const { engine, store } = open()
+  const raised = engine.raiseProjectRequest(request({
+    title: 'Review the project for defects', instruction: 'Inspect the clone and raise work for what breaks.',
+    raised_by: { session: 'lead-orchestrator', automation: 'auto-1' },
+  }))
+  expect(raised.raised_by).toEqual({ session: 'lead-orchestrator', automation: 'auto-1' })
+  expect(raised.root).toBeUndefined()
+  // The same Lead raising the same title again answers the open request instead of creating a second one.
+  expect(engine.raiseProjectRequest(request({ title: 'Review the project for defects', instruction: 'Again.',
+    raised_by: { session: 'lead-orchestrator', automation: 'auto-2' } })).id).toBe(raised.id)
+  const accepted = engine.disposeProjectRequest(raised.id, { by: 'lead-orchestrator', action: 'accept', text: 'Fix it.' })
+  expect(accepted.request_id).toBe(key('request', key('lead-request', raised.id)))
+  const created = store.requests.get(accepted.request_id ?? '')
+  expect(created?.ticketIds).toEqual([key('ticket', key('lead-request', raised.id), 'work')])
+  expect(created?.channels).toEqual([])
+  const ticket = store.tickets.get(created?.ticketIds[0] ?? '')
+  expect(ticket).toMatchObject({ title: 'Review the project for defects', project: 'orchestrator', deliverable: 'change', channels: [] })
+  expect(ticket?.mandate.actor).toEqual({ source: 'dsh-superagent', id: 'lead:orchestrator' })
+  expect(ticket?.origin.triggerIds).toEqual([])
+  store.close()
+})
+
 it('refuses approval commands for requests that cannot take them', () => {
   const { engine, store, setClock } = open()
   store.triggers.save(trigger())
