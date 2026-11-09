@@ -118,6 +118,8 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'followup'; authority?: string }
   | { via: 'admission'; cell: AdmissionCell; addressed?: 'mention' | 'direct'; observation?: { mode: AcceptMode } }
   | { via: 'listed'; addressed?: 'mention' | 'direct'; observation?: { mode?: AcceptMode }; authority?: string }
+  /** A project Lead accepted the project request that raised this work (docs/012 D2); the Lead runtime adds the `revalidate` case. The optional `addressed` keeps the shared basis view reading every non-followup basis. */
+  | { via: 'lead'; project: string; project_request_id: string; addressed?: 'mention' | 'direct' }
   /** A message of a bot on its Source's bot list: an inferred candidate at most, never an explicit request or a stop. */
   | { via: 'bot'; addressed?: 'mention' | 'direct'; observation: { mode: AcceptMode } }
 )
@@ -289,6 +291,103 @@ export interface Request {
   createdAt: string
   /** When, by whom, and how it ended; absent while it is open. */
   ended?: { at: string; by: TicketEndBy; outcome: 'done' | 'partial' | 'stopped'; reason?: string }
+}
+export type ProjectRequestKind = 'work' | 'architecture'
+/**
+ * A project-level request's lifecycle (docs/012 D1): the Lead disposes a `pending` or `needs-info` request as `accepted`,
+ * `rejected` or `needs-info`; an accepted one ends `completed` with its summary, while an architecture request passes
+ * through `awaiting-approval` and `approved` (docs/012 D7).
+ */
+export type ProjectRequestStatus = 'pending' | 'needs-info' | 'accepted' | 'rejected' | 'awaiting-approval' | 'approved'
+  | 'completed' | 'withdrawn'
+/** One reply a project Lead recorded on a ProjectRequest; a request keeps them oldest first. */
+export interface LeadReply { at: string; by: string; text: string }
+/** Who raised a ProjectRequest: its Session and, for a worker's request, the Ticket and Assignment it came from. */
+export interface ProjectRequestRaisedBy { session: string; ticket?: string; assignment?: string }
+/**
+ * Where a root ProjectRequest came from: the source work that produced it, either the domain Request or the root
+ * ProjectRequest it derives from, and the Trigger and Thread whose Channel its final report answers (docs/012 D6).
+ */
+export interface ProjectRequestRoot { request_id?: string; project_request_id?: string; trigger_id: string; thread_key: string }
+/** The Lead's one disposition of a ProjectRequest, recorded with the mandatory reply that carries it (docs/012 D3). */
+export interface ProjectRequestDecision { action: 'accept' | 'reject' | 'needs-info'; at: string; notes?: string }
+/** A person's approval of an architecture ProjectRequest's design, linked from a human Trigger on the root thread. */
+export interface ProjectRequestApproval { thread_key: string; trigger_id: string; at: string; by: 'human'; text: string }
+/**
+ * A project-level ask a worker or the project Lead raised (docs/012 D1). `root` is set only on the root request of a chain:
+ * derived requests name it in `root.project_request_id`, it lists their ids in `derived`, and they keep its id in `root`.
+ * `replies` is the audit of what the Lead answered; `tickets` names the domains Tickets of the request and its derived ones.
+ */
+export interface ProjectRequest {
+  id: string
+  project: string
+  kind: ProjectRequestKind
+  title: string
+  /** What the worker wants done, bounded; the Lead disposes it with a reply. */
+  instruction: string
+  raised_by: ProjectRequestRaisedBy
+  root?: ProjectRequestRoot
+  status: ProjectRequestStatus
+  /** The Lead's answers, oldest first: the disposition's reply, the completion summary and any extra reply. */
+  replies: LeadReply[]
+  decision?: ProjectRequestDecision
+  /** The domain Request an accept created, whose Mandate basis is this project request (docs/012 D2). */
+  request_id?: string
+  /** Tickets of this request and of its derived requests. */
+  tickets: string[]
+  /** Ids of the project requests raised from this root request. */
+  derived: string[]
+  /** The person's approval of an architecture request's design (docs/012 D7). */
+  approval?: ProjectRequestApproval
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+/** The longest title and instruction a ProjectRequest accepts. */
+export const PROJECT_REQUEST_TITLE_LIMIT = 120
+export const PROJECT_REQUEST_INSTRUCTION_LIMIT = 8000
+/** Whether a ProjectRequest still accepts replies and a disposition: everything but `completed`, `rejected` and `withdrawn`. */
+export const projectRequestOpen = (status: ProjectRequestStatus): boolean =>
+  status !== 'completed' && status !== 'rejected' && status !== 'withdrawn'
+/** What raises a ProjectRequest, by a worker (through `Engine.raiseProjectRequest`) or by the project Lead. */
+export interface ProjectRequestInput {
+  project: string
+  title: string
+  instruction: string
+  kind?: ProjectRequestKind
+  raised_by: ProjectRequestRaisedBy
+  root?: ProjectRequestRoot
+}
+/** A Lead reply recorded without a disposition. */
+export interface ProjectRequestReply { by: string; text: string }
+/** A Lead's disposition of a ProjectRequest, with the mandatory reply that carries it. */
+export interface ProjectRequestDisposition extends ProjectRequestReply { action: ProjectRequestDecision['action']; notes?: string }
+/** Why the Engine refused a project-request command. */
+export type ProjectRequestRefusal = 'unknownProjectRequest' | 'settledProjectRequest' | 'emptyText' | 'tooLong' | 'notAccepted'
+  | 'unknownRootProjectRequest' | 'notRootProjectRequest' | 'foreignProjectRequest' | 'noProjectRequestStore'
+const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
+  unknownProjectRequest: 'This project request does not exist',
+  settledProjectRequest: 'This project request has already been decided or closed',
+  emptyText: 'A project request reply or summary needs text',
+  tooLong: 'A project request title or instruction is too long',
+  notAccepted: 'Only an accepted project request can be completed',
+  unknownRootProjectRequest: 'The root project request this request derives from does not exist',
+  notRootProjectRequest: 'A derived project request must name a root project request',
+  foreignProjectRequest: 'A project request must stay in the project of the root request it derives from',
+  noProjectRequestStore: 'This repository does not store project requests',
+}
+/**
+ * A project-request command's refusal: a missing request, a settled one, an empty reply or summary, or a repository that
+ * does not carry the project_request table. `src/core/errors.ts` owns `UserError`; the project-request codes live here
+ * until the Lead tools land, when they can join `USER_ERRORS` (docs/012 M14).
+ */
+export class ProjectRequestError extends Error {
+  readonly code: ProjectRequestRefusal
+  constructor(code: ProjectRequestRefusal) {
+    super(PROJECT_REQUEST_REFUSALS[code])
+    this.name = 'ProjectRequestError'
+    this.code = code
+  }
 }
 /** Ticket aggregate: an authorized work item with its assignments, channels, thread bindings, and inputs. */
 export interface Ticket {

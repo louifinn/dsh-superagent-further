@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Store, SCHEMA_VERSION } from '../src/app/store.ts'
-import { MemoryRepositories, key, type Assignment, type Decision, type Repositories, type Thread, type Ticket } from '../src/core/index.ts'
+import { MemoryRepositories, key, type Assignment, type Decision, type ProjectRequest, type Repositories, type Thread, type Ticket } from '../src/core/index.ts'
 import { threadFacts } from '../src/app/views/records.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema } from '../src/policy.ts'
@@ -280,4 +280,26 @@ it('summarises the reply queue for the overview: waiting count, failures, the ol
   expect(store.read.replyQueue()).toEqual({ pending: 2, failing: 1, oldestAt: '2026-01-01T00:00:00Z',
     nextAt: new Date(1_000).toISOString() })
   store.close()
+})
+
+it('stores project requests by project and status, in order and across a reopen', () => {
+  const path = join(directory, 'orchestrator.sqlite')
+  const store = new Store(path)
+  const request = (id: string, project: string, status: ProjectRequest['status']): ProjectRequest => ({
+    id, project, kind: 'work', title: id, instruction: '', raised_by: { session: 'lead-orchestrator' }, status, replies: [],
+    tickets: [], derived: [], created_at: '', updated_at: '' })
+  store.projectRequests.save(request('prq-1', 'a', 'pending'))
+  store.projectRequests.save(request('prq-2', 'a', 'accepted'))
+  store.projectRequests.save(request('prq-3', 'b', 'pending'))
+  // Saving a request again updates its row, status and listing order rather than adding another.
+  store.projectRequests.save({ ...store.projectRequests.get('prq-2')!, status: 'completed' })
+  expect(store.projectRequests.list().map(item => item.id)).toEqual(['prq-1', 'prq-2', 'prq-3'])
+  expect(store.projectRequests.list('a').map(item => item.id)).toEqual(['prq-1', 'prq-2'])
+  expect(store.projectRequests.get('prq-2')?.status).toBe('completed')
+  expect(store.projectRequests.get('prq-missing')).toBeUndefined()
+  store.close()
+  const reopened = new Store(path)
+  expect([reopened.projectRequests.list('b').map(item => item.id), reopened.projectRequests.get('prq-1')?.status])
+    .toEqual([['prq-3'], 'pending'])
+  reopened.close()
 })
