@@ -37,6 +37,7 @@ import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
 import { requestResultNotices } from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
+import { Automations, type ScheduleService } from './automations.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
 import { Setup } from './setup.ts'
@@ -88,6 +89,8 @@ export class Runtime extends Service implements SourceHost {
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   readonly masterId: string
+  /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
+  readonly automations?: Automations
   private readonly sourceLinks = new TextCache(200_000)
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
@@ -126,6 +129,11 @@ export class Runtime extends Service implements SourceHost {
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
       const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
       store.set(KV.runtime.masterId, masterId)
+      // The schedule service is optional: without it the main Session has no automation tools and the rest of the runtime is
+      // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
+      const schedule = ctx.get('schedule') as ScheduleService | undefined
+      this.automations = schedule === undefined ? undefined : new Automations({ schedule, store: store.automations, masterId,
+        logger: ctx.logger, projects: () => store.settings().executor.projects.map(project => project.id) })
       const commands = this.commands = new Commands(() => setup.deployment, setup.commandEnvironment, this.lifetime)
       const board = this.board
       const effects = this.effects = new Effects(store, board)
@@ -142,7 +150,7 @@ export class Runtime extends Service implements SourceHost {
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
-        lifetime: this.lifetime,
+        lifetime: this.lifetime, automations: this.automations,
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
@@ -225,6 +233,7 @@ export class Runtime extends Service implements SourceHost {
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
+        automations: this.automations,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
@@ -281,6 +290,17 @@ export class Runtime extends Service implements SourceHost {
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
+    // Reconcile only after the main Session exists, because every Host target names it. A missing or changed Host task is
+    // recorded as orphaned or drifted; it is never recreated silently (docs/011 B4).
+    try {
+      const reconciled = await this.automations?.reconcile()
+      if (reconciled && (reconciled.orphaned || reconciled.drifted || reconciled.unrecorded)) {
+        this.ctx.logger.warn('dsh-superagent-further automation reconciliation: %d checked, %d orphaned, %d drifted, %d unrecorded',
+          reconciled.checked, reconciled.orphaned, reconciled.drifted, reconciled.unrecorded)
+      }
+    } catch (error) {
+      this.ctx.logger.warn('dsh-superagent-further automation reconciliation failed: %s', String(error))
+    }
     this.executor.resume()
     this.passes.start()
     this.effects.start()

@@ -18,6 +18,7 @@ import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { leadTools } from './tools/lead.ts'
 import { languageContext } from './language.ts'
+import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
 import { memoryTools } from './tools/memory.ts'
 import type { Store } from './store.ts'
 import type { Project } from '../projects.ts'
@@ -40,6 +41,8 @@ export interface SessionsHost {
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
+  /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
+  readonly automations?: Automations
 }
 
 /**
@@ -59,6 +62,8 @@ export const MEMORY_CONTEXT_ORDER = 300
 export const LANGUAGE_CONTEXT = 'dsh-superagent-further-language'
 /** After the memory snapshot, whose order is 300. */
 export const LANGUAGE_CONTEXT_ORDER = 310
+/** The runtime-context contribution that explains an automation delivery and lists the enabled installation tasks. */
+export { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER }
 /** The Session id of a project's Lead: one persistent Session per registered project (docs/010-project-orchestrator.md). */
 export const leadSessionId = (projectId: string): string => `lead-${projectId}`
 /** The project a Session id names as its Lead, if it is a Lead Session's id. */
@@ -320,6 +325,16 @@ export class Sessions {
       order: LANGUAGE_CONTEXT_ORDER,
       text: () => languageContext(host.store.settings()),
     }))
+    // Automations are volatile like memory: a create, edit or delivery changes their snapshot, so they travel in runtime
+    // context instead of rewriting the system prompt. Only the installation main Session can create or change them.
+    if (master && host.automations !== undefined) {
+      const automations = host.automations
+      binding.disposers.push(agent.ctx.systemPrompt.context({
+        name: AUTOMATION_CONTEXT,
+        order: AUTOMATION_CONTEXT_ORDER,
+        text: () => automations.context(),
+      }))
+    }
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
       binding.scope = scope

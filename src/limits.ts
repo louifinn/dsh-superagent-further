@@ -25,4 +25,9 @@ export const LIMITS = {
   memoryPromptRows: 12,
   memoryPinned: 40,
   memoryKeepDays: { min: 1, max: 3650 },
+  automationTitle: 120,
+  automationInstruction: 4000,
+  automationRule: 2000,
+  automationTasks: 20,
+  automationAudit: 20,
 } as const

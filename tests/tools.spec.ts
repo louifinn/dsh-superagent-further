@@ -16,6 +16,11 @@ const words = (count: number) => Array.from({ length: count }, () => 'word').joi
 const read = (resource: string, page: { offset?: number; limit?: number } = {}) =>
   h.runTool(h.runtime.masterId, 'orchestrator_read', { resource, ...page })
 
+it('registers no automation tools when the Host has no schedule service', async () => {
+  expect([...h.tools.get(h.runtime.masterId)!.keys()].filter(name => name.startsWith('automation_'))).toEqual([])
+  await expect(h.runTool(h.runtime.masterId, 'automation_list', {})).rejects.toThrow('Tool automation_list is not registered')
+})
+
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
   const { ticket, trigger } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   await h.acceptedTicket(feishu('2', '@bot 再修一个'))

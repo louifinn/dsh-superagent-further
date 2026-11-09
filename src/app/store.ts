@@ -7,7 +7,8 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
   type Request, type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
+  migrateTo19, tooOld } from './migration.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { Versions } from './versions.ts'
@@ -78,10 +79,12 @@ export class Store implements Repositories {
   readonly memories: Memories
   /** Tier-B settings proposals awaiting the operator's approval and the decisions already taken (docs/011 A5.2). */
   readonly proposals: Proposals
+  /** Installation-level automation tasks whose clock and delivery belong to the Host schedule service (docs/011 B). */
+  readonly automations: AutomationRecords
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (18), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (19), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
@@ -89,6 +92,7 @@ export class Store implements Repositories {
     this.leads = new LeadMessages(this.db)
     this.memories = new Memories(this.db, () => this.settings().memory)
     this.proposals = new Proposals(this.db)
+    this.automations = new AutomationRecords(this.db)
     this.read = storeReads(this.db)
     // Windows ignores the directory mode above, so the directory and the database are given an owner-only ACL; on Unix this is
     // the 0700 directory and 0600 file mode the rest of the code expects.
@@ -129,10 +133,17 @@ export class Store implements Repositories {
               created_at TEXT NOT NULL, expires_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, applied_revision INTEGER,
               error TEXT);
             CREATE INDEX IF NOT EXISTS settings_proposal_status ON settings_proposal(status, block);
+            CREATE TABLE IF NOT EXISTS automation (id TEXT PRIMARY KEY, scope TEXT NOT NULL DEFAULT 'installation',
+              project TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT 'orchestrator', target_session TEXT NOT NULL,
+              title TEXT NOT NULL, instruction TEXT NOT NULL, rrule TEXT NOT NULL, dsh_task TEXT, dsh_updated_at TEXT,
+              host_status TEXT, next_at TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 0, last_delivery_at TEXT, last_error TEXT, orphaned INTEGER NOT NULL DEFAULT 0,
+              audit TEXT NOT NULL DEFAULT '[]');
+            CREATE INDEX IF NOT EXISTS automation_scope ON automation(scope, enabled);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {
@@ -384,6 +395,105 @@ export class Proposals {
       .run(proposal.id, proposal.block, proposal.base_revision, JSON.stringify(proposal.value), JSON.stringify(proposal.diff), proposal.reason,
         proposal.actor, proposal.status, proposal.created_at, proposal.expires_at, proposal.decided_at ?? null, proposal.decided_by ?? null,
         proposal.applied_revision ?? null, proposal.error ?? null)
+  }
+}
+/** One audited change to an automation record, kept as the last `LIMITS.automationAudit` entries. */
+export interface AutomationAudit {
+  at: string
+  kind: 'created' | 'updated' | 'deleted' | 'reconciled' | 'orphaned' | 'drifted'
+  by: string
+  detail: string
+}
+/** The scope of an automation task; only installation-level tasks exist in P1 (docs/011 B3.1). */
+export type AutomationScope = 'installation'
+/** Which Session a task's Host schedule targets: the installation main Session, or (P2) a project Lead. */
+export type AutomationHost = 'orchestrator' | 'lead'
+/** The Host schedule task's lifecycle as the plugin last read it. */
+export type AutomationHostStatus = 'active' | 'paused' | 'ended'
+/**
+ * One automation task stored by the plugin while the Host schedule service owns its clock and delivery. `dsh_task` names the
+ * Host task, `dsh_updated_at` is the Host revision an edit checks, and `orphaned` records a Host task that is gone or ended
+ * rather than silently recreating it (docs/011 B4).
+ */
+export interface AutomationRecord {
+  id: string
+  scope: AutomationScope
+  project: string
+  host: AutomationHost
+  target_session: string
+  title: string
+  instruction: string
+  rrule: string
+  dsh_task: string | null
+  dsh_updated_at: string | null
+  host_status: AutomationHostStatus | null
+  next_at: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  revision: number
+  last_delivery_at: string | null
+  last_error: string | null
+  orphaned: boolean
+  audit: AutomationAudit[]
+}
+/** Parses one row of the `automation` table into an `AutomationRecord`. */
+function automationOf(row: Record<string, unknown>): AutomationRecord {
+  const optional = (name: string) => row[name] === null || row[name] === undefined ? null : String(row[name])
+  return {
+    id: String(row.id), scope: row.scope as AutomationScope, project: String(row.project), host: row.host as AutomationHost,
+    target_session: String(row.target_session), title: String(row.title), instruction: String(row.instruction), rrule: String(row.rrule),
+    dsh_task: optional('dsh_task'), dsh_updated_at: optional('dsh_updated_at'),
+    host_status: row.host_status === null || row.host_status === undefined ? null : row.host_status as AutomationHostStatus,
+    next_at: optional('next_at'), enabled: Boolean(Number(row.enabled)), created_at: String(row.created_at),
+    updated_at: String(row.updated_at), revision: Number(row.revision), last_delivery_at: optional('last_delivery_at'),
+    last_error: optional('last_error'), orphaned: Boolean(Number(row.orphaned)),
+    audit: JSON.parse(String(row.audit)) as AutomationAudit[],
+  }
+}
+/**
+ * Stores installation-level automation tasks. The plugin writes the row around the Host schedule call, so a row can name a
+ * Host task that an interrupted create left behind; reconciliation reports that instead of deleting or recreating it.
+ */
+export class AutomationRecords {
+  constructor(private readonly db: DatabaseSync) {}
+  /** One automation task by id, whatever its state. */
+  get(id: string): AutomationRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM automation WHERE id=?').get(id) as Record<string, unknown> | undefined
+    return row === undefined ? undefined : automationOf(row)
+  }
+  /** Automation tasks, newest first, optionally only enabled ones and for one scope. */
+  list(options: { enabled?: boolean; scope?: AutomationScope; limit?: number } = {}): AutomationRecord[] {
+    const where: string[] = [], values: SQLInputValue[] = []
+    if (options.enabled !== undefined) { where.push('enabled=?'); values.push(options.enabled ? 1 : 0) }
+    if (options.scope !== undefined) { where.push('scope=?'); values.push(options.scope) }
+    const clause = where.length ? ` WHERE ${where.join(' AND ')}` : ''
+    if (options.limit !== undefined) values.push(options.limit)
+    const rows = this.db.prepare(`SELECT * FROM automation${clause} ORDER BY rowid DESC${options.limit === undefined ? '' : ' LIMIT ?'}`)
+      .all(...values) as Record<string, unknown>[]
+    return rows.map(automationOf)
+  }
+  /** Every automation task, newest first. */
+  records(): AutomationRecord[] {
+    return (this.db.prepare('SELECT * FROM automation ORDER BY rowid DESC').all() as Record<string, unknown>[]).map(automationOf)
+  }
+  /** Inserts a task or replaces the stored state of one already recorded. */
+  save(record: AutomationRecord): void {
+    this.db.prepare(`INSERT INTO automation (id, scope, project, host, target_session, title, instruction, rrule, dsh_task, dsh_updated_at,
+      host_status, next_at, enabled, created_at, updated_at, revision, last_delivery_at, last_error, orphaned, audit)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET scope=excluded.scope, project=excluded.project, host=excluded.host,
+        target_session=excluded.target_session, title=excluded.title, instruction=excluded.instruction, rrule=excluded.rrule,
+        dsh_task=excluded.dsh_task, dsh_updated_at=excluded.dsh_updated_at, host_status=excluded.host_status, next_at=excluded.next_at,
+        enabled=excluded.enabled, created_at=excluded.created_at, updated_at=excluded.updated_at, revision=excluded.revision,
+        last_delivery_at=excluded.last_delivery_at, last_error=excluded.last_error, orphaned=excluded.orphaned, audit=excluded.audit`)
+      .run(record.id, record.scope, record.project, record.host, record.target_session, record.title, record.instruction, record.rrule,
+        record.dsh_task, record.dsh_updated_at, record.host_status, record.next_at, record.enabled ? 1 : 0, record.created_at,
+        record.updated_at, record.revision, record.last_delivery_at, record.last_error, record.orphaned ? 1 : 0, JSON.stringify(record.audit))
+  }
+  /** Deletes one task. The Host task is removed first by the automation service. */
+  delete(id: string): void {
+    this.db.prepare('DELETE FROM automation WHERE id=?').run(id)
   }
 }
 export { key, threadKey }

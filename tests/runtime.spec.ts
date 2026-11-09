@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { hostedElsewhere, Runtime } from '../src/app/runtime.ts'
+import { AUTOMATION_CONTEXT, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
 import { jobRegistry } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
@@ -80,6 +81,42 @@ async function receive(trigger: Trigger, target = runtime) {
   return result
 }
 let services: Record<string, unknown>
+/** The Host `schedule` service when a test installs one; otherwise the runtime registers no automation tools. */
+let schedule: ScheduleService | undefined
+/** A Host schedule service for the runtime tests: one task per create, paused by active:false, deleted by the delete action. */
+function fakeSchedule(): ScheduleService & { tasks: Map<string, ScheduleTask> } {
+  const tasks = new Map<string, ScheduleTask>()
+  let sequence = 0
+  return {
+    tasks,
+    create: async request => {
+      const task: ScheduleTask = { id: `schedule-${++sequence}`, title: request.title, prompt: request.prompt, status: 'active',
+        scheduledAt: '2026-11-10T09:00:00.000Z', updatedAt: '2026-11-09T12:00:00.000Z', target: request.target }
+      tasks.set(task.id, task)
+      return { ...task }
+    },
+    edit: async request => {
+      const task = tasks.get(request.id)
+      if (!task) return { id: request.id, code: 'schedule_not_found' }
+      if (request.action === 'delete') { tasks.delete(request.id); return { id: request.id, deleted: true } }
+      if (request.expectedUpdatedAt !== undefined && request.expectedUpdatedAt !== (task.updatedAt ?? null)) {
+        return { id: request.id, code: 'schedule_conflict' }
+      }
+      if (request.patch.title !== undefined) task.title = request.patch.title
+      if (request.patch.prompt !== undefined) task.prompt = request.patch.prompt
+      if (request.patch.timing !== undefined) task.scheduledAt = '2026-11-10T09:00:00.000Z'
+      if (request.patch.active !== undefined) task.status = request.patch.active ? 'active' : 'paused'
+      task.updatedAt = new Date(Date.parse(task.updatedAt!) + 1).toISOString()
+      return { ...task }
+    },
+    list: async () => ({ items: [...tasks.values()], shown: tasks.size, total: tasks.size, limit: 50, offset: 0 }),
+    catalog: async () => [...tasks.values()],
+    view: async ({ id }) => tasks.get(id) ?? { id, code: 'schedule_not_found' },
+    history: async () => ({ records: [] }),
+    run: async ({ id }) => tasks.get(id) ?? { id, code: 'schedule_not_found' },
+    deleteInactive: async () => ({ deleted: 0 }),
+  }
+}
 /** DSH's job registry the Runtime's Executor reads its workers' shell jobs from. */
 let jobs: ReturnType<typeof jobRegistry>
 /** What worker commands of the startup checks print, by argv; an Error makes the command fail with its message. */
@@ -124,7 +161,7 @@ async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}):
   await runtime.stop()
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store, accounts); store.close()
   const ctx = new Context()
-  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
+  for (const [name, service] of Object.entries(schedule === undefined ? services : { ...services, schedule })) ctx.reflect.provide(name, service)
   runtime = new Runtime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
   return runtime
 }
@@ -177,6 +214,7 @@ beforeEach(async () => {
     [SCOPED]: `global\0credential.helper\n\0global\0credential.https://github.com.helper\n${credentialHelper(AGENT())}\0`,
   }
   const ctx = new Context()
+  schedule = undefined
   agents = new Map()
   tools = new Map()
   sections = new Map()
@@ -2083,6 +2121,37 @@ it('ends the main Session\'s prompt with its Policy section, each rule on one li
     .map(rule => rule.id === 'copy' ? '- Copy fixes (copy): Fix typos. - Keep the tone. ## Not a heading' : `- ${rule.name} (${rule.id}): ${rule.instruction}`))
   expect(prompt.indexOf('## Policy')).toBeGreaterThan(prompt.indexOf('Execution environment'))
   expect((tools.get(runtime.masterId)!.get('orchestrator_eval') as unknown as { description: string }).description).not.toMatch(/rules/)
+})
+
+it('registers the four installation automation tools and their runtime context only when the Host schedule service exists', async () => {
+  const main = () => tools.get(runtime.masterId)!
+  expect(main().has('automation_create')).toBe(false)
+  const host = fakeSchedule()
+  schedule = host
+  const next = await restart()
+  await next.ready
+  await next.idle()
+  expect(main().has('automation_create')).toBe(true)
+  expect(['automation_create', 'automation_list', 'automation_view', 'automation_edit'].every(name => main().has(name))).toBe(true)
+  expect(main().has('automation_run')).toBe(false)
+  const context = (contexts.get(runtime.masterId) ?? []).find(entry => entry.name === AUTOMATION_CONTEXT)!
+  expect(context.order).toBe(320)
+  expect((context.text as () => string)()).toContain('## automations')
+  const created = await runTool(runtime.masterId, 'automation_create', { title: 'Check the queue',
+    instruction: 'Review waiting tickets.', rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', enabled: true }) as Record<string, unknown>
+  expect(created).toMatchObject({ title: 'Check the queue', target_session: runtime.masterId,
+    next_occurrence: '2026-11-10T09:00:00.000Z' })
+  expect(host.tasks.size).toBe(1)
+  expect([...host.tasks.values()][0]).toMatchObject({ target: { kind: 'session', sessionId: runtime.masterId } })
+  expect([...host.tasks.values()][0]!.prompt.startsWith(`[AUTOMATION ${String(created.id)} · installation]`)).toBe(true)
+  expect((context.text as () => string)()).toContain(`${String(created.id)} — Check the queue`)
+  const listed = await runTool(runtime.masterId, 'automation_list', {}) as { items: Record<string, unknown>[]; unrecorded: unknown[] }
+  expect(listed.items).toHaveLength(1)
+  expect(listed.unrecorded).toEqual([])
+  const viewed = await runTool(runtime.masterId, 'automation_view', { id: String(created.id) }) as Record<string, unknown>
+  expect(viewed.instruction).toBe('Review waiting tickets.')
+  const edited = await runTool(runtime.masterId, 'automation_edit', { id: String(created.id), action: 'update', enabled: false }) as Record<string, unknown>
+  expect(edited).toMatchObject({ id: created.id, enabled: false, host_status: 'paused' })
 })
 
 it('keeps the Policy the main Session judges by in its prompt, after admission and the rest, as the latest save left it', async () => {
