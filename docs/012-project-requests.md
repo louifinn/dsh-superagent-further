@@ -1,8 +1,9 @@
 # 012 — Project-level Requests and lead-dispatched work (Sprint 22)
 
-Status: approved by the operator on 2026-11-10 (Tower mode, mission chain M13–M18) and implemented. Missions M13–M17
-are merged; M18 updates the documentation and README counts and runs the full check. `docs/011-capabilities.md` Part E
-records the decision summary.
+Status: approved by the operator on 2026-11-10 (Tower mode, mission chain M13–M18) and implemented; missions M13–M18
+are merged. The operator later added D11 (Lead-raised work from automation deliveries, Sprint 25), D12 (installation-level
+self-bootstrap, Sprint 26) and D13 (Lead escalation to the Orchestrator, Sprint 27), all implemented. `docs/011-capabilities.md`
+Parts E–G record the decision summaries.
 
 ## Why
 

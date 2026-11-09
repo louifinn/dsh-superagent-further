@@ -11,7 +11,8 @@ of `docs/011-capabilities.md`) extends this design's Lead authority. A worker ca
 project request, and a Lead that accepts one creates that project's Request and Tickets under a Lead
 Mandate; "only the Orchestrator creates Tickets" below therefore means cross-project Tickets. The Lead
 also carries architecture work through a person's recorded approval, and a root request closes with one
-aggregate report. The rest of this document is unchanged.
+aggregate report. A Lead may also escalate work outside its project for the Orchestrator to decide (D13), and an installation
+automation delivery can become an installation Request from the main Session (D12). The rest of this document is unchanged.
 
 ## Why
 

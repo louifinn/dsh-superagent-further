@@ -1,6 +1,6 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **partly implemented — Part A P1/P2/P3 and Part B P1/P2/P3 implemented; the optional run action deliberately not implemented; decisions settled** (2026-11-09). The survey behind this
+Status: **implemented — Part A P1/P2/P3, Part B P1/P2/P3 (manual run and delete added in Sprint 19 after operator approval), Part C GitHub labels, Part D Feishu file delivery, Part E project requests, Part F installation self-bootstrap and Part G Lead escalation; decisions settled** (2026-11-10). The survey behind this
 document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
@@ -79,8 +79,8 @@ Policy directly. Raising and deciding that project request is the delivery's onl
 D11); installation tasks are unchanged. The row records the scope and project, list/view show them with `report_only`, and an edit
 cannot re-target an existing task. Reconciliation resolves project targets by their recorded project
 id, marks a removed project or an archived target Session orphaned, and reports a target that is not
-the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and remain the only four automation
-tools at this point; `automation_run` and `automation_delete` were added later without a schema
+the project Lead as drift. `automation_create/list/view/edit` gain an optional `project` and were the only four automation
+tools at that point; `automation_run` and `automation_delete` were added later without a schema
 change (Sprint 19). `GET automations`, `POST automations` and `PUT automations/:id` sit behind the
 same-origin check; the new Automations page lists scope, project, human-readable schedule, enabled
 switch, created and last delivery, shows orphan warnings, and creates or edits a task; run and delete
@@ -422,7 +422,7 @@ The installed Host runs a durable, Host-wide schedule service. Evidence, all fro
   (`dsh-tool-schedule/README.md:146-147`), and the service itself refuses a delegated Session target
   (`lib/index.js:2501-2504`).
 - **No per-task authorization.** See constraint 3. This is the main reason the plugin keeps its own
-  record instead of exposing the Host's four tools to Sessions.
+  record instead of exposing the Host's own schedule tools to Sessions.
 
 The plugin keeps no `schedule` dependency in its inject list:
 `['agents','sessionController','sessionPersistence','workspaceRegistry','permissionPresets','tools','systemPrompt','skills','webServer','llm','subprocess']`
@@ -636,7 +636,7 @@ work still flows through Sources and admission.
 
 - New `src/app/automations.ts`: record validation, envelope building, Host calls, create compensation,
   edit conflicts, and reconciliation.
-- New `src/app/tools/automation.ts`: the four tools; only the Orchestrator's tool list includes them.
+- New `src/app/tools/automation.ts`: the four initial tools (six after Sprint 19: run and delete); only the Orchestrator's tool list includes them.
 - `src/app/store.ts` + `src/app/migration.ts`: `automation` table, `SCHEMA_VERSION` 19, `migrateTo19`.
 - `src/app/runtime.ts`: reads the optional `schedule` service with `ctx.get('schedule')`, passes the
   service to `Sessions` and `mainTools`, and reconciles after the Orchestrator Session exists. No

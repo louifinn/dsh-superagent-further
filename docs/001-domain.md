@@ -158,6 +158,10 @@ A reference list of the terms this and the later documents use, with their Chine
 | Mandate | 授权 | What an accept grants: strength, scope and the Policy version it relied on |
 | Request | 请求 | One accepted ask: its Decision, Mandate, title, optional deadline and the Tickets that deliver it |
 | Project | 项目 | A registered local clone paired with a remote `owner/name` repository and an optional base branch; a Ticket belongs to one |
+| Project request | 项目请求 | A durable ask a worker makes to its project's Lead when its Ticket needs a decision, a new deliverable or another project's work; the Lead must reply and decides it |
+| Escalation | 升级 | A project Lead's request to the Orchestrator for work outside its project; the Orchestrator must reply and decides it |
+| Installation request | 安装级请求 | A Request created without a source Thread: by the main Session from an installation automation delivery, or by the Orchestrator for an accepted escalation |
+| Deliverable | 交付契约 | A Ticket's contract: `change` ends only through a followed pull request, `answer` reads the live checkout and ends with its report |
 | Primary repository | 主仓库 | The first registered project's repository; setup verifies push access to it and unqualified `github:<n>` Thread ids belong to it |
 | Ticket | 工单 | A unit of authorized work and one delivery |
 | Assignment | 派工 | The binding of a Ticket to one Executor instance |

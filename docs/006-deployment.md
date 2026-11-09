@@ -109,6 +109,10 @@ On Windows, POSIX file modes restrict nothing, so the state directory and the da
 - **Attachments.** An image message keeps its `image_key` in the text, and the assessment can read that image (PNG, JPEG, WebP or GIF) when the Source message is admitted; a file keeps its `file_key` and name as text, and the Source does not download it. Forwarded messages keep the forwarded text and any image keys in it.
 - **Rate limits and failures.** Feishu's limits and permission errors come back from `lark-cli` as errors (`99991400` for a rate limit, `99991672` and `230027` for a missing scope). The Source never hides them: a history read reports the error on its `history` entry and retries on the next minute round, and the event consumer is restarted with a one-second delay after a run that stayed up a minute and with exponential backoff up to sixty seconds otherwise.
 
+#### Independent DSH Sessions
+
+The `session` Source is always registered and needs no account or CLI. It lets a root DeepSeek Harness Session that dsh-superagent-further does not manage ask for work with the global `superagent_submit` tool (`{title, instruction, project?, session_id?}`). Each call becomes one Trigger under the `workspace` admission row, so the Policy decides whether it is ignored, inferred or explicit; every outcome is delivered back to the calling Session as a message, and an accepted Request reports its result there. The tool refuses subagents, the Orchestrator's own, Lead and Executor Sessions, an unknown project and a disabled Source. Switch the Source off in **Sources** to stop submissions.
+
 ### Where the secrets live, and how to rotate them
 
 Nothing in this guide writes a secret into the repository. A copy of the values for convenience belongs in the workspace `.env`, which is ignored by git (`git check-ignore .env` prints it); check before committing that no `.env` file is staged.
@@ -339,7 +343,7 @@ RRULE:FREQ=DAILY
 
 The Automations page lists every task with its scope (installation, or project and project name), title, human-readable schedule, enabled switch, created and last-delivery times, and an orphan or error warning with the recorded reason. When at least one task is orphaned or has a recorded delivery error, an attention section above the table repeats the count, and each task row offers an expandable delivery history, newest first, with the result and error of each recent delivery. The operator can create a task there — scope, project from the registered projects, title, instruction, rrule and enabled — or edit an existing one's title, instruction, rule and enabled state, run one now, or delete one after a confirmation dialog. The page and the management API use the same service code path and require the panel's same-origin header.
 
-The Host owns the clock, the durable task and delivery; the plugin owns the record and its meaning. Delivery is a user-role turn in the target Session whose prompt begins with `[AUTOMATION auto-… · installation]` or `[AUTOMATION auto-… · project <projectId>]` and then carries the stored instruction (and, for a project, the report-only rule). It is not a new Trigger or Ticket, and the standing instruction must work within the Session's existing tools and authority: an installation task never changes settings, Policy or Sources, and a project delivery's only write is the project request it raises and decides. The Host delivers at least once, collapses missed occurrences to the latest, and delivers only while the Host runs, so the plugin schedules nothing while DeepSeek Harness is stopped. Host schedule management is installation-wide, so a task created outside this plugin is not visible as a plugin record unless its prompt carries the marker; reconciliation reports such Host tasks instead of adopting or recreating them.
+The Host owns the clock, the durable task and delivery; the plugin owns the record and its meaning. Delivery is a user-role turn in the target Session whose prompt begins with `[AUTOMATION auto-… · installation]` or `[AUTOMATION auto-… · project <projectId>]` and then carries the stored instruction (and, for a project, the report-only rule). It is not a new Trigger or Ticket, and the standing instruction must work within the Session's existing tools and authority: an installation task never changes settings, Policy or Sources, and an installation delivery's only write is the installation Request it creates with `orchestrator_request_create`; a project delivery's only write is the project request it raises and decides. The Host delivers at least once, collapses missed occurrences to the latest, and delivers only while the Host runs, so the plugin schedules nothing while DeepSeek Harness is stopped. Host schedule management is installation-wide, so a task created outside this plugin is not visible as a plugin record unless its prompt carries the marker; reconciliation reports such Host tasks instead of adopting or recreating them.
 
 Records live in the same `orchestrator.sqlite` (`automation` table, schema 19, and the `automation_delivery` table, schema 20). On startup the plugin compares its records with the Host tasks: a missing or ended task marks the record orphaned, a Host `updatedAt` the plugin did not write marks drift, a project-scope record whose recorded project id is no longer registered marks it orphaned, and a project record whose Host target is not `lead-<projectId>` marks drift. The table names the target Session, so a Lead Session archived by Host admission leaves an orphaned record that is never recreated. These conditions are recorded on the row, shown by the page and by `automation_list`/`automation_view`, and logged. Fix the record after reviewing it, or create a new task instead.
 
@@ -489,8 +493,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 21 (current)`, or
-   `schema 20 migrates to 21 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 22 (current)`, or
+   `schema 21 migrates to 22 on start` when the next start is the one that upgrades the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
 settings and from their history, and setup derives the primary repository from the first project under **Execution →
@@ -554,7 +558,7 @@ steps once; a fresh 0.3.0 installation does not.
    `scripts\dsh-superagent-further.cmd start --profile <name>` on Windows) and run
    `scripts/verify-install --profile <name>`; require exit 0.
 
-What stays valid: the `stateDir` and its database (schema 20 migrates to 21 on start; no rename migration), worktrees, Tickets, Threads,
+What stays valid: the `stateDir` and its database (schema 21 migrates to 22 on start; no rename migration), worktrees, Tickets, Threads,
 Requests, memories, Policy and settings, the `DSH_SUPERAGENT_*` environment variables and prepare commands, the Source
 kinds `github` and `feishu`, and the stored delivery and GitHub-comment markers. Queued acknowledgements, replies and
 comments therefore keep deduplicating across the upgrade, and an old Ticket remains valid and resumable. The worker

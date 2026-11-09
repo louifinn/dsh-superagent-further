@@ -120,6 +120,8 @@ An architecture request follows the same raise and accept path, but its accept c
 
 A request the Lead leaves unanswered after two reminders stays open in the store and is marked as needing attention for the Orchestrator and the panel; a later answer follows the ordinary path.
 
+Work that belongs outside the project is escalated, never widened: `lead_request_escalate` records a pending escalation, the Orchestrator lists it with `orchestrator_escalations` and answers it with `orchestrator_escalation_decide` and its mandatory reply, and an accept creates one installation-level Request under an `escalation` Mandate. An installation automation delivery can create such a rootless installation Request directly from the main Session with `orchestrator_request_create`, recording the automation id (`docs/012-project-requests.md` D12, D13).
+
 ### Follow-ups and context Threads
 
 The Executor decides human follow-ups on its Ticket's own Threads. It handles in-scope requests and hands back requests beyond its scope or for another Ticket. Once no Executor owns the message, it becomes a candidate for the main Session. The main Session may otherwise act on the follow-up only to stop work at the person's request.

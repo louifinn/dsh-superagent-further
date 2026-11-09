@@ -31,8 +31,8 @@ dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，
 | 检查 | `pnpm check`：84 个 spec 文件，**1487 passed / 5 skipped（1492）**，包含类型检查与构建；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.3.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.3.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
-| 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复 |
-| 状态数据库 | 架构版本 21（`10 → 11 → … → 20 → 21` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
+| 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复；项目自动化投递可经其 Lead 提出一个项目请求，安装级自动化投递可由主会话创建安装级 Request，Lead 可把本项目之外的工作升级给 Orchestrator 决定 |
+| 状态数据库 | 架构版本 22（`10 → 11 → … → 21 → 22` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
 
 ## 它做什么
 
@@ -113,7 +113,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 原型是为单仓库、单 POSIX 主机、单人运维者准备的忠实研究产物。本 fork 保留其领域模型与哲学，改变的是日常使用提出的
 要求：平台、多项目、执行层级、运维、证据与分发。相对原型唯一提交（`8c32a9d`）的差异是当前 HEAD 上的
-**207 个文件、+16,954 / −1,451**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
+**223 个文件、+20,957 / −1,589**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
 改动都来自本 fork。
 
 | 方面 | 原型 | 本 fork | 原因 |
@@ -122,12 +122,12 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 | 规模 | 单仓库、单主机、单状态目录 | 一个来源轮询多个项目、按项目检出与 Lead、按项目的并发限制；强制一主机 | 团队在多个仓库工作；第二个配置档或第二个智能体会增加概念与噪音 |
 | 执行 | 每张工单一个根 worker 会话 | Orchestrator → 每项目常驻 Lead → 隐藏执行器子智能体，重启后接管 | 会话列表更干净、项目上下文常驻，总编排器不再承担项目劳动 |
 | 跨项目 | 一次接受的请求 = 一张工单、一个目录 | Ticket 之上的 Request，每交付单元一张工单、`after` 依赖、一次确认/一次结果/一个 done | 单张工单无法合法跨越项目；而人发的仍是一个请求 |
-| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 21`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
+| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 22`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
 | 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志 | 无人值守需要每个平台上可见、可脚本化的运维 |
 | 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报 | “每个失败都可见”意味着运维者能看见趋势，而不只是状态 |
 | 信任 | 触发的字段信任问题仍列为未决问题 | 可信与不可信字段形成文档并由 `tests/trust.spec.ts` 钉住；消息正文不能改变角色、工具、Policy 或强度；属主独占的状态 ACL；批处理参数防护 | 一旦有第二个人或第二个项目，提示注入与共享机器数据就是真实问题 |
 | 工程 | 没有 CI、没有发布、没有 changelog；测试假定 POSIX | `check.yml`（3 个 OS × Node 22/24）、`smoke.yml`（真实 macOS 主机）、`release.yml`（打标签的 tarball）、`.gitattributes`、semver/CHANGELOG、可复现的 `verify-install` | 平台回归与无法验证的安装正是日常工具不能承受的失败 |
-| 文档 | 只有编号设计文档（000–008） | 增加 [009 路线图](docs/009-roadmap.md) 与 [010 项目级编排器](docs/010-project-orchestrator.md)、本 README、`AGENTS.md`，以及 [docs/agents](docs/agents/domain.md) 下的工程技能脚手架 | 本 fork 的决策与理由必须能脱离产生它的访谈被读懂 |
+| 文档 | 只有编号设计文档（000–008） | 增加 [009 路线图](docs/009-roadmap.md)、[010 项目级编排器](docs/010-project-orchestrator.md)、[011 能力](docs/011-capabilities.md)、[012 项目请求](docs/012-project-requests.md)、本 README、`AGENTS.md`，以及 [docs/agents](docs/agents/domain.md) 下的工程技能脚手架 | 本 fork 的决策与理由必须能脱离产生它的访谈被读懂 |
 
 ### 平台与部署
 
