@@ -83,10 +83,10 @@ export const LEGACY_DEFAULT_RULES: readonly Rule[] = [
 /**
  * The built-in rule set: localized copy and visual rules plus categories for defect fixes, feature work, documentation,
  * tests and CI, refactors and performance, research, reviews, read-only questions, SuperAgent settings changes,
- * project automation tasks, dependency and toolchain upgrades, review-feedback fixes, and design/architecture
- * decisions. Every built-in rule ships enabled. Each rule states the boundary between an explicit request with an
- * objectively checkable goal and work accepted on clear intent whose scope the worker then pins down with a question;
- * review, research and design rules expect a report or decision document instead of a code change.
+ * project automation tasks, dependency and toolchain upgrades, review-feedback fixes, Issue/PR triage, and
+ * design/architecture decisions. Every built-in rule ships enabled. Each rule states the boundary between an explicit
+ * request with an objectively checkable goal and work accepted on clear intent whose scope the worker then pins down with
+ * a question; review, research and design rules expect a report or decision document instead of a code change.
  */
 export const DEFAULT_RULES: Rule[] = [
   { id: 'copy', name: '文案纠错', enabled: true, instruction: '针对明确的错别字、措辞、标点或既有翻译错误的修正请求，对象限于被指出的文本，并保留产品承诺与业务含义。目标文本与错误可客观确认即可接单；仅凭读起来别扭、不好看或不够专业不构成请求。措辞或范围有疑问时先接单，再在工单内向提出者提问钉住，不擅自改写未指出的文案。' },
@@ -103,18 +103,25 @@ export const DEFAULT_RULES: Rule[] = [
   { id: 'automation', name: '项目 dsh 自动化任务', enabled: true, instruction: '针对项目 dsh 自动化任务的明确新增、更改或删除请求（项目内的长期指令与重复计划），只能在显式人工请求下通过自动化工具操作：仅作用于明确所指的项目与任务，遵守 Host 限额（最多 20 条、标题不超过 120 字符、指令不超过 4000 字符、rrule 格式合法），项目任务按 report-only 投递、不得因此修改仓库。目标与计划可确认即可接单；计划未定时先接单，再在工单内用提问钉住，删除或暂停前先确认对象，不擅自扩大范围或改为安装级任务。' },
   { id: 'deps', name: '依赖与工具链升级', enabled: true, instruction: '针对明确可验收的依赖或工具链升级请求（package.json/lockfile 中的具体包版本、Node 或 pnpm engines、CI action 小版本，或机器人开启的 patch/minor 升级 PR）。只改依赖声明、lockfile 以及为让升级通过所必需的适配；升级后项目测试与 CI 必须通过，不顺手升级未点名的依赖、不改变公开行为。主版本升级、替换依赖、涉及原生扩展或安全公告的升级需要设计决策，不直接接单，保持观察或转为方案提案。目标版本与验收方式可确认即可接单；范围未定时先接单，再在工单内用提问钉住。' },
   { id: 'pr-feedback', name: '审查意见修复', enabled: true, instruction: '针对智能体自己的 PR 上、由允许名单中的具名 reviewer 提出的修改意见（评论或 review 请求修改）的修复请求。只修改被明确指出的文件与行为，逐条回应或修复，不扩大到未被指出的重构；保持已通过的检查通过，必要时补充覆盖该修复的测试；不自行合并、不关闭讨论，合并仍由人决定。意见可定位即可接单；含义不明时先接单，再在工单内用提问钉住，不猜测 reviewer 意图。' },
-  { id: 'design', name: '方案设计与架构决策', enabled: true, instruction: '针对明确的设计或架构决策请求（大规模重构方案、跨项目边界、技术选型、迁移路径），产出可客观评审的决策文档：问题与约束、备选方案及取舍、影响面（项目、接口、数据、回滚）、分阶段实施计划与验收点；只读仓库与文档，不在本工单直接实施大规模改动。目标决策与约束可确认即可接单；备选方案未收敛时先接单，在工单内以提问钉住约束与评价标准，不预设结论。方案交操作员确认后，实施由后续普通工单承接；跨项目部分拆成 Request。' },
+  { id: 'triage', name: 'Issue/PR 分流', enabled: true, instruction: '针对 Issue 或 PR 分流的明确请求：判断其类别、严重度或优先级，给出指派与下一步建议，仅在明确授权时通过 orchestrator_label 增删仓库中已存在的 label。分流对象可定位即可接单；只读判断，不改代码、不关闭、不合并、不承诺修复，也不创建新 label。未经明确授权只输出建议而不改动对象；授权后的改动仅限仓库中已存在的 label。' },
+  { id: 'design', name: '方案设计与架构决策', enabled: true, instruction: '针对明确的设计或架构决策请求（大规模重构方案、跨项目边界、技术选型、迁移路径），产出可客观评审的决策文档：问题与约束、备选方案及取舍、影响面（项目、接口、数据、回滚）、分阶段实施计划与验收点；只读仓库与文档，不在本工单直接实施大规模改动。目标决策与约束可确认即可接单；备选方案未收敛时先接单，在工单内以提问钉住约束与评价标准，不预设结论。方案交操作员确认后，实施由后续普通工单承接；跨项目部分拆成 Request。决策文档写入仓库；若评审的管理者不在本机，可按需用 orchestrator_send_file 把文档发送到其飞书会话。' },
 ]
 /**
  * The built-in set as it shipped in 0.3.0: the same ten texts, of which only copy and visual were enabled. An install
  * that still keeps exactly this set is upgraded to DEFAULT_RULES, so the newer categories arrive enabled.
  */
 const PREVIOUS_DEFAULT_RULES: readonly Rule[] = DEFAULT_RULES
-  .filter(rule => rule.id !== 'settings' && rule.id !== 'automation' && rule.id !== 'deps' && rule.id !== 'pr-feedback' && rule.id !== 'design')
+  .filter(rule => rule.id !== 'settings' && rule.id !== 'automation' && rule.id !== 'deps' && rule.id !== 'pr-feedback' && rule.id !== 'design' && rule.id !== 'triage')
   .map(rule => ({ ...rule, enabled: rule.id === 'copy' || rule.id === 'visual' }))
-/** The built-in set as it shipped before the dependency, review-feedback and design rules: twelve enabled categories. */
+/**
+ * The built-in set as it shipped before the dependency, review-feedback and design rules: twelve enabled categories.
+ */
 const INTERIM_DEFAULT_RULES: readonly Rule[] = DEFAULT_RULES
-  .filter(rule => rule.id !== 'deps' && rule.id !== 'pr-feedback' && rule.id !== 'design')
+  .filter(rule => rule.id !== 'deps' && rule.id !== 'pr-feedback' && rule.id !== 'design' && rule.id !== 'triage')
+  .map(rule => ({ ...rule }))
+/** The built-in set as it shipped before the triage rule: fifteen enabled categories. */
+const FIFTEEN_DEFAULT_RULES: readonly Rule[] = DEFAULT_RULES
+  .filter(rule => rule.id !== 'triage')
   .map(rule => ({ ...rule }))
 /** Whether `rule` still carries `seed`'s original name and instruction, i.e. the operator never edited that rule's text. */
 const untouched = (rule: Rule, seed: Rule): boolean => rule.id === seed.id && rule.name === seed.name && rule.instruction === seed.instruction
@@ -127,15 +134,19 @@ const untouchedPreviousDefaults = (rules: readonly Rule[]): boolean => rules.len
 /** Whether `rules` is exactly the untouched twelve-category set shipped before this change. */
 const untouchedInterimDefaults = (rules: readonly Rule[]): boolean => rules.length === INTERIM_DEFAULT_RULES.length
   && rules.every((rule, index) => untouched(rule, INTERIM_DEFAULT_RULES[index]!) && rule.enabled === INTERIM_DEFAULT_RULES[index]!.enabled)
+/** Whether `rules` is exactly the untouched fifteen-category set shipped before the triage rule. */
+const untouchedFifteenDefaults = (rules: readonly Rule[]): boolean => rules.length === FIFTEEN_DEFAULT_RULES.length
+  && rules.every((rule, index) => untouched(rule, FIFTEEN_DEFAULT_RULES[index]!) && rule.enabled === FIFTEEN_DEFAULT_RULES[index]!.enabled)
 /**
  * Upgrade stored rules to the built-in set, idempotently. A list that is exactly an untouched earlier built-in set
- * (the legacy pair, the 0.3.0 set or the twelve-category set) becomes the whole current default set, so existing
- * installations gain the new categories and their enabled state; otherwise only individually untouched built-in rules
- * are rewritten in place, keeping their enabled state. A rule the operator renamed or edited is preserved as it is;
- * migration never adds a category, enables a rule or resurrects one the operator removed.
+ * (the legacy pair, the 0.3.0 set, the twelve-category set or the fifteen-category set) becomes the whole current
+ * default set, so existing installations gain the new categories and their enabled state; otherwise only individually
+ * untouched built-in rules are rewritten in place, keeping their enabled state. A rule the operator renamed or edited is
+ * preserved as it is; migration never adds a category, enables a rule or resurrects one the operator removed.
  */
 export function upgradeRules(rules: Rule[]): Rule[] {
-  if (untouchedDefaults(rules) || untouchedPreviousDefaults(rules) || untouchedInterimDefaults(rules)) return DEFAULT_RULES.map(rule => ({ ...rule }))
+  if (untouchedDefaults(rules) || untouchedPreviousDefaults(rules) || untouchedInterimDefaults(rules)
+    || untouchedFifteenDefaults(rules)) return DEFAULT_RULES.map(rule => ({ ...rule }))
   return rules.map(rule => {
     const seed = LEGACY_DEFAULT_RULES.find(item => untouched(rule, item))
     if (!seed) return { ...rule }

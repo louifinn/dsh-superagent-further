@@ -86,6 +86,10 @@ export interface TriggerContext {
 export interface SourceLabelChange { add?: readonly string[]; remove?: readonly string[] }
 /** Labels actually added and removed, plus the target's labels after the change. */
 export interface SourceLabelResult { added: string[]; removed: string[]; labels: string[] }
+/** One existing local file a Source kind delivers to a chat; `directory` + `name` keep CLI paths inside that directory. */
+export interface SourceFileRequest { chatId: string; directory: string; name: string; idempotencyKey?: string }
+/** The message that carried the file, or null when the Source delivered it without naming one. */
+export interface SourceFileResult { messageId: string | null }
 /** Pluggable source kind descriptor registered with SourceRegistry. */
 export interface SourceKind<C extends Record<string, unknown> = Record<string, unknown>> {
   /** Stable ID; a default instance with the same ID exists when none is stored. */
@@ -115,6 +119,8 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   refreshLabels?(host: SourceHost, signal?: AbortSignal): Promise<Record<string, string>>
   /** Applies existing labels to the Issue or pull request a Trigger names; kinds without label support cannot triage. */
   labels?(host: SourceHost, trigger: Trigger, change: SourceLabelChange, signal?: AbortSignal): Promise<SourceLabelResult>
+  /** Delivers one existing local file into a chat; kinds without file support cannot deliver files. */
+  sendFile?(host: SourceHost, request: SourceFileRequest, signal?: AbortSignal): Promise<SourceFileResult>
   /** Variables the kind registers with the execution environment and how their values are computed. */
   environment?: { variables: readonly VariableSpec[]; values(input: EnvironmentInput<C>): Record<string, string> }
 }

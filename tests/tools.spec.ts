@@ -29,6 +29,19 @@ it('labels work only through a Source kind that supports it, and names the Trigg
   expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_label')).toBe(true)
 })
 
+it('delivers workspace files only to a named chat and only from a registered project', async () => {
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_send_file')).toBe(true)
+  await expect(h.runtime.sendFile({ project: 'no-such-project', path: 'docs/decisions.md', chatId: 'oc_1' }))
+    .rejects.toThrow('Unknown project')
+  // A Trigger without a chat (or a source that cannot deliver files) is refused before any file is read.
+  const bare = feishu('file-1', 'Deliver the document')
+  h.runtime.store.triggers.save({ ...bare, channel: undefined, meta: {} })
+  await expect(h.runtime.sendFile({ project: 'default', path: 'docs/decisions.md', triggerId: bare.id }))
+    .rejects.toThrow('does not name a chat')
+  await expect(h.runtime.sendFile({ project: 'no-such-project', path: 'docs/decisions.md', triggerId: bare.id }))
+    .rejects.toThrow('Unknown project')
+})
+
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
   const { ticket, trigger } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   await h.acceptedTicket(feishu('2', '@bot 再修一个'))
@@ -50,10 +63,10 @@ it('reads the lists, a ticket, a decision, the settings, the prompts and the mod
     pause: { value: { paused: false } }, sources: expect.arrayContaining([expect.objectContaining({ id: 'github', read: 'settings/source:github' })]) })
   expect(JSON.stringify(settings)).not.toContain('ou_alice')
   for (const block of ['policy', 'eval', 'executor', 'pause', 'source:github']) {
-    const page = await read(`settings/${block}`) as { text: string }
+    const page = await read(`settings/${block}`, { limit: 8_000 }) as { text: string }
     expect(JSON.parse(page.text)).toEqual({ block, revision: h.runtime.store.blockRevision(block as 'policy'), value: h.runtime.settings.block(block).value })
   }
-  expect(JSON.parse((await read('settings/policy') as { text: string }).text).value.sources.feishu.allowed).toEqual([{ id: 'ou_alice', name: 'Alice' }])
+  expect(JSON.parse((await read('settings/policy', { limit: 8_000 }) as { text: string }).text).value.sources.feishu.allowed).toEqual([{ id: 'ou_alice', name: 'Alice' }])
   await expect(read('settings/source:retired')).rejects.toThrow('Unknown settings block')
   const skills = { built_in: ['dsh-superagent-further-feishu', 'dsh-superagent-further-github'], team: [] }
   expect(await read('prompts')).toMatchObject({ revision: 0, read: 'prompts/0', skills, items: [expect.objectContaining({ revision: 0 })], next_offset: null })

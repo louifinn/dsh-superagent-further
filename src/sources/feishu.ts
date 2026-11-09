@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'
 import { feishuLink, sendFeishu } from './feishu-channel.ts'
+import { sendFeishuFile } from './feishu-file.ts'
 import { feishuThreadContext } from './feishu-read.ts'
 import { runFeishuDigest } from './feishu-digest.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
@@ -70,6 +71,8 @@ export const feishuKind: SourceKind<FeishuConfig> = {
       feishuKind.scope!({ meta: { chatId: address.chatId ?? '', direct: address.direct === 'true' } }, config).listened,
     send: sendFeishu, link: feishuLink,
   },
+  // A file message does not reply in a Thread: it goes to a chat the bot is in, as its own message.
+  sendFile: (host, request, signal) => sendFeishuFile(sourceContext(host, feishuKind), request, signal),
   threadContext: feishuThreadContext,
   find: query => ({ threads: [], terms: [...new Set(query.match(/om_[A-Za-z0-9_-]+/g) ?? [])] }),
   // A message's Trigger is named after the message, so the one it answers is named after its parent.

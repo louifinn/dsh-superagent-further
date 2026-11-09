@@ -38,6 +38,7 @@ import { pullEndNotices } from '../sources/github-pull.ts'
 import { requestResultNotices } from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Automations, type ScheduleService } from './automations.ts'
+import { localFile } from './files.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
 import { Setup } from './setup.ts'
@@ -241,6 +242,7 @@ export class Runtime extends Service implements SourceHost {
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
+        sendFile: request => this.sendFile(request),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize()
@@ -264,6 +266,40 @@ export class Runtime extends Service implements SourceHost {
     const kind = this.sources.kind(trigger.source)
     if (kind?.labels === undefined) throw new Error(`The ${trigger.source} Source cannot label work`)
     return kind.labels(this, trigger, change)
+  }
+  /**
+   * Deliver one file from a project workspace to a chat through the Source kind that supports file messages. The Trigger
+   * names both the chat and the Source; a bare chat ID uses the installed file-capable Source (Feishu). The file path is
+   * resolved inside the project workspace and cannot leave it.
+   */
+  async sendFile(request: { triggerId?: string; chatId?: string; project: string; path: string }):
+  Promise<{ source: string; chatId: string; messageId: string | null }> {
+    const project = this.store.settings().executor.projects.find(item => item.id === request.project)
+    if (project === undefined) throw new Error(`Unknown project ${request.project}`)
+    let source: string
+    let chatId: string
+    if (request.triggerId !== undefined) {
+      const trigger = this.store.triggers.get(request.triggerId)
+      if (trigger === undefined) throw new Error(`Unknown trigger ${request.triggerId}`)
+      source = trigger.source
+      const address = trigger.channel?.address ?? {}
+      const meta = trigger.meta as { chatId?: unknown }
+      const named = typeof address.chatId === 'string' ? address.chatId : typeof meta.chatId === 'string' ? meta.chatId : undefined
+      if (named === undefined) throw new Error(`The ${trigger.source} Trigger does not name a chat to deliver the file to`)
+      chatId = named
+    } else if (request.chatId !== undefined) {
+      const candidates = this.sources.instances().filter(instance => instance.enabled && this.sources.kind(instance.kind)?.sendFile !== undefined)
+      const preferred = candidates.find(instance => instance.id === 'feishu') ?? candidates[0]
+      if (preferred === undefined) throw new Error('No installed Source can deliver files')
+      source = preferred.id
+      chatId = request.chatId
+    } else throw new Error('Name a Trigger or a chat to deliver the file to')
+    const kind = this.sources.kind(source)
+    if (kind?.sendFile === undefined) throw new Error(`The ${source} Source cannot deliver files`)
+    const file = await localFile(project.workspace, request.path)
+    const idempotencyKey = `dsh-file-${key(chatId, file.directory, file.name, String(file.size), String(file.mtimeMs))}`
+    const result = await kind.sendFile(this, { chatId, directory: file.directory, name: file.name, idempotencyKey })
+    return { source, chatId, messageId: result.messageId }
   }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }

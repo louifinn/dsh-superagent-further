@@ -756,6 +756,35 @@ adds one narrow capability rather than shell access.
   it does not decide a candidate. A repository with more than one page of labels is still checked
   against the first hundred, so an add beyond that page is refused rather than guessed.
 
+## Part D — Feishu delivery of workspace files (approved 2026-11-09, Sprint 21)
+
+A design decision document was written into the project workspace, but a manager reviewing it may be
+away from the machine. The operator asked for the file to reach a Feishu chat, so a decision document
+can be delivered to a remote reviewer without the panel or a clone. Part D adds exactly that one
+surface; it does not upload arbitrary files from the host.
+
+- **Contract:** `SourceKind.sendFile?(host, request, signal?)` receives a `SourceFileRequest
+  { chatId, directory, name, idempotencyKey? }` and returns `SourceFileResult { messageId }`. A kind
+  without `sendFile` cannot deliver files. The Feishu adapter (`src/sources/feishu-file.ts`) runs
+  `im +messages-send --chat-id <chatId> --file <name>` with the file's directory as the working
+  directory, because the CLI only accepts workspace-relative or cwd-relative local paths.
+- **Runtime:** `Runtime.sendFile({ triggerId?, chatId?, project, path })` resolves exactly one chat
+  (a Trigger's channel, or a configured Feishu instance), validates the project and reads the file
+  through `src/app/files.ts`. The resolver only accepts a relative path inside the project workspace:
+  absolute paths, parent segments, dot segments and repeated separators are refused, so a Request
+  cannot make the main Session send an arbitrary local file. The idempotency key hashes the chat, the
+  resolved directory, the name, the size and the modification time.
+- **Application surface:** the main Session's `orchestrator_send_file` tool is the only tool-side
+  entry, for an explicit human request or a delivery a Ticket asks for; the `design` rule mentions it
+  for a decision document that a remote manager reviews. It sends nothing else — no follow-up
+  message, no change to the work.
+- **Tests:** `tests/files.spec.ts` covers workspace-relative resolution, backslashes and every
+  refusal; `tests/feishu-file.spec.ts` covers the CLI call with the file's directory and optional
+  idempotency key, an unconfigured Source and a reply without a message id. `tests/tools.spec.ts`
+  covers the tool and the Runtime path.
+- **Limits:** only an existing regular file inside a registered project's workspace; the bot must
+  already be in the target chat; no file creation, deletion or upload from elsewhere on the host.
+
 ## Decisions requested
 
 The operator's answers decide how much of Parts A and B lands in Sprint 9 and in what order. The

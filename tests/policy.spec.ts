@@ -278,8 +278,8 @@ it('reads a stored GitHub Source configuration that names a merge account withou
 })
 
 describe('localized default rules and their migration', () => {
-  it('ships fifteen localized categories, all enabled, in a stable order, when no rules are stored', () => {
-    expect(DEFAULT_RULES.map(rule => rule.id)).toEqual(['copy', 'visual', 'bugfix', 'feature', 'docs', 'tests', 'refactor', 'research', 'review', 'qa', 'settings', 'automation', 'deps', 'pr-feedback', 'design'])
+  it('ships sixteen localized categories, all enabled, in a stable order, when no rules are stored', () => {
+    expect(DEFAULT_RULES.map(rule => rule.id)).toEqual(['copy', 'visual', 'bugfix', 'feature', 'docs', 'tests', 'refactor', 'research', 'review', 'qa', 'settings', 'automation', 'deps', 'pr-feedback', 'triage', 'design'])
     expect(DEFAULT_RULES.every(rule => /\p{Script=Han}/u.test(rule.name) && /\p{Script=Han}/u.test(rule.instruction))).toBe(true)
     // The first two keep the ids and positions existing Tickets, decisions and history entries name.
     expect(DEFAULT_RULES.filter(rule => rule.enabled).map(rule => rule.id)).toEqual(DEFAULT_RULES.map(rule => rule.id))
@@ -292,15 +292,21 @@ describe('localized default rules and their migration', () => {
     expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
   })
   it('replaces an untouched 0.3.0 rule set with the current all-enabled set, once', () => {
-    const previous = DEFAULT_RULES.filter(rule => !['settings', 'automation', 'deps', 'pr-feedback', 'design'].includes(rule.id))
+    const previous = DEFAULT_RULES.filter(rule => !['settings', 'automation', 'deps', 'pr-feedback', 'triage', 'design'].includes(rule.id))
       .map(rule => ({ ...rule, enabled: rule.id === 'copy' || rule.id === 'visual' }))
     const upgraded = SettingsSchema.parse({ policy: { rules: previous } }).policy.rules
     expect(upgraded).toEqual(DEFAULT_RULES)
     expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
   })
   it('replaces an untouched twelve-category rule set with the current all-enabled set, once', () => {
-    const interim = DEFAULT_RULES.filter(rule => !['deps', 'pr-feedback', 'design'].includes(rule.id)).map(rule => ({ ...rule }))
+    const interim = DEFAULT_RULES.filter(rule => !['deps', 'pr-feedback', 'triage', 'design'].includes(rule.id)).map(rule => ({ ...rule }))
     const upgraded = SettingsSchema.parse({ policy: { rules: interim } }).policy.rules
+    expect(upgraded).toEqual(DEFAULT_RULES)
+    expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
+  })
+  it('replaces an untouched fifteen-category rule set with the current all-enabled set, once', () => {
+    const fifteen = DEFAULT_RULES.filter(rule => rule.id !== 'triage').map(rule => ({ ...rule }))
+    const upgraded = SettingsSchema.parse({ policy: { rules: fifteen } }).policy.rules
     expect(upgraded).toEqual(DEFAULT_RULES)
     expect(SettingsSchema.parse({ policy: { rules: upgraded } }).policy.rules).toEqual(upgraded)
   })

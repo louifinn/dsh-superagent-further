@@ -148,7 +148,7 @@ Trigger and Thread `meta` belong to the Source. The core does not interpret them
 
 ### Policy
 
-`src/policy.ts` defines settings schemas, authorization and assessment rules. `DEFAULT_RULES` holds the fifteen built-in rules, named and worded in Chinese and all enabled, so a fresh installation assesses every category; the operator can switch any category off. `LEGACY_DEFAULT_RULES` keeps the old English text, and `upgradeRules` translates an existing installation's untouched built-ins while preserving operator edits; a stored set that is still exactly the 0.3.0 defaults, the untouched legacy pair or the earlier twelve-category set is replaced by the current fifteen-rule set. The rules are normalized whenever settings are parsed, so no schema step is needed. `settingsPolicy(settings, scope)` returns a fresh, stateless `Policy` on each use:
+`src/policy.ts` defines settings schemas, authorization and assessment rules. `DEFAULT_RULES` holds the sixteen built-in rules, named and worded in Chinese and all enabled, so a fresh installation assesses every category; the operator can switch any category off. `LEGACY_DEFAULT_RULES` keeps the old English text, and `upgradeRules` translates an existing installation's untouched built-ins while preserving operator edits; a stored set that is still exactly the 0.3.0 defaults, the untouched legacy pair, the earlier twelve-category set or the earlier fifteen-category set is replaced by the current sixteen-rule set. The rules are normalized whenever settings are parsed, so no schema step is needed. `settingsPolicy(settings, scope)` returns a fresh, stateless `Policy` on each use:
 
 - `version`, `paused` and `evalTimeoutMs` describe its current state.
 - `gate(trigger, thread, tickets)` returns admission strength and basis.
@@ -195,13 +195,13 @@ Each kind has a health entry under its name. It reports an error once one of its
 
 ### Sources
 
-Sources extend the host through `SourceKind`, defined in `src/sources/kind.ts`. A kind declares its identity, title, description, configuration `schema` and `fields`, derived `facts`, and `health` entries. Optional behavior includes `scope`, a `channel` (`allowed`, `send`, `link`), `threadContext`, `find`, `policy`, `environment`, `refreshLabels` and `labels`.
+Sources extend the host through `SourceKind`, defined in `src/sources/kind.ts`. A kind declares its identity, title, description, configuration `schema` and `fields`, derived `facts`, and `health` entries. Optional behavior includes `scope`, a `channel` (`allowed`, `send`, `link`), `threadContext`, `find`, `policy`, `environment`, `refreshLabels`, `labels` and `sendFile`.
 
 `SourceRegistry` (`registry.ts`) owns registered kinds and stored instances, and implements the Engine's `SourceScope`. Registration claims health entries on `HealthBoard`; duplicate claims and reserved `sync:` names are refused. A SourceContext writes only through its registration's claimed entries, so reports after unregistration do nothing.
 
 Registry configuration methods include `kind`, `instances`, `instance`, `validate`, `validatePolicy`, `policyPart`, `channelAllowed`, `declarations`, `environments`, `find` and `scope`. `find` asks each kind that supports search.
 
-Generic code accesses Source behavior through the registry. `send(message, commands)` calls the kind's Channel and returns `sent`, `gone` or `waiting` if the kind is not installed. `link` resolves its Channel link. `threadContext` pairs a kind's reader with its configuration, or returns nothing when the kind has no reader. `labels` applies existing labels to the work a Trigger names: the GitHub adapter (`src/sources/github-labels.ts`) checks that every added label exists in the repository, batches additions and removes each named label through the GitHub API; the main Session calls it through `Runtime.label(triggerId, change)` and the `orchestrator_label` tool. Invalid stored configuration disables the instance.
+Generic code accesses Source behavior through the registry. `send(message, commands)` calls the kind's Channel and returns `sent`, `gone` or `waiting` if the kind is not installed. `link` resolves its Channel link. `threadContext` pairs a kind's reader with its configuration, or returns nothing when the kind has no reader. `labels` applies existing labels to the work a Trigger names: the GitHub adapter (`src/sources/github-labels.ts`) checks that every added label exists in the repository, batches additions and removes each named label through the GitHub API; the main Session calls it through `Runtime.label(triggerId, change)` and the `orchestrator_label` tool. Invalid stored configuration disables the instance. `sendFile` delivers an existing file inside a project's workspace to a Feishu chat: `src/sources/feishu-file.ts` runs the CLI with the file's directory as its working directory, and the main Session calls it through `Runtime.sendFile(...)` and the `orchestrator_send_file` tool.
 
 Plugins receive `SourceHost`: the registry and `context(kind)`. The kind itself uses a narrower `SourceContext`, built by `sourceContextOf` in `src/app/source-context.ts`.
 
@@ -271,6 +271,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
 | `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, and messages into CLI calls |
+| `src/app/files.ts`, `src/sources/feishu-file.ts` | A workspace-relative path into a validated local file, and that file into a Feishu chat through the CLI |
 | `src/deployment.ts`, `src/setup.ts`, `src/infra/` | Setup probes and problems, CLI transport, the agent's process environment |
 
 ## Dependency rules
@@ -367,6 +368,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
 | `src/app/assessment.ts` | The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers |
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
+| `src/app/files.ts` | `localFile`: resolves a file inside a project's workspace, refusing absolute, parent, dot and repeated-separator paths, directories and missing files |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
 | `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
 | `src/app/cards.ts` | Compact cards of Triggers, Tickets, Threads and Decisions for models, the closed set of ticket card states `TICKET_STATES`, and `textPage` |
@@ -410,6 +412,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/feishu-loops.ts` | The Feishu loops: the event consumer, history recovery, chat names and polling of subscribed topics |
 | `src/sources/feishu-digest.ts` | The Feishu daily digest: its text, its once-a-day tick and its minute loop, reported on its own health entry |
 | `src/sources/feishu-channel.ts` | The Feishu Channel: topic replies, `sent` or `gone` |
+| `src/sources/feishu-file.ts` | Sends an existing file inside a project's workspace to a Feishu chat through `im +messages-send --file`, with the file's directory as the working directory and an optional idempotency key |
 | `src/sources/feishu-read.ts` | The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with their images |
 | `src/sources/admission-context.ts` | The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the Trigger |
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
@@ -423,7 +426,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/overview.tsx` | The overview |
 | `src/client/source.tsx`, `trigger.tsx`, `eval.tsx`, `execution.tsx` | One file per stage: its status, and its settings where it has some |
 | `src/client/memory.tsx` | The Memory page: the switches that save on click, the snapshot limits, and the stored memories as searchable, orderable cards that expand to every stored field and can be pinned or forgotten |
-| `src/client/tasks.tsx` | The Automations page: the task table with scope and project, human-readable schedule, enabled switch, last delivery and orphan warning, and the create/edit form without re-target, delete or run |
+| `src/client/tasks.tsx` | The Automations page: the task table with scope and project, human-readable schedule, enabled switch, last delivery and orphan warning, Run now, Delete behind a confirmation dialog, and the create/edit form without re-target |
 | `src/client/language.tsx` | The Settings → Language group: the free-text default language, saved with the block's revision |
 | `src/client/thread.tsx`, `ticket.tsx` | The record pages: a Thread with its timeline, and a Ticket with its authorization, Inputs and Assignments |
 | `src/client/settings.tsx` | The Settings tab: the group navigation and the group on screen |
@@ -455,6 +458,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
 | `tests/memories.spec.ts` | Memories: scope and deduplication, browsing by keyword, project and order with pinned rows first and limited windows for paging, pinning, search, forget and expiry, the current schema, the snapshot's budget, the panel switches and limits, and retention that ages out only automatic records |
 | `tests/github-labels.spec.ts` | GitHub label changes: repository spelling, no-op adds, case-insensitive removes, project repositories, unknown labels refused, absent removes refused, contradictory changes refused, non-labelable Triggers refused |
+| `tests/files.spec.ts` | Workspace file resolution: a file inside a workspace, backslashes, and the refusals of absolute, parent, dot and repeated-separator paths, directories and missing files |
+| `tests/feishu-file.spec.ts` | Feishu file delivery: the CLI call with the file's directory, an optional idempotency key, an unconfigured Source and a reply without a message id |
 | `tests/automations.spec.ts` | Installation and project automations: title/instruction/rule validation and the 20-task limit, project registration and lead-<projectId> targets, the envelope and the report-only rule, create compensation when the row or the Host delete fails, enable/disable and edit conflicts, no re-target, manual run with a delivery recorded and pending/not-found refusals, delete with the Host task, record and history removed and a failed Host delete keeping the record, orphan and drift reconciliation with unrecorded Host tasks, the delivery history recorded from the catalog and the Host history with newest-50 pruning and no duplicate entries, and the context and tool descriptions |
 | `tests/panel-tasks.spec.tsx` | The Automations page: the task table with scopes and orphan warning, the attention count and error reason without another notice channel, the expandable newest-first delivery history, creating a project task from the project select, editing without re-target, the enabled switch, running one task now and surfacing a Host refusal, deleting after the confirmation dialog, and the service-missing state |
 | `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword, project-filter and order combo boxes, paging through the list, pinning, expanding a card to all its fields, and forgetting a stored memory |
@@ -553,7 +558,7 @@ Nothing deletes old records yet, so these grow without bound: the `trigger`, `di
 
 ### Main Session tools
 
-The main Session has 15 application tools, plus six automation tools when the Host `schedule` service is installed:
+The main Session has 17 application tools, plus six automation tools when the Host `schedule` service is installed:
 
 | Purpose | Tools |
 | --- | --- |
@@ -562,6 +567,7 @@ The main Session has 15 application tools, plus six automation tools when the Ho
 | Re-evaluate | `orchestrator_trigger_requeue` |
 | Assess proactive work | `orchestrator_eval`, `orchestrator_eval_read`, `orchestrator_eval_decide` |
 | Communicate and unsubscribe | `orchestrator_reply`, `orchestrator_thread_unsubscribe` |
+| Label and deliver files | `orchestrator_label`, `orchestrator_send_file` |
 | Configure | `orchestrator_settings_save`, `orchestrator_settings_propose`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
 | Automate installation and project tasks (project scope is report-only) | `automation_create`, `automation_list`, `automation_view`, `automation_edit`, `automation_run`, `automation_delete`, only when the Host `schedule` service exists |
 

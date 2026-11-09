@@ -34,6 +34,9 @@ export interface MainToolsHost {
   readonly automations?: Automations
   /** Applies existing labels to the Issue or pull request a Trigger names, through that Source kind. */
   label(triggerId: string, change: SourceLabelChange): Promise<SourceLabelResult>
+  /** Delivers one file from a project workspace to a chat through the Source kind that supports file messages. */
+  sendFile(request: { triggerId?: string; chatId?: string; project: string; path: string }):
+  Promise<{ source: string; chatId: string; messageId: string | null }>
   /** Schedules a pass to carry out work queued by an Engine command (such as an Eval or ticket resume). */
   requestPass(): void
   sendReplies(): Promise<void>
@@ -347,6 +350,17 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         remove: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe('Labels on the target to remove.'),
       }).strict().refine(value => (value.add?.length ?? 0) + (value.remove?.length ?? 0) > 0, 'Name at least one label to add or remove'),
       execute: async args => host.label(args.trigger_id, { add: args.add, remove: args.remove }),
+    }),
+    tool({
+      name: 'orchestrator_send_file',
+      description: 'Deliver one existing file from a project workspace to a Feishu chat as a bot file message, so people away from this machine can read a design or decision document. Only workspace-relative paths; never edits files. Use only on an explicit human request, or when a Ticket asks for the document to be delivered.',
+      schema: z.object({
+        trigger_id: z.string().trim().min(1).optional().describe('The Trigger whose chat receives the file; use instead of chat_id.'),
+        chat_id: z.string().trim().min(1).optional().describe('A Feishu chat ID (oc_...) when no Trigger names the chat.'),
+        project: z.string().trim().min(1).describe('The registered project whose workspace holds the file.'),
+        path: z.string().trim().min(1).describe('Workspace-relative file path; absolute paths and .. are refused.'),
+      }).strict().refine(value => (value.trigger_id === undefined) !== (value.chat_id === undefined), 'Name exactly one of trigger_id and chat_id'),
+      execute: async args => host.sendFile(args),
     }),
     tool({
       name: 'orchestrator_prompts_save',
