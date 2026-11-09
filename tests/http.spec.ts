@@ -257,9 +257,20 @@ it('serves the Automations page from one service path, with same-origin, validat
     host_status: 'active' as const, next_at: null, last_delivery_at: null, last_error: null, revision: 0,
     created_at: '2026-11-09T12:00:00.000Z', updated_at: '2026-11-09T12:00:00.000Z', dsh_task: 'schedule-1',
     target_session: 'lead-default' }
+  const flagged = { ...summary, id: 'auto-2', dsh_task: 'schedule-2', orphaned: true, enabled: false,
+    last_error: 'The Host task is missing' }
+  const deliveries: Record<string, unknown[]> = {
+    'auto-1': [{ at: '2026-11-09T09:01:00.000Z', kind: 'delivered', scheduled_at: '2026-11-09T09:00:00.000Z',
+      delivered_at: '2026-11-09T09:00:00.000Z', message_id: 'm1', error: null }],
+    'auto-2': [{ at: '2026-11-09T12:00:00.000Z', kind: 'orphaned', scheduled_at: null, delivered_at: null,
+      message_id: null, error: 'The Host task is missing' }],
+  }
+  let refreshed = false
   const creates: unknown[][] = [], edits: unknown[][] = []
   const automations = {
-    list: async () => ({ items: [summary], unrecorded: [] }),
+    refresh: async () => { refreshed = true; return { checked: 2, observed: 1 } },
+    list: async () => ({ items: [summary, flagged], unrecorded: [] }),
+    history: (id: string) => deliveries[id] ?? [],
     create: async (input: Record<string, unknown>, actor: string) => {
       if (input.project === 'missing') throw new UnknownProjectError('missing')
       if (input.title === 'limit') throw new AutomationLimitError('Automation tasks are limited to 20; disable or edit an existing one first')
@@ -276,8 +287,10 @@ it('serves the Automations page from one service path, with same-origin, validat
   }
   const store = { settings: () => ({ executor: { projects: [{ id: 'default', name: 'Default' }] } }) }
   const call = serve({ store, automations })
-  expect(await call('GET', 'automations')).toEqual({ status: 200, body: { service: true, items: [summary], unrecorded: [],
-    projects: [{ id: 'default', name: 'Default' }] } })
+  expect(await call('GET', 'automations')).toEqual({ status: 200, body: { service: true,
+    items: [{ ...summary, history: deliveries['auto-1'] }, { ...flagged, history: deliveries['auto-2'] }],
+    unrecorded: [], projects: [{ id: 'default', name: 'Default' }], attention: 1 } })
+  expect(refreshed).toBe(true)
   const body = { title: 'New task', instruction: 'Report it.', rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', project: 'default' }
   expect(await call('POST', 'automations', body)).toMatchObject({ status: 200, body: { id: 'auto-1' } })
   expect(creates[0]).toEqual([{ ...body, enabled: true }, 'panel'])

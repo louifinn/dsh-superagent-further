@@ -1,6 +1,6 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **partly implemented — Part A P1/P2/P3 and Part B P1/P2 implemented; decisions settled** (2026-11-09). The survey behind this
+Status: **partly implemented — Part A P1/P2/P3 and Part B P1/P2/P3 implemented; the optional run action deliberately not implemented; decisions settled** (2026-11-09). The survey behind this
 document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
@@ -64,8 +64,8 @@ enable/disable to the Host's `active` patch, and reconciles records with Host ta
 Session exists without recreating or adopting one. `automationTools`
 (`src/app/tools/automation.ts`) registers `automation_create`, `automation_list`, `automation_view`
 and `automation_edit` for the main Session only when `ctx.get('schedule')` exists. `Sessions` adds the
-`dsh-superagent-further-automation` runtime-context contribution at order 320. The rest of Part B
-(per-delivery notices and delivery history) remains a proposal.
+`dsh-superagent-further-automation` runtime-context contribution at order 320. Part B P3 now adds delivery history and
+panel-only notices (schema 20); the optional run action remains deliberately unimplemented.
 
 **Part B P2 implemented without a schema change.** `Automations` now creates both scopes: an
 `installation` task still targets the main Session, and a `project` task validates the project id
@@ -456,7 +456,8 @@ no new panel clock.
 
 #### B3.1 Task record
 
-New SQLite table `automation` (schema 19; schema 18 was already `settings_proposal`):
+New SQLite table `automation` (schema 19; schema 18 was already `settings_proposal`; schema 20 adds
+the `automation_delivery` history table beside it):
 
 ```
 id TEXT PRIMARY KEY,              -- auto-<8 lowercase hex>; ours, never the Host's schedule-… id
@@ -656,10 +657,29 @@ work still flows through Sources and admission.
 - Panel: an Automations page listing rows with scope and project name, human-readable schedule, enabled toggle, orphan warning, created and last delivery, and creating or editing a row without re-target; HTTP routes guarded by the same `sameOrigin` rule (`src/app/http.ts:85`); a missing `schedule` service shows the unavailable state and answers 503.
 - Tests: `tests/automations.spec.ts` (Lead target, project removal, archived Session), `tests/panel-tasks.spec.tsx` (list, project create, edit, toggle, service missing), `tests/http.spec.ts`; modules and context in `src/app/automations.ts`, `src/app/tools/automation.ts`, `src/app/views/automations.ts`, `src/app/sessions.ts` and `src/client/tasks.tsx`.
 
-**P3 — delivery history, notices, optional run.**
+**P3 — delivery history and panel notices, implemented in schema 20.**
 
-- `history` pages in the panel; a notice for an orphaned or failed task; optional `automation_run`
-  with the Host's pending wording; caps and rate limits.
+- The Store creates `automation_delivery` (`id`, `automation`, `at`, `kind`, `scheduled_at`,
+  `delivered_at`, `message_id`, `error`), keeps each task's newest 50 rows and prunes older ones;
+  `migrateTo20` is the no-op handshake that keeps the sequence.
+- `Automations.history(id)` returns the newest 10 entries for the panel. `refresh()` reads the Host
+  catalog on each `GET automations`, backfills deliveries from `schedule.history`, and records a
+  `delivered`, `error` or `orphaned` transition at most once (deduplicated by the delivered time or
+  the error text), without bumping the record revision or writing an audit entry; startup
+  reconciliation records the same transitions with its usual audit.
+- `GET automations` items carry `history` and the body carries `attention`, the number of tasks
+  orphaned or with a recorded error; the page shows an attention section with that count, the
+  error/orphan reason on each row, and an expandable newest-first delivery history per task, in
+  Chinese and English.
+- Notices stay in the panel, per decision B-D5: no Feishu, GitHub or other IM message is sent for a
+  delivery, failure or orphan. The page states the at-least-once and missed-collapse behavior next
+  to the history.
+- Caps and rate limits are unchanged: 20 tasks, a 120-character title, a 4,000-character
+  instruction, and the Host's 60-second floor; history adds 50 stored rows per task and needs no
+  other limit.
+- The optional `automation_run` is **deliberately not implemented**: no operator decision approved
+  a run action. `automation_delete` is likewise absent, and the four tools and three routes are
+  unchanged.
 
 ### B7. Risks
 
@@ -669,9 +689,10 @@ work still flows through Sources and admission.
   it.
 - **At-least-once.** Session flush and task acknowledgement are separate commits
   (`README.md:280`), so a crash can duplicate a delivery. Instructions must be idempotent, and the
-  panel should say so.
+  panel's delivery-history hint says so.
 - **Missed occurrences collapse.** A late task delivers only the latest occurrence
-  (`README.md:285`); an operator expecting a backfill of every missed hour will not get one.
+  (`README.md:285`); an operator expecting a backfill of every missed hour will not get one. The
+  panel's delivery-history hint says so.
 - **No per-task authorization.** Any Session in this Host whose preset mounts `tool-schedule` can
   edit or delete our Host tasks by id, and see that they exist (`README.md:282`,
   `dsh-tool-schedule/README.md:143`). We keep the tools out of all SuperAgent presets and treat our
@@ -744,13 +765,16 @@ The operator approved every recommendation and the suggested order.
 
 Implementation order: A-P2 (done, schema 18) → B-P1 (done, schema 19, installation-scope automation
 tasks) → A-P3 (done, per-block restore and the panel reminder) → B-P2 (done, project scope and the
-panel) → B-P3 (delivery history and notices).
+panel) → B-P3 (done, schema 20, delivery history and panel-only notices; the optional run action is
+deliberately not implemented).
 
 ## Non-goals
 
 - A second scheduler, a cron parser, or a plugin-owned delivery loop.
 - A new Ticket state, a "waiting" mandate, or scheduled Triggers (the domain rejects them,
   [001 Domain](001-domain.md):51).
+- An `automation_run` or `automation_delete` tool: no operator decision approved a run action, and
+  recovery stays edit-or-recreate.
 - Approval prompts as the confirmation surface (unavailable here; see constraint 1).
 - Moving the installation watchdog inside the plugin ([006 Deployment](006-deployment.md):331-339).
 - Per-task authorization inside the Host schedule service, which is Host-wide by design.

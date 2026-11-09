@@ -39,6 +39,12 @@ export function scheduleText(rrule: string, t: T): string {
   }
 }
 
+/** The panel label of one recorded delivery event. */
+function deliveryKind(kind: Row['history'][number]['kind'], t: T): string {
+  return kind === 'delivered' ? t('automationDelivered')
+    : kind === 'orphaned' ? t('automationOrphaned') : t('automationDeliveryError')
+}
+
 export function TasksPage() {
   const { t, call, notify } = usePanel()
   const { data, error, reload } = usePoll(() => call('GET automations'), [])
@@ -132,11 +138,22 @@ export function TasksPage() {
 
   return <div className="dt-form">
     <Hint>{t('automationIntro')}</Hint>
+    <Hint>{t('automationLimits')}</Hint>
     {unavailable
       ? <Hint>{t('automationUnavailable')}</Hint>
       : <>
         <LoadState error={error} loading={data === undefined} />
         {data && <>
+          {data.attention > 0 && <Section title={t('automationNeedsAttention')} count={data.attention}>
+            <Hint>{t('automationAttentionHint')}</Hint>
+            <ul className="dt-attention" data-attention={data.attention}>
+              {data.items.filter(row => row.orphaned || row.last_error !== null).map(row => <li key={row.id}
+                data-attention-item={row.id}>
+                <strong>{row.title}</strong> <span className="dt-row-meta">{row.id}</span>
+                <div className="dt-row-meta">{row.last_error ?? t('automationOrphanedHint')}</div>
+              </li>)}
+            </ul>
+          </Section>}
           <Section title={t('automationScheduled')} count={data.items.length} hint={t('automationScheduledHint')}>
             {data.items.length === 0
               ? <Hint>{t('automationEmpty')}</Hint>
@@ -153,7 +170,8 @@ export function TasksPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map(row => <tr key={row.id} data-automation={row.id}>
+                  {data.items.map(row => <tr key={row.id} data-automation={row.id}
+                    data-attention={row.orphaned || row.last_error !== null ? 'true' : undefined}>
                     <td>
                       <Tag tone={row.scope === 'project' ? 'info' : 'neutral'}>
                         {row.scope === 'project'
@@ -161,6 +179,7 @@ export function TasksPage() {
                           : t('automationScope.installation')}
                       </Tag>
                       {row.orphaned && <Tag tone="warning">{t('automationOrphaned')}</Tag>}
+                      {!row.orphaned && row.last_error !== null && <Tag tone="warning">{t('automationDeliveryError')}</Tag>}
                     </td>
                     <td>
                       {row.title}
@@ -168,7 +187,21 @@ export function TasksPage() {
                         <span>{row.id}</span>
                         {row.report_only && <span>{t('automationReportOnly')}</span>}
                       </div>
-                      {row.orphaned && <div className="dt-row-meta">{row.last_error ?? t('automationOrphanedHint')}</div>}
+                      {(row.orphaned || row.last_error !== null) && <div className="dt-row-meta" data-automation-reason>
+                        {row.last_error ?? t('automationOrphanedHint')}
+                      </div>}
+                      <details className="dt-row-meta" data-delivery-history={row.id}>
+                        <summary>{t('automationHistory')} · {row.history.length}</summary>
+                        {row.history.length === 0
+                          ? <Hint>{t('automationHistoryEmpty')}</Hint>
+                          : <ol className="dt-deliveries">
+                            {row.history.map((entry, index) => <li key={`${entry.at}-${index}`} data-delivery={entry.kind}>
+                              <span>{deliveryKind(entry.kind, t)}</span>{' '}
+                              <span>{when(entry.delivered_at ?? entry.at, t('lang'))}</span>
+                              {entry.error !== null && <span> — {entry.error}</span>}
+                            </li>)}
+                          </ol>}
+                      </details>
                     </td>
                     <td>{scheduleText(row.rrule, t)}</td>
                     <td>
@@ -183,6 +216,7 @@ export function TasksPage() {
                   </tr>)}
                 </tbody>
               </table>}
+            <Hint>{t('automationHistoryHint')}</Hint>
           </Section>
           <Section title={editing ? t('automationEditTitle') : t('automationCreateTitle')}
             hint={editing ? t('automationEditHint') : t('automationCreateHint')}>

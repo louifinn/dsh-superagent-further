@@ -8,7 +8,7 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
-  migrateTo19, tooOld } from './migration.ts'
+  migrateTo19, migrateTo20, tooOld } from './migration.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { Versions } from './versions.ts'
@@ -86,7 +86,7 @@ export class Store implements Repositories {
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (19), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (20), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
@@ -142,10 +142,13 @@ export class Store implements Repositories {
               revision INTEGER NOT NULL DEFAULT 0, last_delivery_at TEXT, last_error TEXT, orphaned INTEGER NOT NULL DEFAULT 0,
               audit TEXT NOT NULL DEFAULT '[]');
             CREATE INDEX IF NOT EXISTS automation_scope ON automation(scope, enabled);
+            CREATE TABLE IF NOT EXISTS automation_delivery (id INTEGER PRIMARY KEY AUTOINCREMENT, automation TEXT NOT NULL,
+              at TEXT NOT NULL, kind TEXT NOT NULL, scheduled_at TEXT, delivered_at TEXT, message_id TEXT, error TEXT);
+            CREATE INDEX IF NOT EXISTS automation_delivery_task ON automation_delivery(automation, id);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {
@@ -456,11 +459,66 @@ function automationOf(row: Record<string, unknown>): AutomationRecord {
   }
 }
 /**
- * Stores installation-level automation tasks. The plugin writes the row around the Host schedule call, so a row can name a
+ * One observed delivery, failure, or orphan event for an automation task, kept so the panel can show recent history without
+ * a Host read. `at` is when this plugin observed the event; the Host's own times are `scheduled_at` and `delivered_at`.
+ */
+export type AutomationDeliveryKind = 'delivered' | 'error' | 'orphaned'
+export interface AutomationDelivery {
+  automation: string
+  at: string
+  kind: AutomationDeliveryKind
+  scheduled_at: string | null
+  delivered_at: string | null
+  message_id: string | null
+  error: string | null
+}
+/** How many delivery entries are kept per task; reconciliation prunes older ones (docs/011 B7). */
+export const AUTOMATION_DELIVERY_LIMIT = 50
+/**
+ * Stores the bounded delivery history of automation tasks. Every task keeps its newest
+ * `AUTOMATION_DELIVERY_LIMIT` entries; recording a new one prunes the task's older rows in the same statement pair.
+ */
+export class AutomationDeliveries {
+  constructor(private readonly db: DatabaseSync) {}
+  /** Appends one entry and keeps only the newest `limit` entries of that task. */
+  record(entry: AutomationDelivery, limit = AUTOMATION_DELIVERY_LIMIT): void {
+    this.db.prepare(`INSERT INTO automation_delivery (automation, at, kind, scheduled_at, delivered_at, message_id, error)
+      VALUES (?,?,?,?,?,?,?)`)
+      .run(entry.automation, entry.at, entry.kind, entry.scheduled_at, entry.delivered_at, entry.message_id, entry.error)
+    this.db.prepare(`DELETE FROM automation_delivery WHERE automation=? AND id NOT IN
+      (SELECT id FROM automation_delivery WHERE automation=? ORDER BY id DESC LIMIT ?)`)
+      .run(entry.automation, entry.automation, limit)
+  }
+  /** Whether a delivered entry for this Host delivery is already recorded, so a repeated read adds no duplicate. */
+  has(automation: string, deliveredAt: string): boolean {
+    return this.db.prepare("SELECT 1 FROM automation_delivery WHERE automation=? AND kind='delivered' AND delivered_at=? LIMIT 1")
+      .get(automation, deliveredAt) !== undefined
+  }
+  /** One task's entries, newest first, bounded by `limit`. */
+  list(automation: string, limit = AUTOMATION_DELIVERY_LIMIT): AutomationDelivery[] {
+    const rows = this.db.prepare('SELECT * FROM automation_delivery WHERE automation=? ORDER BY id DESC LIMIT ?')
+      .all(automation, limit) as Record<string, unknown>[]
+    const optional = (value: unknown) => value === null || value === undefined ? null : String(value)
+    return rows.map(row => ({
+      automation: String(row.automation), at: String(row.at), kind: row.kind as AutomationDeliveryKind,
+      scheduled_at: optional(row.scheduled_at), delivered_at: optional(row.delivered_at), message_id: optional(row.message_id),
+      error: optional(row.error),
+    }))
+  }
+  /** Deletes one task's history when the task itself is deleted. */
+  delete(automation: string): void {
+    this.db.prepare('DELETE FROM automation_delivery WHERE automation=?').run(automation)
+  }
+}
+/** Stores installation-level automation tasks. The plugin writes the row around the Host schedule call, so a row can name a
  * Host task that an interrupted create left behind; reconciliation reports that instead of deleting or recreating it.
  */
 export class AutomationRecords {
-  constructor(private readonly db: DatabaseSync) {}
+  /** The bounded delivery history that belongs to these tasks. */
+  readonly deliveries: AutomationDeliveries
+  constructor(private readonly db: DatabaseSync) {
+    this.deliveries = new AutomationDeliveries(db)
+  }
   /** One automation task by id, whatever its state. */
   get(id: string): AutomationRecord | undefined {
     const row = this.db.prepare('SELECT * FROM automation WHERE id=?').get(id) as Record<string, unknown> | undefined
@@ -495,8 +553,22 @@ export class AutomationRecords {
         record.dsh_task, record.dsh_updated_at, record.host_status, record.next_at, record.enabled ? 1 : 0, record.created_at,
         record.updated_at, record.revision, record.last_delivery_at, record.last_error, record.orphaned ? 1 : 0, JSON.stringify(record.audit))
   }
-  /** Deletes one task. The Host task is removed first by the automation service. */
+  /** Inserts a task or replaces the stored state of one already recorded, together with any newly observed history entries. */
+  saveWithHistory(record: AutomationRecord, entries: AutomationDelivery[] = []): void {
+    if (entries.length === 0) { this.save(record); return }
+    this.db.exec('SAVEPOINT automation_history')
+    try {
+      this.save(record)
+      for (const entry of entries) this.deliveries.record(entry)
+      this.db.exec('RELEASE automation_history')
+    } catch (error) {
+      this.db.exec('ROLLBACK TO automation_history; RELEASE automation_history')
+      throw error
+    }
+  }
+  /** Deletes one task and its delivery history. The Host task is removed first by the automation service. */
   delete(id: string): void {
+    this.deliveries.delete(id)
     this.db.prepare('DELETE FROM automation WHERE id=?').run(id)
   }
 }

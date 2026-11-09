@@ -17,6 +17,8 @@ const MASTER = 'orchestrator-test'
 class FakeSchedule implements ScheduleService {
   readonly tasks = new Map<string, ScheduleTask>()
   readonly creates: ScheduleCreate[] = []
+  /** Delivery records returned by `history`, newest first, keyed by Host task id; tests set them directly. */
+  readonly deliveries = new Map<string, { scheduledAt: string; deliveredAt: string; messageId: string }[]>()
   failCreate = false
   failDelete = false
   private sequence = 0
@@ -60,7 +62,7 @@ class FakeSchedule implements ScheduleService {
     return task ? { ...task } : { id: request.id, code: 'schedule_not_found' }
   }
   async history(request: { id: string }) {
-    return this.tasks.has(request.id) ? { records: [] } : { id: request.id, code: 'schedule_not_found' }
+    return this.tasks.has(request.id) ? { records: this.deliveries.get(request.id) ?? [] } : { id: request.id, code: 'schedule_not_found' }
   }
   async run(request: { id: string }): Promise<ScheduleTask | { id: string; code: string }> {
     const task = this.tasks.get(request.id)
@@ -352,6 +354,68 @@ describe('startup reconciliation', () => {
     store.automations.save({ ...store.automations.get(created.id)!, project: '' })
     expect(await automations.reconcile()).toMatchObject({ checked: 1, orphaned: 0, drifted: 0 })
     expect(store.automations.get(created.id)!.last_error).toBeNull()
+  })
+})
+
+describe('delivery history', () => {
+  it('records a delivery the catalog reports once and keeps it newest first', async () => {
+    const created = await create()
+    schedule.tasks.get('schedule-1')!.lastDelivery = { scheduledAt: NEXT, deliveredAt: AT, messageId: 'm1' }
+    expect(await automations.reconcile()).toMatchObject({ checked: 1, orphaned: 0, drifted: 0 })
+    expect(automations.history(created.id)).toEqual([{ at: AT, kind: 'delivered', scheduled_at: NEXT,
+      delivered_at: AT, message_id: 'm1', error: null }])
+    expect(store.automations.get(created.id)!.last_delivery_at).toBe(AT)
+    // The same Host delivery on the next reconcile is not recorded a second time.
+    await automations.reconcile()
+    expect(automations.history(created.id)).toHaveLength(1)
+  })
+
+  it('backfills the occurrences the Host history lists and keeps only the newest 50', async () => {
+    const created = await create()
+    const records = Array.from({ length: 60 }, (_, index) => ({
+      scheduledAt: new Date(Date.parse(AT) + index * 60_000).toISOString(),
+      deliveredAt: new Date(Date.parse(AT) + index * 60_000).toISOString(),
+      messageId: `m-${index}`,
+    })).reverse() // newest first, as the Host history returns them
+    schedule.deliveries.set('schedule-1', records)
+    schedule.tasks.get('schedule-1')!.lastDelivery = { ...records[0]! }
+    await automations.reconcile()
+    expect(store.automations.deliveries.list(created.id)).toHaveLength(50)
+    const history = automations.history(created.id, 50)
+    expect(history).toHaveLength(50)
+    expect(history[0]).toMatchObject({ delivered_at: records[0]!.deliveredAt, message_id: 'm-59' })
+    expect(history.at(-1)).toMatchObject({ delivered_at: records[49]!.deliveredAt, message_id: 'm-10' })
+    // The panel asks for the newest 10 and never pages through the store's 50.
+    expect(automations.history(created.id)).toHaveLength(10)
+  })
+
+  it('records an orphan notice with its reason exactly once', async () => {
+    const created = await create()
+    schedule.tasks.get('schedule-1')!.status = 'ended'
+    await automations.reconcile()
+    expect(automations.history(created.id)).toEqual([{ at: AT, kind: 'orphaned', scheduled_at: NEXT,
+      delivered_at: null, message_id: null, error: 'The Host task ended' }])
+    await automations.reconcile()
+    expect(automations.history(created.id)).toHaveLength(1)
+  })
+
+  it('refresh records a new delivery without bumping the revision or writing an audit entry', async () => {
+    const created = await create()
+    const before = store.automations.get(created.id)!
+    schedule.tasks.get('schedule-1')!.lastDelivery = { scheduledAt: NEXT, deliveredAt: AT, messageId: 'm1' }
+    expect(await automations.refresh()).toEqual({ checked: 1, observed: 1 })
+    const after = store.automations.get(created.id)!
+    expect(after.revision).toBe(before.revision)
+    expect(after.audit).toEqual(before.audit)
+    expect(after.last_delivery_at).toBe(AT)
+    expect(automations.history(created.id)).toHaveLength(1)
+    expect(await automations.refresh()).toEqual({ checked: 1, observed: 0 })
+  })
+
+  it('answers an empty history for a task with no deliveries and rejects an unknown id', async () => {
+    const created = await create()
+    expect(automations.history(created.id)).toEqual([])
+    expect(() => automations.history('auto-missing')).toThrow('Unknown automation')
   })
 })
 
