@@ -33,10 +33,10 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 | --- | --- |
 | Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 74 spec files, **1352 passed / 5 skipped (1357)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
+| Checks | `pnpm check`: 76 spec files, **1408 passed / 5 skipped (1413)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
 | Release | `0.3.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.3.0.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
-| State schema | 17 (`10 → 11 → 12 → 13 → 14 → 15 → 16 → 17` migrate in place; `scripts/verify-install` reports the schema read-only) |
+| State schema | 20 (`10 → 11 → … → 19 → 20` migrate in place; `scripts/verify-install` reports the schema read-only) |
 
 ## What it does
 
@@ -141,7 +141,7 @@ the local history started from a byte-identical import, so every change below wa
 | Scale | One repository, one host, one state dir | Many projects polled by one Source, per-project checkouts and Leads, per-project concurrency; one host at a time enforced | Teams work in several repositories; a second profile or a second agent would be more concepts and more noise |
 | Execution | Root worker Session per Ticket | Orchestrator → persistent Lead per project → hidden executor subagents, adoption after restart | Cleaner Session list, project context that persists, and a total Orchestrator free of project labour |
 | Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
-| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → 12 → 13 → 14 → 15 → 16 → 17`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
+| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 20`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
 | Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs | Unattended use needs visible, scriptable operations on every platform |
 | Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest | "Every failure visible" means an operator can see the trend, not only the state |
 | Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
@@ -210,9 +210,10 @@ ended `done` at `00:10:25Z`, reporting both pull requests once.
 
 ### Operations, state and recovery
 
-- **Migrations** — schemas 11–17 reshape records, fill Ticket projects, add Lead messages, add Requests, end
-  Requests of already-ended Tickets, add the cross-Session memory table, and remove the retired GitHub `repository`
-  setting. Each step runs in the opening transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
+- **Migrations** — schemas 11–20 reshape records, fill Ticket projects, add Lead messages, add Requests, end
+  Requests of already-ended Tickets, add the cross-Session memory table, remove the retired GitHub `repository`
+  setting, and add the settings-proposal, automation and automation-delivery tables. Each step runs in the opening
+  transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
   too-new database visible instead of mysterious.
 - **One host** — the state lock message names the other host, its state directory and the switch command; an
   orchestrator Session held by a live DeepSeek Harness process is explained instead of retried forever. The in-app
@@ -240,9 +241,9 @@ allow list and a test repository, as the responsibility section of the philosoph
 
 ### Engineering and distribution
 
-`pnpm check` is the single check: typecheck, 74 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
+`pnpm check` is the single check: typecheck, 76 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1357 tests; it drives real timers and SQLite, so timeouts are
+bundle and attaches it to a GitHub release. The suite is 1413 tests; it drives real timers and SQLite, so timeouts are
 30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
 fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
 lists every source file and spec. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package

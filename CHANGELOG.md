@@ -16,6 +16,31 @@ existing `stateDir`. The state database needs no rename migration: Source kinds,
 work, prepared commands and posted comments stay valid. The README status counts, state schema, panel documentation and
 glossary are brought up to date with the current suite.
 
+### Added
+
+- The project layer: registered projects (id, local clone, remote repository), one GitHub Source polling every
+  project's repository with qualified Thread ids, one persistent Lead Session per project, executors that run as the
+  Lead's subagent in the project's own worktree, and Requests that group the Tickets of one cross-project delivery.
+- Persistent memory: `memory_write`, `memory_search` and `memory_forget`, deterministic records for ended Tickets
+  and Requests, a runtime-context snapshot that changes without rewriting the system prompt, and the panel Memory page
+  with live switches, limits, keyword search, project filter, paging, pinning and retention that only ages out
+  automatic records.
+- A default-language setting carried to every Session in the runtime-context snapshot; Feishu and GitHub replies
+  follow the message they answer while repository artifacts keep the repository's language.
+- Ten Chinese proactive-rule categories with a lazy, idempotent upgrade of an installation's untouched English
+  `copy`/`visual` pair; the eight new categories ship disabled.
+- A first-run setup wizard (automatic once per browser session, permanent header entry, skippable) and the project
+  editor under Settings → Execution.
+- Agent-safe configuration: tiers A/B/C, a reason on every tool save, tier-B proposals with a panel diff and
+  Apply/Reject, per-block restore of any retained revision, and the actor and reason in the settings history.
+- Installation- and project-scope automation tasks around the DeepSeek Harness schedule service, with a panel page,
+  panel-only notices and a bounded per-task delivery history.
+- The `dsh-superagent-further` rename and `scripts/migrate-rename.mjs`, which also rewrites the Session preset cache
+  so an installed host resumes.
+- The derived primary repository: the GitHub Source no longer configures its own repository; the first registered
+  project supplies it.
+- Memory, language and automation runtime-context snapshots, and the schema 10 → 20 migrations.
+
 ## [0.2.0] - 2026-11-07
 
 The first version that runs natively on Windows and is installable into a profile that already exists.
