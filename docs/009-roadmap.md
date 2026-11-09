@@ -6,7 +6,7 @@ This document turns the prototype into something a team can use every day. It re
 
 - The bundle runs natively on Windows 11, both inside the daily DeepSeek Harness application and through `scripts\dsh-superagent-further.cmd`. Linux is verified in WSL and covered by CI; macOS is covered by CI only.
 - Two real Tickets ran end to end. A GitHub Issue mention produced PR #3 (branch `agent/add-agent-test-file-d7efd3d9a996`, commit `03a671f`, merged as `18969c9`); a Feishu `@DSH` message produced PR #4 (branch `agent/add-feishu-test-1d5fe7ab22c4`, commit `ae2f409`, merged as `67973d4`). Both were merged by the operator, and both Tickets ended `merged`.
-- `pnpm check` is green: 1475 passed and 5 skipped (1480) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), and the bounded delivery history with panel-only notices (schema 20); Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
+- `pnpm check` is green: 1479 passed and 5 skipped (1484) on Windows after the Memory page (search, project filter, order, paging), the Language setting, the sixteen all-enabled localized proactive rules (including dependency upgrades, review-feedback fixes, design decisions and Issue/PR triage), the GitHub label capability for triage, the Feishu file delivery for a remote manager reviewing a design document, the derived primary repository, the setup wizard, the rename migration test, the agent-safe configuration tiers and proposals (schema 18), per-block restore (schema 18), installation- and project-scope automation tasks with manual run and delete (schema 19), the bounded delivery history with panel-only notices (schema 20), and the GitHub read-path repair that stops a skipped listing from staying hidden behind a saved ETag; Linux is green too, the process-script and Feishu failures found by the first real Linux run are fixed, and every push is checked on all six platform and Node combinations.
 - `.github/workflows/check.yml` runs on every push to `main` and is green on all six platform and Node combinations; `smoke.yml` starts a real host on macOS.
 - The installation runs inside the daily desktop profile. Two hosts cannot share one state directory, so the in-application instance and the service script are currently exclusive by hand, not by design.
 - Multi-project work is live: registered projects are polled, each Ticket runs in its own project's worktree under a project Lead (schema 15 ends the Requests of old Tickets), and a cross-project Request (90df28d6…) produced two Tickets, two pull requests and one `done` state. The panel lists open Requests with their Tickets and the digest names each Request in flight.
@@ -354,4 +354,15 @@ tower runs the six-combination CI and the live smoke after the chain.
   completion-report contract.
 - [x] Docs, CHANGELOG and README counts updated and `pnpm check` green; the six-combination CI and live smoke remain the
   tower's post-merge gate.
+
+## Sprint 23 checklist
+
+On 2026-11-10 an Issue filed in the project's own remote repository produced no response. The operator approved repairing
+the GitHub read path and its saved state and switching `eval.mode` from `observe` to `auto`.
+
+- [x] A stream's ETag is saved only by a read that took in every listed item; a skipped item forces the next read in full.
+- [x] A conditional read is trusted for at most ten minutes; after that one unconditional read confirms the list again.
+- [x] A one-time repair drops saved stream ETags on the first start after the upgrade, so a skipped list is read again.
+- [x] Tests cover the skip, the stale revalidation, the recent conditional read and the one-time repair.
+- [x] Docs, CHANGELOG and README counts updated; `pnpm check` green.
 

@@ -147,6 +147,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   await ctx.ready
   // Setup restarts dsh-superagent-further once it resolves the accounts; until then nothing is polled.
   if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
+  repairStreamEtags(ctx)
   while (!signal.aborted) {
     const config = ctx.config<GithubConfig>(SOURCE)
     try {
@@ -217,6 +218,10 @@ const STREAMS = [
   { id: 'comments', observed: (config: GithubConfig) => config.observeComments, path: 'issues/comments?' },
   { id: 'review-comments', observed: (config: GithubConfig) => config.observeComments, path: 'pulls/comments?' },
 ] as const
+/** How long a conditional read may trust an unchanged ETag before one unconditional read confirms the list again. */
+const STREAM_RECHECK_MS = 10 * 60_000
+/** Marks the one-time repair of saved stream ETags (see `repairStreamEtags`). */
+const STREAM_REPAIR = 'etag-repair-1'
 /** Polls every repository's streams (new Issues/PRs, comments, default-branch CI); each stream reads from when it was switched on, resets when switched off, and fails independently. */
 async function pollRepository(ctx: SourceContext, round: Round, repos: GithubRepository[]): Promise<void> {
   const config = ctx.config<GithubConfig>(SOURCE)
@@ -262,32 +267,42 @@ async function readStream(ctx: SourceContext, round: Round, repo: GithubReposito
   const horizon = Math.floor((Date.parse(round.started) - POLL_HORIZON_MS) / 3_600_000) * 3_600_000
   const since = new Date(Math.max(Date.parse(stored?.since ?? round.started), horizon)).toISOString()
   const conditional = stored?.etag && stored.since === since ? ['-H', `If-None-Match: ${stored.etag}`] : []
-  let raw: string
   const listed = `${path}&sort=updated&direction=asc&per_page=100&since=${encodeURIComponent(since)}`
-  try { raw = await commandsOf(ctx, repo).withSignal(round.signal).api(listed, '--include', ...conditional) }
+  const commands = commandsOf(ctx, repo).withSignal(round.signal)
+  let raw: string
+  try { raw = await commands.api(listed, '--include', ...conditional) }
   catch (error) {
-    if (error instanceof CliError && error.code === 304) return
-    throw error
+    if (!(error instanceof CliError) || error.code !== 304) throw error
+    // Only trust a 304 while a recent unconditional read confirmed the list. Otherwise drop the tag and read the list in
+    // full, so an item no read took in (for example one the previous read skipped) cannot stay hidden behind the ETag.
+    const confirmed = stored?.verifiedAt !== undefined && Date.parse(round.started) - Date.parse(stored.verifiedAt) < STREAM_RECHECK_MS
+    if (confirmed) return
+    ctx.state.set(name, { since, started, ...stored?.verifiedAt ? { verifiedAt: stored.verifiedAt } : {} })
+    raw = await commands.api(listed, '--include')
   }
   const { headers, body } = included(raw)
   const items = validItems(ListedSchema, z.array(z.unknown()).parse(JSON.parse(body)), round.tally)
   const { login } = ctx.deployment.github
   const fresh = (at: string | null | undefined, kind: string) =>
     kind in started && Date.parse(at ?? '') >= Math.max(Date.parse(started[kind]!), horizon)
+  // Items this read left out on purpose (opened before their kind was observed); an ETag is only saved when there are none.
+  let ignored = 0
   for (const item of items) {
     // Stopping mid-stream aborts before advancing the cursor so unread items are retried.
     if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
     if (sameName(item.user.login, login)) continue
     if (id === 'issues') {
       const issue = IssueSchema.safeParse(item)
-      const pr = issue.success && !!issue.data.pull_request
-      if (!issue.success || !fresh(issue.data.created_at, pr ? 'pulls' : 'issues')) continue
+      if (!issue.success) continue
+      const pr = !!issue.data.pull_request
+      if (!fresh(issue.data.created_at, pr ? 'pulls' : 'issues')) { ignored += 1; continue }
       await ctx.receive(pr ? pullTrigger(issue.data, login, repo.repository, ctx.deployment.repository) : issueTrigger(issue.data, login, repo.repository, ctx.deployment.repository))
       nameThread(ctx, repo, issue.data.number, issue.data.title)
       continue
     }
     const number = Number(/\/(?:issues|pulls)\/(\d+)$/.exec((id === 'comments' ? item.issue_url : item.pull_request_url) ?? '')?.[1])
-    if (!number || !fresh(item.updated_at ?? item.created_at, 'comments')) continue
+    if (!number) continue
+    if (!fresh(item.updated_at ?? item.created_at, 'comments')) { ignored += 1; continue }
     const isPr = id === 'review-comments' || /\/pull\//.test(item.html_url ?? '')
     const ref = { number, isPr, ...item.html_url ? { url: item.html_url } : {} }
     const trigger = commentTrigger(item, ref, id === 'comments' ? 'conversation' : 'inline', login, repo.repository, ctx.deployment.repository)
@@ -299,8 +314,24 @@ async function readStream(ctx: SourceContext, round: Round, repo: GithubReposito
   const moved = Number.isFinite(newest) ? lagged(new Date(newest).toISOString()) : since
   const next = Date.parse(moved) > Date.parse(since) ? moved : since
   const etag = /^etag:\s*(.+)$/im.exec(headers)?.[1]?.trim()
-  // The ETag belongs to this request, which the next round repeats only while the cursor stays unchanged.
-  ctx.state.set(name, { since: next, started, ...etag && next === since ? { etag } : {} })
+  // The ETag belongs to this request, which the next round repeats only while the cursor stays unchanged and this read
+  // took in every listed item; skipping one forces the next read, so the tag cannot freeze it out of sight.
+  ctx.state.set(name, { since: next, started, verifiedAt: round.started, ...etag && next === since && ignored === 0 ? { etag } : {} })
+}
+/**
+ * Drops saved stream ETags once after this upgrade. A list a read never took in can be hidden behind its saved ETag, and
+ * only a fresh unconditional read lists the item again; derived cursors and start times stay, so nothing is skipped.
+ */
+export function repairStreamEtags(ctx: SourceContext): void {
+  if (ctx.state.get(KV.github.streamRepair) === STREAM_REPAIR) return
+  for (const repo of repositories(ctx)) {
+    for (const stream of STREAMS) {
+      const name = streamOf(repo, stream.id)
+      const stored = ctx.state.get(name)
+      if (stored?.etag) ctx.state.set(name, { since: stored.since, started: stored.started, ...stored.verifiedAt ? { verifiedAt: stored.verifiedAt } : {} })
+    }
+  }
+  ctx.state.set(KV.github.streamRepair, STREAM_REPAIR)
 }
 /** Polls one repository's default-branch CI checks, emitting a trigger only when the set of failing checks changes after the initial baseline. */
 async function pollBranchCi(ctx: SourceContext, round: Round, repo: GithubRepository): Promise<void> {

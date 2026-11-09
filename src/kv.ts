@@ -47,13 +47,15 @@ export const KV = {
    */
   github: { since: record<string>('github-since'), retries: record<Record<string, Retry>>('github-retry'),
     cursor: family<string, [number: number]>('github-cursor:'),
-    stream: family<{ since: string; started: Record<string, string>; etag?: string }, [stream: string]>('github-stream:'),
+    stream: family<{ since: string; started: Record<string, string>; etag?: string; verifiedAt?: string }, [stream: string]>('github-stream:'),
+    /** Marks the one-time repair that drops saved stream ETags so a list skipped by an earlier read is listed again. */
+    streamRepair: record<string>('github-stream-repair'),
     branchCi: record<{ branch?: string; failures?: string[]; revision: number }>('github-branch-ci'),
     ci: family<{ fingerprint: string; revision: number }, [number: number]>('github-ci:'),
     /** The same records for a project repository other than the deployment's; the deployment's keep the legacy keys above. */
     sinceIn: family<string, [repository: string]>('github-since:'), retriesIn: family<Record<string, Retry>, [repository: string]>('github-retry:'),
     cursorIn: family<string, [repository: string, number: number]>('github-cursor:'),
-    streamIn: family<{ since: string; started: Record<string, string>; etag?: string }, [repository: string, stream: string]>('github-stream:'),
+    streamIn: family<{ since: string; started: Record<string, string>; etag?: string; verifiedAt?: string }, [repository: string, stream: string]>('github-stream:'),
     branchCiIn: family<{ branch?: string; failures?: string[]; revision: number }, [repository: string]>('github-branch-ci:'),
     ciIn: family<{ fingerprint: string; revision: number }, [repository: string, number: number]>('github-ci:') },
   /**

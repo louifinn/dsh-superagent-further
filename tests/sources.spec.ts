@@ -9,7 +9,7 @@ import { runFeishu } from '../src/sources/feishu-loops.ts'
 import { commentTrigger, githubAddress, githubChannel, issueTrigger, type GithubComment, type GithubIssue } from '../src/sources/github-trigger.ts'
 import { claimPull, observePull, pullEndNotices, pullOf, ticketBranch, type Pull } from '../src/sources/github-pull.ts'
 import { ciCounts, ciFact, ciSummary } from '../src/sources/github-read.ts'
-import { apply as applyGithub, githubKind, pollFailure, pollRound } from '../src/sources/github.ts'
+import { apply as applyGithub, githubKind, pollFailure, pollRound, repairStreamEtags } from '../src/sources/github.ts'
 import { pollThreads as pollGithubThreads } from '../src/sources/github.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { cursorAt, lagged, POLL_HORIZON_MS } from '../src/sources/poll.ts'
@@ -1372,21 +1372,24 @@ describe('observing the GitHub repository', () => {
     observe(h, { observeIssues: true, observePulls: true })
     h.store.set('github-since', at(-24))
     h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) } })
-    const calls = repository(h, { issues: [issue(3, { created_at: at(-24), updated_at: at(1) }),
+    const answers = { issues: [issue(3, { created_at: at(-24), updated_at: at(1) }),
       issue(4, { created_at: at(2), updated_at: at(2) }),
       { ...issue(5, { created_at: at(3), updated_at: at(3) }), pull_request: { url: 'x' } },
-      issue(6, { created_at: at(4), updated_at: at(4), user: { login: 'agent-bot', type: 'User' } })] })
+      issue(6, { created_at: at(4), updated_at: at(4), user: { login: 'agent-bot', type: 'User' } })] }
+    const calls = repository(h, answers)
     await pollRound(h)
+    // The next page GitHub lists normally: the item opened before the switch is behind the cursor, so the read takes in every item.
+    answers.issues = answers.issues.slice(1)
     // #3 was opened before the Source observed Issues, and #6 is the agent's own.
     expect(h.receive.mock.calls.map(([trigger]) => [trigger.meta.number, trigger.meta.kind, trigger.id]))
       .toEqual([[4, 'issue', issueTrigger(issue(4), 'agent-bot').id], [5, 'pull', issueTrigger(issue(5), 'agent-bot').id]])
     const started = { issues: at(0), pulls: at(0) }
-    expect(h.store.get('github-stream:issues')).toEqual({ since: lagged(at(4)), started })
+    expect(h.store.get('github-stream:issues')).toMatchObject({ since: lagged(at(4)), started, verifiedAt: expect.any(String) })
     const list = () => calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))
     expect(list()[0]![1]).toContain(`since=${encodeURIComponent(at(0))}`)
     // The next round repeats the request at the newest Issue, whose ETag the round after sends, which GitHub answers 304 for.
     await pollRound(h)
-    expect(h.store.get('github-stream:issues')).toEqual({ since: lagged(at(4)), started, etag: '"same"' })
+    expect(h.store.get('github-stream:issues')).toMatchObject({ since: lagged(at(4)), started, etag: '"same"' })
     h.receive.mockClear()
     await pollRound(h)
     expect(list().at(-1)).toEqual(expect.arrayContaining(['-H', 'If-None-Match: "same"']))
@@ -1395,6 +1398,59 @@ describe('observing the GitHub repository', () => {
     observe(h, {})
     await pollRound(h)
     expect(h.store.get('github-stream:issues')).toBeUndefined()
+    h.store.close()
+  })
+  it('does not save the ETag of a read that skipped an item, so the next read lists it again', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    // The cursor already sits at the newest item's lagged time: an unchanged cursor would otherwise let this read save its ETag.
+    h.store.set('github-stream:issues', { since: lagged(at(1)), started: { issues: at(0), pulls: at(0) } })
+    repository(h, { issues: [{ ...issue(3, { updated_at: at(1) }), created_at: at(-24) }] })
+    await pollRound(h)
+    // The Issue was opened before the Source observed Issues, so this read skipped it; without an ETag the next read lists it again.
+    expect(h.receive).not.toHaveBeenCalled()
+    expect(h.store.get('github-stream:issues')).toMatchObject({ since: lagged(at(1)), started: { issues: at(0) } })
+    expect(h.store.get('github-stream:issues')).not.toHaveProperty('etag')
+    h.store.close()
+  })
+  it('re-reads a list in full when a conditional read has not been confirmed recently, then takes in the item it held back', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    // Two days-old confirmation: the saved ETag is no longer trusted, so a 304 is followed by one unconditional read.
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"same"', verifiedAt: at(1) })
+    const calls = repository(h, { issues: [issue(4, { created_at: at(2), updated_at: at(2) })] })
+    await pollRound(h)
+    const list = calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))
+    expect(list).toHaveLength(2)
+    expect(list[1]).not.toContain('If-None-Match: "same"')
+    expect(h.receive.mock.calls.map(([trigger]) => trigger.meta.number)).toEqual([4])
+    expect(h.store.get('github-stream:issues')).toMatchObject({ since: lagged(at(2)), verifiedAt: expect.any(String) })
+    h.store.close()
+  })
+  it('trusts a conditional read confirmed recently and leaves the list unread', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"same"', verifiedAt: new Date().toISOString() })
+    const calls = repository(h, { issues: [issue(4, { created_at: at(2), updated_at: at(2) })] })
+    await pollRound(h)
+    expect(calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))).toHaveLength(1)
+    expect(h.receive).not.toHaveBeenCalled()
+    h.store.close()
+  })
+  it('repairs saved stream ETags once so a list skipped by an earlier read is listed again', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"same"', verifiedAt: at(1) })
+    repairStreamEtags(h)
+    expect(h.store.get('github-stream:issues')).toMatchObject({ since: at(0), started: { issues: at(0), pulls: at(0) }, verifiedAt: at(1) })
+    expect(h.store.get('github-stream:issues')).not.toHaveProperty('etag')
+    // The marker keeps later ETags: the repair runs once, not on every start.
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"fresh"' })
+    repairStreamEtags(h)
+    expect(h.store.get('github-stream:issues')).toMatchObject({ etag: '"fresh"' })
     h.store.close()
   })
   it('keeps a stream position behind the newest item, so one GitHub indexed late is listed again as a duplicate', async () => {
@@ -1458,7 +1514,7 @@ describe('observing the GitHub repository', () => {
     await expect(pollRound(h)).rejects.toThrow(/issues: .*502/)
     expect(h.store.get('github-stream:issues')).toEqual({ since: at(0), started: { issues: at(0) } })
     expect(h.receive).toHaveBeenCalledWith(expect.objectContaining({ text: 'looks off' }))
-    expect(h.store.get('github-stream:comments')).toEqual({ since: lagged(at(1)), started: { comments: at(0) } })
+    expect(h.store.get('github-stream:comments')).toMatchObject({ since: lagged(at(1)), started: { comments: at(0) }, verifiedAt: expect.any(String) })
     h.store.close()
   })
   it('reads a stream whose cursor is older than the polling horizon from the horizon, without the ETag of the older request', async () => {

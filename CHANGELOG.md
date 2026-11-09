@@ -55,6 +55,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   defaults, the earlier twelve-category defaults or the earlier fifteen-category defaults are upgraded to the all-enabled
   sixteen-rule set when settings are read; operator-edited, renamed, added or removed rules are preserved.
 
+### Fixed
+
+- A GitHub repository stream could skip an item and then stay blind to it: the read saved the listing's ETag even when it
+  took nothing in, and every later conditional read was answered 304. A stream now saves an ETag only when the read
+  skipped no item, trusts it for at most ten minutes before one unconditional read confirms the list again, and the first
+  start after this upgrade drops saved stream ETags once so a list that was skipped earlier is read in full again. This
+  is how an Issue filed in the project's own repository was listed by the poller but never became a Trigger.
+
 
 ## [0.3.0] - 2026-11-09
 
