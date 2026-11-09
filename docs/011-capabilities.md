@@ -1,6 +1,7 @@
 # 011 Capabilities: agent-managed configuration and project automations
 
-Status: **proposal — Part A P1 implemented** (2026-11-09). The survey behind this document was
+Status: **proposal — Part A P1 implemented; decisions settled** (2026-11-09). The survey behind this
+document was
 read-only: it changed no code, prompt, test, or configuration, and only added this document and one
 Sprint checklist in [009 Roadmap](009-roadmap.md). Part A P1 (agent-safe configuration) is now
 implemented without a schema change: field tiers in `src/policy.ts`, tier refusals and the required
@@ -615,6 +616,30 @@ decision list:
 8. B-D3 automation limits — the values above?
 9. B-D4 Host-wide schedule management — accept the limitation?
 10. B-D5 delivery surface — session turns only, or a notice per delivery too?
+
+### Resolved (2026-11-09)
+
+The operator approved every recommendation and the suggested order.
+
+1. A-D1 — accepted as proposed: A direct, B confirmation, C panel-only, with the per-field split in
+   A5.5. In particular `eval.mode` and `policy.*` move from tool-writable to confirmation-required,
+   and `memory.*` / `language` stay confirmation-required rather than direct.
+2. A-D2 — the panel is the only approval surface in the first release; no Feishu DM reminder.
+3. A-D3 — one pending proposal per block, expiring after 7 days.
+4. A-D4 — restore per block first; a whole-snapshot restore can come later.
+5. A-D5 — the history entry is enough; a direct A save needs no extra panel notice.
+6. B-D1 — installation scope first; project scope follows in P2.
+7. B-D2 — project automations are report-only in the first release; code changes stay in the Ticket
+   flow.
+8. B-D3 — accept the limits: 20 tasks, instructions ≤4000 characters, titles ≤120, `rrule` only, and
+   enabled on create unless the human says otherwise.
+9. B-D4 — accept the Host-wide schedule service with reconciliation and drift detection; no private
+   scheduler.
+10. B-D5 — session turns only in the first release; no Feishu or panel notice per delivery.
+
+Implementation order: A-P2 (proposals and the confirmation surface) → B-P1 (installation-scope
+automation tasks) → A-P3 (per-block restore and notices) → B-P2 (project scope and the panel) →
+B-P3 (history and delivery notices).
 
 ## Non-goals
 
