@@ -255,3 +255,14 @@ The approved capability proposal's Part A P2 lands the proposal record and the p
 - [x] Migration and docs: a schema 17 database opens at 18 with an empty `settings_proposal` table; [006 Deployment](006-deployment.md), [007 Architecture](007-architecture.md) and `docs/011-capabilities.md` describe the flow. Covered by `tests/migration.spec.ts` and `tests/docs.spec.ts`.
 - [x] `pnpm check` green, including the new proposal tests.
 
+## Sprint 15 checklist
+
+The approved capability proposal's Part B P1 lands installation-scope automation tasks (schema 19): the Host's schedule service owns the clock and delivery, while the plugin owns the record, the four main-Session tools, the delivery envelope and reconciliation. It ends with `pnpm check` green.
+
+- [x] Record: schema 19 adds the `automation` table (`id`, `scope`, `project`, `host`, `target_session`, `title`, `instruction`, `rrule`, `dsh_task`, `dsh_updated_at`, `host_status`, `next_at`, `enabled`, `created_at`, `updated_at`, `revision`, `last_delivery_at`, `last_error`, `orphaned`, `audit`) with `AutomationRecords` accessors in `src/app/store.ts` and `migrateTo19` in `src/app/migration.ts`; schema 18 was already consumed by `settings_proposal`, so the automation table takes 19.
+- [x] Tools: `automation_create`, `automation_list`, `automation_view` and `automation_edit` exist for the main Session only, are registered only when the Host `schedule` service exists, target the installation main Session, and have no run or delete tool; titles are ≤120 characters, instructions ≤4000, at most 20 installation tasks, and `rrule` passes to the Host unchanged. Covered by `tests/automations.spec.ts`, `tests/tools.spec.ts` and `tests/runtime.spec.ts`.
+- [x] Delivery: the stored prompt begins with `[AUTOMATION auto-… · installation]`, and the `dsh-superagent-further-automation` runtime-context contribution (order 320) tells the main Session how to read it and that it changes no settings, Policy or Sources. Covered by `tests/automations.spec.ts` and `tests/runtime.spec.ts`.
+- [x] Failure handling: create writes the Host task first and compensates by deleting it when the row write fails; enable/disable maps to the Host `active` patch; an edit uses `expectedUpdatedAt` and reports a conflict instead of overwriting; startup reconciliation marks missing, ended, removed-project and drifted records without recreating or adopting a Host task. Covered by `tests/automations.spec.ts`.
+- [x] Tests and docs: `tests/automations.spec.ts`, plus the runtime-context, tool-absence and schema-19 migration cases; [006 Deployment](006-deployment.md), [007 Architecture](007-architecture.md) and `docs/011-capabilities.md` describe the operator flow, the modules and the remaining P2/P3 work. Covered by `tests/docs.spec.ts`.
+- [x] `pnpm check` green, including the new automation tests.
+

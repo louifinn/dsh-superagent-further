@@ -172,7 +172,7 @@ Its interfaces are grouped by purpose:
 - **Outbox receipts:** `replyStatus` and `receipts`, written only by Outbox. Receipt operations are `get`, `waiting`, `behind`, `add`, `settle` and `withdraw`. `behind` checks whether an earlier message for the same Ticket and conversation is waiting with fewer than three failures. A withdrawn message settles with `channelGone` or `channelIgnored`. Read queries expose failed and dropped replies through `failingReplies`, `droppedReplies` and `droppedSince`.
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16, 16 to 17 and 17 to 18, which adds the `settings_proposal` table the Store creates).
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migration module converts supported older records at startup (schema 10 to 11, then 11 to 12, 12 to 13, 13 to 14, 14 to 15, 15 to 16, 16 to 17, 17 to 18, which adds the `settings_proposal` table the Store creates, and 18 to 19, which adds the `automation` table the Store creates).
 
 ### Effects
 
@@ -340,14 +340,16 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
-| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, 15 to 16 adds the `memory` table the Store creates, and 16 to 17 removes the GitHub Source's own `repository` setting, because the first registered project supplies the primary repository |
+| `src/app/migration.ts` | The schema migrations: schema 10 to 11 rewrites every stored record in its current shape, 11 to 12 fills in the project of Tickets accepted before projects existed, 12 to 13 introduces the Lead Session and message records, 13 to 14 groups each existing Ticket under a Request of its own, 14 to 15 ends the Requests of Tickets that had already ended, 15 to 16 adds the `memory` table the Store creates, 16 to 17 removes the GitHub Source's own `repository` setting because the first registered project supplies the primary repository, 17 to 18 adds the `settings_proposal` table the Store creates, and 18 to 19 adds the `automation` table the Store creates |
 | `src/app/lead-messages.ts` | `LeadMessages`: the durable assignment, report, question and notice records between the Orchestrator and a project's Lead, one record per recipient and request id |
 | `src/app/request-notices.ts` | One result notice per non-GitHub Channel of a Request whose delivery spans several Tickets, built when the Engine emits `request.ended` and naming every Ticket and its pull request |
 | `src/app/tools/lead.ts` | The Lead's read-only application tool, `lead_status`: its project, the open and recently ended Tickets, and the messages waiting for it |
 | `src/memory.ts` | The memory schemas: scope, kind, tags, source, pinning, expiry and the content hash that deduplicates a write |
 | `src/app/memories.ts` | `Memories`: the facts, decisions, preferences and lessons that outlive a Session, searched by the memory tools and rendered into the main Session's and each Lead's runtime-context snapshot |
+| `src/app/automations.ts` | `Automations`: installation-level automation records around the Host `schedule` service — validation, the delivery envelope, the record/Host compensation order, enable/disable through `edit`, drift and orphan reconciliation, and the main Session's `## automations` runtime context |
 | `src/app/language.ts` | Builds the runtime-context sentence that tells every Session which language a person reads, and which boundaries apply to replies and repository artifacts |
 | `src/app/tools/memory.ts` | The memory tools, `memory_write`, `memory_search` and `memory_forget`, for the main Session and each project Lead |
+| `src/app/tools/automation.ts` | The four installation automation tools, `automation_create`, `automation_list`, `automation_view` and `automation_edit`, registered for the main Session only when the Host `schedule` service exists |
 | `src/app/worktrees.ts` | `reclaimWorktrees`: removes the checkout and `agent/` branch of Tickets ended past `executor.worktreeKeepDays`, only under `<stateDir>/work` |
 | `src/app/effects.ts` | Effects |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |
@@ -447,6 +449,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/lead-messages.spec.ts` | Lead message records: one record per recipient and request id, project listings and undelivered messages, delivery and acknowledgement, and surviving a reopen from schema 12 |
 | `tests/leads.spec.ts` | Lead Session ids, the composed Lead prompt and its overrides, and one recovered Lead Session per registered project |
 | `tests/memories.spec.ts` | Memories: scope and deduplication, browsing by keyword, project and order with pinned rows first and limited windows for paging, pinning, search, forget and expiry, the current schema, the snapshot's budget, the panel switches and limits, and retention that ages out only automatic records |
+| `tests/automations.spec.ts` | Installation automations: title/instruction/rule validation and the 20-task limit, the envelope, create compensation when the row or the Host delete fails, enable/disable and edit conflicts, orphan and drift reconciliation with unrecorded Host tasks, and the context and tool descriptions |
 | `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword, project-filter and order combo boxes, paging through the list, pinning, expanding a card to all its fields, and forgetting a stored memory |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations, the localized default rules and their upgrade, and assessment outcomes |
@@ -513,6 +516,7 @@ One SQLite file, `<stateDir>/orchestrator.sqlite`, which only the Store opens.
 | `effect` | The effect queue: per kind and key, the payload, its order, failed attempts with the last error, and when it is due | Effects; the schema 11 migration queues what earlier versions kept for the main Session |
 | `outbox` | The receipt of each message for a Channel, by id, with the Ticket it is for and its `status`, `pending`, `sent` or `dropped`, kept so an id is never queued twice; for a dropped message, when and why, as the generated column `dropped`, its time, and a reason code. A message that waits has a `reply` effect, which holds its attempts | The Outbox |
 | `settings_proposal` | Settings proposals: the block, the proposed value and its per-field diff, the requester's reason and Session id, the base revision, status (`pending`, `applied`, `rejected`, `superseded` or `expired`), creation and expiry times, and the panel's decision with the applied revision or the error | `Settings`, from `orchestrator_settings_propose`; the panel applies or rejects one |
+| `automation` | Installation automation tasks: the scope and project, the target Session, title, instruction and `rrule`, the Host task id and its last known `updatedAt`/status/next occurrence, enabled, revision, last delivery, last error, orphaned, and the audit entries | `Automations`, from `automation_create`/`automation_edit` and startup reconciliation |
 | `kv` | Every other record, by key | The part that names it |
 
 A generated column is computed from its row's JSON and is empty outside its set, and each has an index over its set, so a pass reads only active work. A database that predates a column gets it when the Store opens it.
@@ -535,13 +539,13 @@ Read caches use bounded in-memory `TextCache` instances and are lost on restart.
 
 Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition` and `decision` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request. Settings proposals are not pruned either: an expired, rejected or superseded row stays as the record of what was asked.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10 at start (10 to 11, then 11 to 12, which fills in each Ticket's project, then 12 to 13, which adds the Lead Session and message records, then 13 to 14, which groups each existing Ticket under a Request, then 14 to 15, which ends the Requests of Tickets that had already ended, then 15 to 16, which adds the `memory` table the Store creates, then 16 to 17, which removes the GitHub Source's retired `repository` setting from the stored settings and every saved revision, then 17 to 18, which adds the `settings_proposal` table the Store creates, then 18 to 19, which adds the `automation` table the Store creates), and refuses an older one. Rule localization is not a schema step: `PolicyConfigSchema` upgrades the built-in rules when settings are parsed, so existing databases change on read and their stored settings revisions stay as saved.
 
 ## Model-facing interfaces
 
 ### Main Session tools
 
-The main Session has 15 application tools:
+The main Session has 15 application tools, plus four automation tools when the Host `schedule` service is installed:
 
 | Purpose | Tools |
 | --- | --- |
@@ -551,6 +555,7 @@ The main Session has 15 application tools:
 | Assess proactive work | `orchestrator_eval`, `orchestrator_eval_read`, `orchestrator_eval_decide` |
 | Communicate and unsubscribe | `orchestrator_reply`, `orchestrator_thread_unsubscribe` |
 | Configure | `orchestrator_settings_save`, `orchestrator_settings_propose`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
+| Automate installation tasks | `automation_create`, `automation_list`, `automation_view`, `automation_edit`, only when the Host `schedule` service exists |
 
 `orchestrator_route` accepts 1–20 decisions in order. Each accept, attach, stop or ignore runs as a separate Engine command. It also permits ignoring an inferred candidate directly from its card. `orchestrator_ticket_note` sends a fact as context, not authority. `orchestrator_read tickets` lists every Ticket newest first, end included, so a request that refers to earlier work is judged against the stored record rather than the current conversation.
 

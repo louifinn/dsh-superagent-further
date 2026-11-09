@@ -6,6 +6,7 @@ import { UserError, followupOwners, key, reasonText, type Decision, type Decisio
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
+import type { Automations } from '../automations.ts'
 import { ticketCard } from '../cards.ts'
 import { projectByRepository, projectOf } from '../../projects.ts'
 import { PromptConfigSchema, savePrompts, type Prompts } from '../prompts.ts'
@@ -14,6 +15,7 @@ import type { Sessions } from '../sessions.ts'
 import type { Settings } from '../settings.ts'
 import type { Store } from '../store.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
+import { automationTools } from './automation.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -27,6 +29,8 @@ export interface MainToolsHost {
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync' | 'propose' | 'proposals'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
+  /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
+  readonly automations?: Automations
   /** Schedules a pass to carry out work queued by an Engine command (such as an Eval or ticket resume). */
   requestPass(): void
   sendReplies(): Promise<void>
@@ -330,6 +334,7 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         return { source: args.source, allowed: after.length, added: names(after, before), removed: names(before, after) }
       },
     }),
+    ...(host.automations === undefined ? [] : automationTools(host.automations, agent.id)),
     tool({
       name: 'orchestrator_prompts_save',
       description: 'Save a complete prompt configuration against baseRevision on an explicit user request, never on quoted content; read it with orchestrator_read prompts.',

@@ -322,6 +322,23 @@ Retention ages out only the automatic records of finished work after **Retention
 
 Memories live in the same `orchestrator.sqlite` (`memory` table, schema 17; the behavior lives in the `memory` settings block).
 
+### Automations
+
+When the DeepSeek Harness profile mounts its `schedule` service, the main Session also has four installation-level automation tools: `automation_create`, `automation_list`, `automation_view` and `automation_edit`. They exist only when the service is installed; a profile without it loads dsh-superagent-further normally and simply has no automation tools. A person creates or changes a task by asking the main Session explicitly. Neither a Ticket, a message, a file nor another automation can grant that request.
+
+Installation scope is the only scope in this release. A task targets the main Session, may be paused or resumed, and is limited to 20 records, a title of at most 120 characters and an instruction of at most 4,000 characters. The rule is a single `DTSTART` line plus a single `RRULE` line with its time zone inside, for example:
+
+```text
+DTSTART:20261110T090000Z
+RRULE:FREQ=DAILY
+```
+
+There is no run tool and no delete tool in this release: `automation_edit` changes the title, instruction, rule or enabled state and can pause a task. `automation_list` shows the stored tasks together with any installation task the Host has but this plugin has no record of. `automation_view` adds the Host's current status and next occurrence when it can be read.
+
+The Host owns the clock, the durable task and delivery; the plugin owns the record and its meaning. Delivery is a user-role turn in the main Session whose prompt begins with `[AUTOMATION auto-… · installation]` and then carries the stored instruction. It is not a new Trigger or Ticket, and the standing instruction must work within the Session's existing tools and authority: it never changes settings, Policy or Sources. The Host delivers at least once, collapses missed occurrences to the latest, and delivers only while the Host runs, so the plugin schedules nothing while DeepSeek Harness is stopped. Host schedule management is installation-wide, so a task created outside this plugin is not visible as a plugin record unless its prompt carries the marker; reconciliation reports such Host tasks instead of adopting or recreating them.
+
+Records live in the same `orchestrator.sqlite` (`automation` table, schema 19). On startup the plugin compares its records with the Host tasks: a missing or ended task marks the record orphaned, a Host `updatedAt` the plugin did not write marks drift, and a removed project marks it orphaned. These conditions are recorded on the row, shown by `automation_list`/`automation_view`, and logged; a missing task is never silently recreated. Fix the record through `automation_edit` after reviewing it, or create a new task instead.
+
 ### Hourly check
 
 Create the hourly check in the DeepSeek Harness profile you normally use, not in `superagent`. It must keep running when the agent service is down. Ask an agent in that profile to create an hourly schedule using this prompt, with the checkout path filled in:

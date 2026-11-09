@@ -646,7 +646,7 @@ it('opens a schema 17 database with the settings proposal table and records prop
   db.prepare("UPDATE kv SET value='17' WHERE key='schema'").run()
   db.close()
   const store = new Store(path)
-  expect(store.get(KV.store.schema)).toBe(18)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
   const proposal = { id: 'pr-00000001', block: 'eval' as const, base_revision: 0, value: { mode: 'observe' }, diff: [],
     reason: 'The person asked for this', actor: 'master', status: 'pending' as const, created_at: '2026-01-01T00:00:00.000Z',
     expires_at: '2026-01-08T00:00:00.000Z' }
@@ -654,6 +654,31 @@ it('opens a schema 17 database with the settings proposal table and records prop
   expect(store.proposals.get(proposal.id)).toMatchObject({ id: proposal.id, block: 'eval', status: 'pending', actor: 'master' })
   expect(store.proposals.pending('eval').map(item => item.id)).toEqual([proposal.id])
   expect(store.proposals.pending('executor')).toEqual([])
+  store.close()
+})
+
+it('opens a schema 18 database by creating the automation table and records installation tasks in it', () => {
+  const path = join(directory, 'automations.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  db.exec('DROP TABLE automation')
+  db.prepare("UPDATE kv SET value='18' WHERE key='schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  const at = '2026-11-09T12:00:00.000Z'
+  const record = { id: 'auto-00000001', scope: 'installation' as const, project: '', host: 'orchestrator' as const, target_session: 'orchestrator-1',
+    title: 'Check the queue', instruction: 'Review waiting tickets.', rrule: 'DTSTART:20261110T090000Z\nRRULE:FREQ=DAILY', dsh_task: 'schedule-1',
+    dsh_updated_at: at, host_status: 'active' as const, next_at: '2026-11-10T09:00:00.000Z', enabled: true, created_at: at, updated_at: at,
+    revision: 0, last_delivery_at: null, last_error: null, orphaned: false,
+    audit: [{ at, kind: 'created' as const, by: 'master', detail: 'Installation automation' }] }
+  store.automations.save(record)
+  expect(store.automations.get(record.id)).toMatchObject({ title: 'Check the queue', enabled: true, dsh_task: 'schedule-1',
+    audit: [expect.objectContaining({ kind: 'created' })] })
+  expect(store.automations.list({ enabled: true }).map(item => item.id)).toEqual([record.id])
+  expect(store.automations.list({ enabled: false })).toEqual([])
+  store.automations.delete(record.id)
+  expect(store.automations.get(record.id)).toBeUndefined()
   store.close()
 })
 
