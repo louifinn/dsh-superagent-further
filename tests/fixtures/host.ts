@@ -35,6 +35,8 @@ type RegisteredTool = { name: string; execute: (args: unknown, execution: { sign
 type FakeAgent = {
   id: string; status: string; inbox: { nextTurn: UserMessage[]; nextStep: UserMessage[] }
   cancel: Mock; inject: Mock<(message: UserMessage) => void>; steer: Mock<(message: UserMessage) => void>; followup: Mock<(message: UserMessage) => void>
+  /** Resolves when the turn ends, which a test controls by setting `status = 'idle'`, as DSH's idle does. */
+  whenIdle: () => Promise<void>
 }
 /** A text message, as DSH's job tools and subagents send their notices. */
 const notice = (id: string, text: string) => ({ id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'tool-jobs', form: 'notice' } }) as unknown as UserMessage
@@ -164,10 +166,18 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
       if (options.open) await options.open(id, parent)
       if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
       children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
       options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
-      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child.
-      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { children.get(id)!.live = false } }
+      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
+      // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
+      // has no turn to cancel, which is what the Executor's graceful retirement relies on.
+      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => {
+        const child = children.get(id)
+        if (!child?.live) return
+        const agent = agents.get(id)
+        if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: false })
+        child.live = false
+      } }
     }),
     // The Lead's message reaches the child, which this fake records as a follow-up step.
     sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, content: unknown[]) => {
@@ -185,7 +195,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     if (closed.has(parent)) throw new Error('DRAINING: the Session admits no new subagents')
     const id = `child-${children.size + 1}`
     children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
     return id
   }
   return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live }
