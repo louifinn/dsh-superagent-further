@@ -138,7 +138,7 @@ That direction was settled on 2026-11-08 and the analysis for a later segmented 
 The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
 fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
 execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **223 files, +20,995 / −1,589** at the current head (the first release on this line was `0.2.0`), and
+(`8c32a9d`) is **232 files, +21,672 / −1,604** at the current head (the first release on this line was `0.2.0`), and
 the local history started from a byte-identical import, so every change below was made by this fork.
 
 | Area | Prototype | This fork | Why |
