@@ -1,8 +1,8 @@
 # 014 — Self-evolution: discovering superagent's own problems in flight
 
-Status: **proposed** (2026-11-10). The operator asked for this mechanism and confirmed the three requirement
-decisions below on the root Feishu Thread; this document is submitted for approval. Implementation follows
-the phases here only after that approval.
+Status: **accepted** (2026-11-10). The operator asked for this mechanism and confirmed the three requirement
+decisions below on the root Feishu Thread; the proposal was approved there the same day with all four
+submitted decision points taken at their recommended defaults. Implementation follows the phases here.
 
 ## Why
 
