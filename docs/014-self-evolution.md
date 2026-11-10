@@ -102,7 +102,7 @@ One chokepoint on the main Session, for installations where the self repository 
 - **Content rules.** The body follows the repository's language and conventions, opens with the automated-agent
   disclosure, states evidence, reproduction and the running version, and carries no Feishu content, credentials
   or private local paths. Labels only ones that already exist, none by default.
-- **Audit record.** Schema 23 adds `self_report`:
+- **Audit record.** Schema 24 adds `self_report` (schema 23 is the ended-Ticket `cause` backfill):
   `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status: 'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`.
   Drafts are what a person approves; the filed history is the remote repository itself, so no history page is
   built. This is the design's only new domain record: an outward, approvable, deduplicated artefact fits
@@ -151,7 +151,7 @@ gates. Documentation lands with its phase, not in a batch at the end.
 - **Phase 1 — discovery layer (prompts only, no code).** The three prompt sections and the skill text;
   `tests/prompts.spec.ts` pins them. Live proof: one real Ticket records one real superagent finding in flight
   and it becomes a self-fix Ticket through the existing `request_create` or escalation path.
-- **Phase 2 — the Issue outlet and the discovery provenance.** Schema 23 `self_report`, the
+- **Phase 2 — the Issue outlet and the discovery provenance.** Schema 24 `self_report`, the
   `orchestrator_issue_create` tool (jurisdiction refusal, gate, dedup, rate limit, content rules), the
   discovery provenance on `orchestrator_request_create`, the Eval self-report mode, the Overview draft rows.
   Live proof: a real draft in `observe`, approved and filed as a marked test Issue on

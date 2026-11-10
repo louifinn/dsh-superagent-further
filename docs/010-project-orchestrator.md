@@ -37,9 +37,12 @@ own architecture set the facts:
   `ctx.subagents.startActivation({provider, label, request:{cwd, agentPreset, prompt, parent},
   signal, delivery})`; the child is a durable DSH Session with `parentSessionId` and
   `origin: 'subagent'`, hidden from the ordinary sidebar and opened from its parent's descendant
-  catalog. Completion arrives as a settlement message in the parent's inbox; `send_message`,
-  `interrupt_agent` and `list_agents` exist. This is exactly what dsh-tower and Agent Teams use.
-  Defaults: `maxDepth: 1`, `maxActiveSubagents: 8`; this profile sets 2 and 10.
+  catalog. Completion arrives as a settlement message in the parent's inbox, which is the
+  `delivery: 'parent'` case; dsh-superagent-further asks for it for reviewer activations only, while
+  a worker activation uses `delivery: 'caller'` so the application's own Lead messages are its single
+  notification authority. `send_message`, `interrupt_agent` and `list_agents` exist. This is
+  exactly what dsh-tower and Agent Teams use. Defaults: `maxDepth: 1`, `maxActiveSubagents: 8`;
+  this profile sets 2 and 10.
 - **dsh-tower is the closest blueprint, not a dependency.** It models missions with subagent
   workers/reviewers, a roster, a durable inbox, adoption after restart, and a review/merge gate, with
   per-mission worktrees and `state.json` under `<git-common-dir>/dsh-tower/`. Its spawn pipeline
@@ -116,8 +119,15 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
    checkout, `parent` = the Lead agent, reserved id `worker-<ticketId>`).
 4. The worker reports through the existing `orchestrator_report` tool; the Lead validates it, asks a
    person when the Ticket stage is `person`, and writes a `project_message` (`kind: report`) back to
-   the Orchestrator, which keeps the domain: replies, finish notes, the Ticket's end.
-5. The Ticket ends as it does today; the Lead frees its slot and the next assignment can arrive.
+   the Orchestrator, which keeps the domain: replies, finish notes, the Ticket's end. The Report can
+   end the Ticket inside the tool call (a `ready` Report on an `answer` Ticket, or a `dropped`
+   Report), so the Lead must not treat that end as a reason to interrupt the worker.
+5. The Executor retires the worker after the ending transaction commits. For cause `report` it waits,
+   bounded by `RETIRE_GRACE_MS` (60 s), for the reporting turn to end, then disposes the activation
+   and stops the worker's background work without cancelling that turn; a turn that outlives the
+   grace is cancelled as a person's stop. A person's stop, a followed pull request's close, an Eval
+   stop and a retry preempt the turn at once (ADR 0001). The Lead frees its slot when the worker is
+   retired, and the next assignment can arrive.
 
 **Communication rules.**
 
@@ -136,8 +146,9 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
   spends no model tokens). The project list is the Execution block, so adding a project creates a
   Lead on the next start or on the next pass.
 - After a restart, a Lead Session is ensured again. For each open assignment the recovery step lists
-  the Lead's descendants; a worker Session that still exists is adopted (the Lead waits for its
-  settlement), otherwise the Assignment is marked interrupted and requeued through the Engine.
+  the Lead's descendants; a worker Session that still exists is adopted and woken through its Lead
+  (the worker's own Report is the notification; a caller-delivery worker sends no DSH settlement),
+  otherwise the Assignment is marked interrupted and requeued through the Engine.
 - The existing host lock still allows one host per state directory; Leads live inside it.
 
 ## Pull request endings reach the Lead
@@ -196,15 +207,14 @@ project-aware interfaces. The manual round-trip on the real host follows once P2
 
 **P2 — Execution path.** `DshExecutor` starts a Ticket's worker as a Lead subagent whenever the
 Ticket has a registered project (landed: `executorActivation`/`LeadActivations` in
-`src/executor/lead-dispatch.ts`, the launch branch and disposal on stop and shutdown): `startActivation` with the reserved id, `delivery: 'parent'`,
-worker decoration, report settlement, interrupt/stop, and adoption after restart. Per-project and
+`src/executor/lead-dispatch.ts`, the launch branch and disposal on stop and shutdown): `startActivation` with the reserved id, `delivery: 'caller'` (the application's own durable Lead messages carry reports, so DSH's settlement notice is reserved for reviewers, whose `delivery: 'parent'` notice is what the Lead records as a verdict through `lead_review_record`), worker decoration, interrupt/stop, and adoption after restart. A report-caused end retires its worker only after the reporting turn ends, bounded by `RETIRE_GRACE_MS` (60 s); external ends preempt the turn at once (ADR 0001). Per-project and
 global concurrency move from the single `WorkerSlots` to a project-aware scheduler.
 Acceptance: a host-level test drives one project through acceptance → dispatch → consumer report →
 reply with the fake subagent host; the real host runs one hand-made Ticket (created through the
 management API, not a Source) end to end; recovery test interrupts a host mid-assignment and adopts
 the surviving subagent.
 
-Status (2026-11-08): the launch, report settlement, interrupt/stop and restart adoption are proven on
+Status (2026-11-08): the launch, report relay, interrupt/stop and restart adoption are proven on
 the real host — Issue #9 in `louifinn/project-check` became Ticket `aaf66561…`, whose executor ran as
 the child Session of `lead-project-check`, opened PR #10, and the Ticket ended `merged` after the
 operator merged it and the worker's final report reached the Lead. Inputs and status requests reach a
