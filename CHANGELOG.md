@@ -6,6 +6,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-10
+
 ### Added
 
 - A change Ticket can carry an independent review its project Lead starts with `lead_review`; a blocked verdict keeps the Ticket open when its pull request merges.

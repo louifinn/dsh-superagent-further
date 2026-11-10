@@ -148,10 +148,10 @@ A release tarball installs without a checkout: download `dsh-superagent-further-
 
 ```sh
 dsh superagent --from-default-profile web --dump-config > /dev/null
-dsh plugin --profile superagent add "file:$HOME/Downloads/dsh-superagent-further-0.3.0.tgz"
+dsh plugin --profile superagent add "file:$HOME/Downloads/dsh-superagent-further-0.4.0.tgz"
 ```
 
-On Windows use the downloaded path in the same form, for example `dsh plugin --profile superagent add "file:C:/Users/me/Downloads/dsh-superagent-further-0.3.0.tgz"`. `link:` follows your checkout while you develop; a tarball stays at the version it was packed from, which is what a machine that only runs the agent should use. The tarball contains the built `lib`, the prompts, the skills and the locale files, so no build step is needed after installing it.
+On Windows use the downloaded path in the same form, for example `dsh plugin --profile superagent add "file:C:/Users/me/Downloads/dsh-superagent-further-0.4.0.tgz"`. `link:` follows your checkout while you develop; a tarball stays at the version it was packed from, which is what a machine that only runs the agent should use. The tarball contains the built `lib`, the prompts, the skills and the locale files, so no build step is needed after installing it.
 
 Run the profile-creation command only for a new installation. If the profile already exists, that command replaces it and deletes its `cordis.patch.yml`, including machine configuration. Do not use it for upgrades.
 
@@ -549,8 +549,8 @@ steps once; a fresh 0.3.0 installation does not.
    dsh plugin --profile <name> install
    ```
 
-   For a tarball install, download `dsh-superagent-further-0.3.0.tgz` and install it instead:
-   `dsh plugin --profile <name> add "file:<path to the 0.3.0 tarball>"`. For a `link:` install, the script keeps the
+   For a tarball install, download `dsh-superagent-further-0.4.0.tgz` and install it instead:
+   `dsh plugin --profile <name> add "file:<path to the 0.4.0 tarball>"`. For a `link:` install, the script keeps the
    checkout path in the spec; the package inside that checkout is now named `dsh-superagent-further`. If the old
    checkout was a different directory, install the new checkout with
    `dsh plugin --profile <name> add "link:<new checkout>"`.
