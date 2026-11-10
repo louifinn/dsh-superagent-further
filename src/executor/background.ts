@@ -6,12 +6,34 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 
+/** A job as DSH's registry projects it; the Executor only reads what the panel and a settle wake need. */
+export interface JobView {
+  id: string
+  kind: string
+  label: string
+  owner?: string
+  outputLimitBytes?: number
+  status: string
+  progress?: unknown
+  detail?: string
+  startedAt: number
+  finishedAt?: number
+  output: { total: number; earliest: number; spillPaths?: readonly string[] }
+}
+/** One retained chunk of a job's output, as `readAt` gives it. */
+export interface JobChunk { at: number; text: string; channel?: string; gapBefore?: boolean }
+/** A job's retained output from an offset, read without taking the worker's cursor or its end notice. */
+export interface JobOutput { chunks: readonly JobChunk[]; next: number; lossy: boolean }
+/** A job event as DSH's registry publishes it; `settled` carries the fresh view and whether a wait collected the end. */
+export interface JobEvent { type: string; job?: JobView; cause?: string; awaited?: boolean }
 /** What the Executor uses of DSH's job registry: the jobs a Session can see, their events, a wait for one and a kill. */
 interface Jobs {
-  list(caller: string): readonly { id: string; owner?: string; status: string; label?: string }[]
+  list(caller: string): readonly JobView[]
+  get(id: string, caller: string): JobView
+  readAt(id: string, from: number, caller: string): JobOutput
   wait(id: string, timeoutMs: number, caller: string, signal?: AbortSignal): Promise<{ status: string }>
   kill(id: string, caller: string, reason?: string): unknown
-  readonly events: { subscribe(filter: { owner: string }, listener: (event: { type: string }) => void): () => void }
+  readonly events: { subscribe(filter: { owner: string } | { owners: 'scope' | 'all' }, listener: (event: JobEvent) => void): () => void }
 }
 /** What the Executor uses of DSH's subagents: joining a worker's subagents that work, its subagents, and releasing them. */
 interface Subagents {
@@ -61,6 +83,36 @@ const named = (job: { id: string; label?: string }) => { const line = job.label?
 export const runningJobs = (ctx: Context, sessionId: string, except?: ReadonlySet<string>): { id: string; name: string }[] => {
   const jobs = registry(ctx)
   return jobs ? owned(jobs, sessionId, except).map(job => ({ id: job.id, name: named(job) })) : []
+}
+
+/**
+ * Watch the ends of the jobs a Session owns, as DSH's registry publishes them. The subscription is observation only: it
+ * waits on no job, so a job's end still reaches the worker's own job tools and the notice DSH keeps for it.
+ * @returns the unsubscribe, or undefined when the profile has no job registry.
+ */
+export function onJobSettled(ctx: Context, sessionId: string, listener: (job: JobView, event: JobEvent) => void): (() => void) | undefined {
+  const jobs = registry(ctx)
+  return jobs?.events.subscribe({ owner: sessionId }, event => {
+    if (event.type === 'settled' && event.job) listener(event.job, event)
+  })
+}
+
+/**
+ * The tail of a job's retained output, for the panel and for a wake that names what ended. `readAt` reads an absolute
+ * offset without advancing the worker's model cursor or touching its pending end notice; a job DSH no longer retains reads
+ * as empty rather than failing the caller.
+ */
+export function jobOutputPreview(ctx: Context, id: string, caller: string, bytes = 2048): string {
+  const jobs = registry(ctx)
+  if (!jobs) return ''
+  try {
+    const job = jobs.get(id, caller)
+    if (!job.output || job.output.total <= 0) return ''
+    const output = jobs.readAt(job.id, Math.max(0, job.output.total - bytes), caller)
+    return output.chunks.map(chunk => chunk.text).join('').slice(-bytes).trim()
+  } catch {
+    return ''
+  }
 }
 
 /**

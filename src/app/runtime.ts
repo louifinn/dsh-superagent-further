@@ -14,8 +14,8 @@ import { mkdirSync } from 'node:fs'
 import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, projectRequestOpen, reasonText, threadKey, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger }
-  from '../core/index.ts'
+import { Engine, key, projectRequestOpen, reasonText, runningAssignment, threadKey,
+  type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -63,6 +63,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
+/** How often the Runtime looks for a running Assignment whose worker Session has stalled. */
+const WATCHDOG_MS = 60_000
+/** How long a worker Session may stay idle on a running Assignment before the watchdog raises the Ticket's attention. */
+const STALLED_MS = 10 * 60_000
 
 /**
  * DSH's session-ownership failure, said as the operator's action: which state directory another host holds, and how to
@@ -110,6 +114,8 @@ export class Runtime extends Service implements SourceHost {
   private stopping?: Promise<void>
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
+  /** The stalled Assignments the watchdog reported, by Ticket: the Assignment, its attention, and the Report that raised it. */
+  private readonly stalled = new Map<string, { assignmentId: string; attentionId?: string; reportAt: string }>()
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
   constructor(ctx: Context, readonly machine: Machine, restart: () => void,
@@ -451,6 +457,7 @@ export class Runtime extends Service implements SourceHost {
     this.effects.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
     void this.cleanupLoop()
+    void this.watchdogLoop()
   }
   /**
    * Send a person's reply on the root thread of an awaiting-approval project request to its Lead (docs/012 D7). The Lead
@@ -487,6 +494,72 @@ export class Runtime extends Service implements SourceHost {
       // Memory retention runs on the same schedule, so a changed retention applies without a restart.
       try { this.store.memories.prune() } catch (error) { this.log.warn('dsh-superagent-further: memory cleanup failed: %s', String(error)) }
       try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
+    }
+  }
+  /**
+   * One pass of the stalled-Assignment watchdog. A running Assignment whose worker Session has been idle past `STALLED_MS`
+   * gets a waiting Report with a stable question, which raises the Ticket's attention, and one durable notice to its
+   * project's Lead. The attention this pass raised is cleared when the Assignment ends or a newer Report arrives.
+   *
+   * Exposed so a test can pass an exact `at`; the loop only decides when to call it.
+   */
+  async watchdogScan(at = new Date()): Promise<void> {
+    if (this.closing()) return
+    const open = this.store.tickets.open()
+    const ids = new Set(open.map(ticket => ticket.id))
+    for (const ticketId of [...this.stalled.keys()]) if (!ids.has(ticketId)) this.stalled.delete(ticketId)
+    // A paused Runtime dispatches nothing, so a worker idle now is not yet a stall a Lead could act on.
+    if (this.paused()) return
+    for (const ticket of open) {
+      const assignment = runningAssignment(ticket)
+      const tracked = this.stalled.get(ticket.id)
+      if (!assignment) {
+        if (tracked) this.clearStalled(ticket.id, tracked)
+        continue
+      }
+      if (tracked && tracked.assignmentId !== assignment.id) this.clearStalled(ticket.id, tracked)
+      const agent = this.ctx.agents.get(workerSessionId(ticket.id) as SessionId)
+      if (agent && agent.status !== 'idle') continue
+      // The worker's latest activity is its last turn end or its last Report, whichever is later: a Report shows it is alive.
+      const since = [assignment.idleAt, assignment.report?.at].filter((value): value is string => value !== undefined)
+        .sort().at(-1)
+      if (!since || at.getTime() - Date.parse(since) < STALLED_MS) continue
+      const current = this.stalled.get(ticket.id)
+      // A Report newer than the one this watchdog wrote shows the worker alive: clear its attention and restart the clock.
+      if (current && assignment.report && assignment.report.at > current.reportAt) {
+        this.clearStalled(ticket.id, current)
+        continue
+      }
+      // One notice per Assignment, and never over a question or attention another part of the Runtime raised.
+      if (current || ticket.attention) continue
+      const question = `The worker Session ${workerSessionId(ticket.id)} of Assignment ${assignment.id} has been idle since ${since} without a newer Report. Is the Assignment stuck?`
+      try {
+        const updated = this.engine.report(ticket.id, { state: 'waiting',
+          summary: `Worker idle since ${since} on Assignment ${assignment.id}.`, question })
+        const reportAt = runningAssignment(updated)?.report?.at ?? now()
+        this.stalled.set(ticket.id, { assignmentId: assignment.id, ...(updated.attention ? { attentionId: updated.attention.id } : {}), reportAt })
+        await this.sessions.lead.stalled(updated, assignment, since)
+      } catch (error) {
+        this.log.warn('dsh-superagent-further watchdog could not raise attention for Ticket %s: %s', ticket.id, String(error))
+      }
+    }
+  }
+  /** Drop the attention the watchdog raised for a Ticket, while it is still the current one; nothing else is removed. */
+  private clearStalled(ticketId: string, tracked: { attentionId?: string }): void {
+    this.stalled.delete(ticketId)
+    if (tracked.attentionId === undefined) return
+    const ticket = this.store.tickets.get(ticketId)
+    if (!ticket?.attention || ticket.attention.id !== tracked.attentionId) return
+    delete ticket.attention
+    this.store.tickets.save({ ...ticket, updatedAt: now() })
+  }
+  /** Runs `watchdogScan` on its interval until the Runtime stops; the first look follows one full interval. */
+  private async watchdogLoop(): Promise<void> {
+    while (!this.stopped.signal.aborted) {
+      try { await delay(WATCHDOG_MS, undefined, { signal: this.stopped.signal }) } catch { break }
+      try { await this.watchdogScan() } catch (error) {
+        this.log.warn('dsh-superagent-further watchdog failed: %s', String(error))
+      }
     }
   }
   /**

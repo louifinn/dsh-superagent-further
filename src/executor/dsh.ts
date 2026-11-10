@@ -5,7 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { canComplete, key, latestAssignment, latestReport, liveTicket, requiresPullRequest, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
-import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
+import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, JobSnapshot, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
 import { projectByRepository, projectOf, type Project } from '../projects.ts'
@@ -18,7 +18,9 @@ import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.t
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
-import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
+import { cancelled, collectJob, jobOutputPreview, killJobs, onJobSettled, runningJobs, stopBackground, stopSubagents, until, untilQuiet }
+  from './background.ts'
+import type { JobEvent, JobView } from './background.ts'
 import { executorActivation, LeadActivations, type SubagentService } from './lead-dispatch.ts'
 
 const now = (): string => new Date().toISOString()
@@ -36,6 +38,14 @@ const BACKGROUND_LIMIT_MS = 30 * 60_000
 const SHUTDOWN_STOP_MS = 10_000
 /** How long a worker that goes on after a passing failure waits for a worker slot, or for processing to resume, between looks. */
 const SLOT_WAIT_MS = 5000
+/** How many settled job snapshots one Ticket keeps, in memory and on its latest Assignment. */
+const JOB_SNAPSHOTS = 8
+/** How many tail bytes of a settled job's retained output a snapshot preview keeps. */
+const JOB_PREVIEW_BYTES = 2_048
+/** How many Tickets keep settled-job snapshots in memory, oldest dropped first. */
+const JOB_TICKETS = 256
+/** How many job ids a Ticket remembers as woken, so a repeated settle event does not wake its worker twice. */
+const JOB_WAKES = 64
 /** True when an input comes from a person (a non-context human trigger or a direct text input such as a status request). */
 const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
 /**
@@ -254,6 +264,14 @@ export class DshExecutor implements Executor {
   private readonly left = new Map<string, { jobs: Set<string>; collect: AbortController }>()
   /** When a person's message typed into a worker's Session last started a turn, by ticket. */
   private readonly personal = new Map<string, string>()
+  /** The subscriptions to the ends of each Ticket's worker jobs, by ticket, which dispose clears. */
+  private readonly watching = new Map<string, () => void>()
+  /** The settlements whose wake is running, by ticket and job id, so a repeated event sends one wake. */
+  private readonly waking = new Set<string>()
+  /** The job ids a Ticket's worker was already woken for, by ticket. */
+  private readonly woke = new Map<string, Set<string>>()
+  /** The newest settled-job snapshots by ticket, for the panel and for M22 while the Assignment keeps them too. */
+  private readonly settled = new Map<string, readonly JobSnapshot[]>()
   /** The timers of workers that go on after a passing failure, which dispose clears. */
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   /** Executor activations of Lead-hosted workers, by child Session id. */
@@ -439,6 +457,7 @@ export class DshExecutor implements Executor {
     const ownTurn = (report?.state === 'ready' || report?.state === 'dropped') && !busy
     const sessionId = workerSessionId(ticket.id)
     this.host.store.afterCommit(() => {
+      this.watching.get(ticket.id)?.(); this.watching.delete(ticket.id); this.woke.delete(ticket.id)
       this.settling.get(ticket.id)?.abort()
       if (!ownTurn) this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
       // Its shell jobs and subagents stop with it, also those of a worker that ends its own turn.
@@ -473,6 +492,8 @@ export class DshExecutor implements Executor {
     const agents = this.host.store.tickets.list().map(ticket => this.host.context.agents.get(workerSessionId(ticket.id) as SessionId))
       .filter((agent): agent is Agent => agent !== undefined)
     const stop = async () => {
+      for (const dispose of this.watching.values()) dispose()
+      this.watching.clear()
       await this.leads.disposeAll()
       await Promise.allSettled(agents.map(agent => stopBackground(this.host.context, agent.id, 'dsh-superagent-further stopped', true)))
       for (const { collect } of this.left.values()) collect.abort()
@@ -488,6 +509,125 @@ export class DshExecutor implements Executor {
   private running(ticket: Ticket): boolean {
     if (!runningAssignment(ticket)) return false
     return this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.status === 'running' || this.settling.has(ticket.id)
+  }
+  /**
+   * Watch the shell jobs of a Ticket's worker Session. A job that settles while its Assignment still runs wakes the worker
+   * through its Lead, so a job that ends at the same moment its turn does still reaches the worker's next turn.
+   */
+  private watchJobs(ticketId: string): void {
+    if (this.watching.has(ticketId)) return
+    const dispose = onJobSettled(this.host.context, workerSessionId(ticketId), (job, event) => {
+      void this.background(this.jobSettled(ticketId, job, event))
+    })
+    if (dispose) this.watching.set(ticketId, dispose)
+  }
+  /**
+   * Record a job that ended while its worker owned the Assignment, for the panel and a later review, and wake the worker
+   * when the job ended uncollected and the Assignment still runs. A wait, a kill the Executor collected, or a teardown
+   * already tells the worker, or must tell it nothing.
+   */
+  private async jobSettled(ticketId: string, job: JobView, event: JobEvent): Promise<void> {
+    if (this.host.closing()) return
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket || !liveTicket(ticket)) return
+    const assignment = runningAssignment(ticket) ?? latestAssignment(ticket)
+    if (!assignment) return
+    const known = this.settled.get(ticketId) ?? []
+    if (known.some(item => item.id === job.id)) return
+    const snapshot: JobSnapshot = { id: job.id, kind: job.kind, label: job.label, status: job.status,
+      preview: jobOutputPreview(this.host.context, job.id, workerSessionId(ticketId), JOB_PREVIEW_BYTES),
+      total: job.output?.total ?? 0, endedAt: new Date(job.finishedAt ?? Date.now()).toISOString() }
+    const jobs = [...known, snapshot].slice(-JOB_SNAPSHOTS)
+    this.rememberJobs(ticketId, jobs)
+    this.recordJobs(ticketId, assignment.id, jobs)
+    // A wait collected the end, or a teardown killed the job: the worker already hears of it, or must not.
+    if (event.awaited || event.cause === 'teardown') return
+    // Only a job that ends while its Assignment still runs wakes the worker; a late end is history the panel keeps.
+    const live = this.host.store.tickets.get(ticketId)
+    const current = live && liveTicket(live) ? runningAssignment(live) : undefined
+    if (!live || !current || current.id !== assignment.id) return
+    // An idle Session is woken by DSH's own completion notice. A Session that still runs would get that notice injected,
+    // and the turn may end before its next step takes it, so only this case needs the Lead-routed wake.
+    const worker = this.host.context.agents.get(workerSessionId(ticketId) as SessionId)
+    if (worker?.status === 'idle') return
+    await this.wakeForJob(live, current, job)
+  }
+  /** Keep the newest settled-job snapshots of one Ticket, bounding how many Tickets stay in memory. */
+  private rememberJobs(ticketId: string, jobs: readonly JobSnapshot[]): void {
+    this.settled.delete(ticketId)
+    this.settled.set(ticketId, jobs)
+    while (this.settled.size > JOB_TICKETS) {
+      const oldest = this.settled.keys().next().value
+      if (oldest === undefined || oldest === ticketId) break
+      this.settled.delete(oldest)
+    }
+  }
+  /** Record settled jobs on their Assignment, so a restart and a later view keep what the worker was told. */
+  private recordJobs(ticketId: string, assignmentId: string, jobs: readonly JobSnapshot[]): void {
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket) return
+    const assignments = ticket.assignments.map(item => item.id === assignmentId ? { ...item, jobs } : item)
+    this.host.store.tickets.save({ ...ticket, assignments, updatedAt: now() })
+  }
+  /**
+   * Wake a worker whose job ended after the turn did, through the Lead that hosts its Session: a Lead-hosted child refuses
+   * a root prompt, and a queued wake is what reaches its next turn. One wake per job, also when a settle event repeats.
+   */
+  private async wakeForJob(ticket: Ticket, assignment: Assignment, job: JobView): Promise<void> {
+    const wake = `${ticket.id}:${job.id}`
+    const sent = this.woke.get(ticket.id) ?? new Set<string>()
+    if (sent.has(job.id) || this.waking.has(wake)) return
+    this.waking.add(wake)
+    try {
+      const go = async (): Promise<void> => {
+        if (this.host.closing()) return
+        const stored = this.host.store.tickets.get(ticket.id)
+        const current = stored && liveTicket(stored) ? runningAssignment(stored) : undefined
+        if (!stored || !current || current.id !== assignment.id) return
+        if (this.host.paused()) { this.after(SLOT_WAIT_MS, () => { void this.background(go()) }); return }
+        const waking = !this.running(stored)
+        if (waking) {
+          try { this.slots.reserve(ticket.id, 'wake', stored.project) } catch (failure) {
+            if (!(failure instanceof Later)) throw failure
+            this.after(SLOT_WAIT_MS, () => { void this.background(go()) })
+            return
+          }
+        }
+        try {
+          const leadProject = this.leadProject(stored)
+          if (!leadProject) throw new Error(`Ticket ${ticket.id} names no registered project to wake its worker through`)
+          const lead = await this.host.sessions.ensureLead(leadProject.id, leadProject.workspace, `Lead · ${leadProject.name}`)
+          const label = job.label.split('\n')[0]?.trim() || job.label
+          const text = `Background job ${job.id} (${job.kind}: ${label}) settled as ${job.status}. `
+            + `Read its output with job_output for job ${job.id}, then continue the assignment; report again if the result changes its state.`
+          await this.leads.send(lead, workerSessionId(ticket.id), text, this.host.lifetime)
+          sent.add(job.id)
+          while (sent.size > JOB_WAKES) {
+            const oldest = sent.values().next().value
+            if (oldest === undefined) break
+            sent.delete(oldest)
+          }
+          this.woke.set(ticket.id, sent)
+        } finally {
+          if (waking) this.slots.free(ticket.id)
+        }
+      }
+      await go()
+    } finally {
+      this.waking.delete(wake)
+    }
+  }
+  /**
+   * The settled shell jobs of each Ticket, newest last, for the panel and for M22's review of a late result: what this
+   * process observed, or what an earlier one recorded on the latest Assignment.
+   */
+  jobsSnapshot(): ReadonlyMap<string, readonly JobSnapshot[]> {
+    const snapshots = new Map<string, readonly JobSnapshot[]>()
+    for (const ticket of this.host.store.tickets.list()) {
+      const jobs = this.settled.get(ticket.id) ?? latestAssignment(ticket)?.jobs
+      if (jobs?.length) snapshots.set(ticket.id, jobs)
+    }
+    return snapshots
   }
   /** Marks a ticket failed after its launch fails; the ticket waits until new human input or an explicit retry arrives. */
   private launchFailed(ticketId: string, assignmentId: string, error: unknown): void {
@@ -546,6 +686,8 @@ export class DshExecutor implements Executor {
     }
     if (!current()) return
     const sessionId = workerSessionId(ticket.id)
+    // Watch its jobs from before it starts: a job that ends as the first turn ends must still reach the next turn.
+    this.watchJobs(ticket.id)
     const settings = this.host.store.settings()
     const project = ticket.project === undefined ? undefined : projectOf(settings.executor.projects, ticket.project)
     // A Lead-hosted executor starts as a subagent of its project's Lead Session; there is no root worker path.
@@ -638,6 +780,8 @@ export class DshExecutor implements Executor {
   /** Unsubscribes from host agent events and clears any pending transient-retry timers. */
   dispose(): void {
     for (const dispose of this.disposers.splice(0)) dispose()
+    for (const dispose of this.watching.values()) dispose()
+    this.watching.clear()
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.clear()
   }
@@ -653,6 +797,7 @@ export class DshExecutor implements Executor {
       if (running) {
         // A restart within this process left DSH's Sessions, jobs and subagents running: they stop first. The inbox keeps an
         // Input that was handed over but not yet taken.
+        this.watchJobs(ticket.id)
         this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.cancel({ kind: 'user' }, { keepInbox: true })
         this.stopWork(ticket.id, 'dsh-superagent-further restarted', true)
         this.host.engine.assignmentInterrupted(ticket.id, running.id)

@@ -2059,6 +2059,60 @@ it('restarts a worker whose shell job the host stop ended with the recovery note
   expect(recovered.inputs).toEqual([expect.objectContaining({ kind: 'text', text: expect.stringContaining('host restarted') })])
 })
 
+it('wakes a worker through its Lead when a job settles as its turn ends, and keeps the snapshot for the panel', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const job = jobs.run(sessionId, 'run the tests')
+  // The job settles while the turn still runs; DSH would only inject its notice, which the turn may end before taking.
+  subagents.sendMessage.mockClear()
+  jobs.output(job, 'all tests passed')
+  jobs.end(job)
+  await vi.waitFor(() => expect(subagents.sendMessage).toHaveBeenCalledTimes(1))
+  // The wake names the job and tells the worker to read it with job_output, the path its Lead-hosted Session accepts.
+  expect(subagents.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'lead-default' }), sessionId,
+    [expect.objectContaining({ type: 'text', text: expect.stringMatching(new RegExp(`${job}.*run the tests.*completed[\\s\\S]*job_output`)) })],
+    expect.anything())
+  // The end is recorded on the Assignment and exposed for a later review, with a preview read at an offset.
+  const stored = runtime.store.tickets.get(ticket.id)!
+  expect(stored.assignments.at(-1)!.jobs).toEqual([expect.objectContaining({ id: job, kind: 'bash', label: 'run the tests',
+    status: 'completed', total: 'all tests passed'.length })])
+  expect(runtime.executor.jobsSnapshot().get(ticket.id)?.[0]).toMatchObject({ id: job, preview: 'all tests passed' })
+  // A repeated settlement of the same job sends no second wake.
+  jobs.settle(job)
+  await runtime.idle()
+  expect(subagents.sendMessage).toHaveBeenCalledTimes(1)
+})
+
+it('raises attention once for a running Assignment whose worker Session stays idle, and clears it on a new report', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const agent = agents.get(sessionId)! as { status: string }
+  const assignmentId = runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.id
+  const idleAt = new Date(Date.now() - 11 * 60_000).toISOString()
+  const ticketNow = runtime.store.tickets.get(ticket.id)!
+  runtime.store.tickets.save({ ...ticketNow, updatedAt: new Date().toISOString(),
+    assignments: ticketNow.assignments.map(item => item.id === assignmentId ? { ...item, idleAt } : item) })
+  const requestId = `stalled:${ticket.id}:${assignmentId}`
+  // A Session that still runs is not stalled yet.
+  await runtime.watchdogScan()
+  expect(runtime.store.tickets.get(ticket.id)!.attention).toBeUndefined()
+  // Idle since before the threshold: the watchdog reports waiting, raises attention, and tells the Lead once.
+  agent.status = 'idle'
+  await runtime.watchdogScan()
+  const watched = runtime.store.tickets.get(ticket.id)!
+  expect(watched.attention).toMatchObject({ question: expect.stringContaining('idle since') })
+  expect(watched.assignments.at(-1)!.report).toMatchObject({ state: 'waiting' })
+  expect(runtime.store.leads.getByRequest('lead', requestId)).toMatchObject({ kind: 'notice', deliveredAt: expect.any(String) })
+  const notices = () => deliveries.mock.calls.filter(([call]) => call.sessionId === 'lead-default' && call.text.includes('lead_notify_worker'))
+  expect(notices()).toHaveLength(1)
+  // Another pass past the threshold does not repeat the notice or change the question.
+  await runtime.watchdogScan(new Date(Date.now() + 12 * 60_000))
+  expect(notices()).toHaveLength(1)
+  expect(runtime.store.tickets.get(ticket.id)!.attention?.id).toBe(watched.attention!.id)
+  // A newer report shows the worker is alive: the watchdog clears the attention it raised.
+  await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'still here' })
+  await runtime.watchdogScan(new Date(Date.now() + 25 * 60_000))
+  expect(runtime.store.tickets.get(ticket.id)!.attention).toBeUndefined()
+})
+
 it('creates an Executor Session under the bundle\'s worker preset, and the main Session under its router preset', async () => {
   const { sessionId } = await acceptedTicket()
   const created = controller.create.mock.calls.map(([options]) => options as { sessionId: string; agentPreset: string })

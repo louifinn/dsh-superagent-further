@@ -66,12 +66,12 @@
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
               sampleOverCapGlobResults: false
-          # A wait for a job ends after 5 s too; the job's end wakes the worker with its result.
+          # A wait for a job lasts 60 s by default, up to 10 minutes, so a worker can finish a job before its turn ends.
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
             config:
-              waitTimeoutMs: 5000
-              maxWaitTimeoutMs: 5000
+              waitTimeoutMs: 60000
+              maxWaitTimeoutMs: 600000
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill

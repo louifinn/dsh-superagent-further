@@ -234,6 +234,10 @@ Transient provider and network failures get three retries. Launches use effect b
 
 `install` subscribes to Session events; `dispose` unsubscribes. A turn end normally reports waiting, except after readiness or while human action is required. Errors report failed. At startup, `resume` reports interrupted Assignments through `assignmentInterrupted` and requeues pending launches that do not wait for a person, oldest Ticket first.
 
+The Executor watches the shell jobs of each running worker Session through the Host `jobs` registry (`onJobSettled`). A job that settles while its Assignment still runs is recorded on that Assignment as a `JobSnapshot` (id, kind, label, status, output preview and end time, newest last and bounded), which keeps the work visible after the turn. When the settlement finds the Session still running, DSH would only inject its completion notice, and a turn that ends before its next step takes it would lose the result; the Executor therefore also wakes the worker through its project Lead with an idempotent `job-settled:<jobId>` message naming the job and telling it to read the output with `job_output` and continue. A Session already idle at settlement is woken by DSH's own notice, so no second wake is sent. Observation uses the registry's `get` and non-consuming `readAt`, never `read`, so it does not move the worker's model cursor. `jobsSnapshot()` exposes the latest snapshots in memory for the panel.
+
+`Runtime.watchdogScan` runs every minute (`WATCHDOG_MS`) over open Tickets whose running Assignment is waiting: when the worker Session has been idle since at least 10 minutes ago (`STALLED_MS`) according to its `idleAt` or last Report, the watchdog writes a waiting Report with a stable question — which raises the Ticket's attention — and calls `LeadDispatch.stalled`, which writes one durable Lead notice (`stalled:<ticketId>:<assignmentId>`) asking the Lead to inspect the Session and use `lead_notify_worker` or tell the Orchestrator to stop. A repeated pass does not repeat the notice, and a newer Report or the end of the Assignment clears the attention. `watchdogScan(at)` takes the time so tests can drive it directly.
+
 ### MasterAssessor
 
 `MasterAssessor` (`src/app/assessment.ts`) lets the main Session assess proactive candidates. `request` queues an assessment effect; `release` drops cached state when its Eval ends.
@@ -411,7 +415,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/views/automations.ts` | The Automations page's view: the tasks with their newest-10 delivery history and the attention count, the unrecorded Host tasks, and the registered projects the create form offers |
 | `src/executor/dsh.ts` | The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` |
 | `src/executor/lead-dispatch.ts` | `executorActivation` and `LeadActivations`: the subagent request that starts a Lead-hosted executor, and the activations a host holds, settles and disposes |
-| `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
+| `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): observing jobs with `get` and the non-consuming `readAt`, `onJobSettled`, `jobOutputPreview`, `runningJobs`, `untilQuiet`, `killJobs`, `collectJob`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
 | `src/infra/environment.ts` | The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the environment and of a Ticket's directory |
 | `src/infra/batch.ts` | `isBatchFile`, `expandsInBatch`, `batchArguments` and `invocation`: how a `.cmd` or `.bat` CLI is started through `cmd.exe` on Windows, and the arguments that cannot be passed |
@@ -618,7 +622,7 @@ The main Session also has DeepSeek Harness's `skill`, `bash`, `read`, `read_imag
 
 ### Presets and wait limits
 
-New main Sessions use `dsh-superagent-further-router` (`ROUTER_PRESET`). Shell commands and job waits return after 5 seconds. If the Web UI selects another preset before the first turn, `Sessions` restores this preset, or `WORKER_PRESET` for a worker.
+New main Sessions use `dsh-superagent-further-router` (`ROUTER_PRESET`). Shell commands and job waits return after 5 seconds. If the Web UI selects another preset before the first turn, `Sessions` restores this preset, or `WORKER_PRESET` for a worker. The worker preset raises `@deepseek-ai/dsh-tool-jobs` to a 60-second wait and a 10-minute maximum, so a worker can wait for a job to settle before its turn ends; the router and Lead presets keep the 5-second waits.
 
 The `noWait` guard in `src/app/sessions.ts` refuses main-Session shell commands that invoke `sleep` at a command position, shell `timeoutMs` above 30 seconds, and `job_output` waits above 5 seconds. Reports and job results arrive automatically, so waiting only delays incoming candidates.
 
@@ -640,7 +644,7 @@ Each Executor has seven application tools:
 
 A hand-back returns `queued: false` if another Ticket still owns the message, or this Ticket never owned it. For example, a bot message went to Eval independently. A report that ends the Ticket may not leave an open request of that Ticket unanswered: it names each one in `requests`, and the Lead gets a report message for each request so its reply and the report stay together.
 
-The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
+The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Its `job_output` waits last 60 seconds by default and up to 10 minutes, unlike the router's 5 seconds. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
 
 ### Global Session tool
 

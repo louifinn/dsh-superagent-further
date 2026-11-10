@@ -16,6 +16,7 @@ import { githubKind } from '../../src/sources/github.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
+import type { JobEvent, JobView } from '../../src/executor/background.ts'
 import { testMachine } from './deployment.ts'
 
 export const MEMBER = 'ou_alice'
@@ -48,43 +49,73 @@ type Delivery = { sessionId: string; mode: 'queue' | 'steer'; id: string; text: 
  * @param owner - the agent of a Session, which an end reaches.
  */
 export function jobRegistry(owner: (sessionId: string) => FakeAgent | undefined = () => undefined) {
-  type Job = { id: string; owner: string; status: string; label?: string }
+  type Chunk = { at: number; text: string }
+  type Job = { id: string; kind: string; owner: string; status: string; label?: string; startedAt: number; finishedAt?: number
+    chunks: Chunk[]; total: number }
   const jobs = new Map<string, Job>()
-  const listeners = new Set<{ owner: string; listener: (event: { type: string }) => void }>()
-  const waits = new Map<string, ((job: Job) => void)[]>()
+  const listeners = new Set<{ owner: string; listener: (event: JobEvent) => void }>()
+  const waits = new Map<string, ((job: JobView) => void)[]>()
   let released = 0
-  const emit = (job: Job, type: string) => { for (const listener of [...listeners]) if (listener.owner === job.owner) listener.listener({ type }) }
+  const view = (job: Job): JobView => ({ id: job.id, kind: job.kind, label: job.label ?? job.id, owner: job.owner, status: job.status,
+    startedAt: job.startedAt, ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+    output: { total: job.total, earliest: 0 } })
+  const emit = (job: Job, type: string, extra: { awaited?: boolean; cause?: string } = {}) => {
+    for (const listener of [...listeners]) if (listener.owner === job.owner) listener.listener({ type, job: view(job), ...extra })
+  }
   const end = (id: string, status = 'completed') => {
     const job = jobs.get(id)!
     job.status = status
+    job.finishedAt = Date.now()
     const waiting = waits.get(id) ?? []
     waits.delete(id); released += waiting.length
-    for (const wake of waiting) wake({ ...job })
-    emit(job, 'settled')
+    for (const wake of waiting) wake(view(job))
+    emit(job, 'settled', { awaited: waiting.length > 0, cause: 'producer' })
     const agent = waiting.length ? undefined : owner(job.owner)
     const ended = notice(`notice-${id}`, `Job ${id} ended: ${status}`)
     if (agent?.status === 'idle') agent.followup(ended)
     else agent?.inject(ended)
   }
   const service = {
-    list: vi.fn((caller: string) => [...jobs.values()].filter(job => job.owner === caller)),
+    list: vi.fn((caller: string) => [...jobs.values()].filter(job => job.owner === caller).map(view)),
+    get: vi.fn((id: string, caller: string) => {
+      const job = jobs.get(id)
+      if (!job || job.owner !== caller) throw new Error(`Unknown job ${id}`)
+      return view(job)
+    }),
+    readAt: vi.fn((id: string, from: number, caller: string) => {
+      if (!Number.isSafeInteger(from) || from < 0) throw new Error(`Invalid job output offset ${from}`)
+      const job = jobs.get(id)
+      if (!job || job.owner !== caller) throw new Error(`Unknown job ${id}`)
+      const chunks = job.chunks.filter(chunk => chunk.at + chunk.text.length > from)
+      return { chunks, next: job.total, lossy: false }
+    }),
     // A wait ends with the job, or fails once its signal aborts, which leaves the job's end uncollected.
-    wait: vi.fn((id: string, _timeoutMs: number, _caller: string, signal?: AbortSignal) => new Promise<Job>((resolve, reject) => {
-      const wake = (job: Job) => { signal?.removeEventListener('abort', abort); resolve(job) }
+    wait: vi.fn((id: string, _timeoutMs: number, _caller: string, signal?: AbortSignal) => new Promise<JobView>((resolve, reject) => {
+      const wake = (job: JobView) => { signal?.removeEventListener('abort', abort); resolve(job) }
       const abort = () => { waits.set(id, (waits.get(id) ?? []).filter(item => item !== wake)); reject(new Error('wait aborted')) }
       waits.set(id, [...waits.get(id) ?? [], wake])
       signal?.addEventListener('abort', abort, { once: true })
     })),
     // A killed job ends a moment later, as its process does, also under a test's fake timers.
     kill: vi.fn((id: string) => { queueMicrotask(() => { end(id, 'killed') }); return 'requested' }) as Mock<(id: string) => string>,
-    events: { subscribe: (filter: { owner: string }, listener: (event: { type: string }) => void) => {
+    events: { subscribe: (filter: { owner: string }, listener: (event: JobEvent) => void) => {
       const entry = { owner: filter.owner, listener }
       listeners.add(entry)
       return () => { listeners.delete(entry) }
     } },
   }
-  return { service, end, output: (id: string) => { emit(jobs.get(id)!, 'output') }, get released() { return released },
-    run: (owner: string, label?: string) => { const id = `bash-${jobs.size + 1}`; jobs.set(id, { id, owner, status: 'running', label }); return id } }
+  return { service, end, settle: (id: string) => { emit(jobs.get(id)!, 'settled') },
+    output: (id: string, text = '') => {
+      const job = jobs.get(id)!
+      job.chunks.push({ at: job.total, text }); job.total += text.length
+      emit(job, 'output')
+    },
+    get released() { return released },
+    run: (owner: string, label?: string) => {
+      const id = `bash-${jobs.size + 1}`
+      jobs.set(id, { id, kind: 'bash', owner, status: 'running', label, startedAt: Date.now(), chunks: [], total: 0 })
+      return id
+    } }
 }
 
 /**

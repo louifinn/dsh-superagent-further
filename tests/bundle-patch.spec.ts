@@ -36,7 +36,7 @@ it('defines the worker preset Executor Sessions run under, with a shell that mov
   const named = (name: string) => plugins.filter(row => row.name === name).map(row => row.config)
   expect(named('@deepseek-ai/dsh-bash-sandbox')).toEqual([{ timeoutMs: 5000, maxTimeoutMs: 5000 }])
   expect(named('@deepseek-ai/dsh-pwsh-sandbox')).toEqual([{ timeoutMs: 5000, maxTimeoutMs: 5000 }])
-  expect(named('@deepseek-ai/dsh-tool-jobs')).toEqual([{ waitTimeoutMs: 5000, maxWaitTimeoutMs: 5000 }])
+  expect(named('@deepseek-ai/dsh-tool-jobs')).toEqual([{ waitTimeoutMs: 60000, maxWaitTimeoutMs: 600000 }])
   expect(named('@deepseek-ai/dsh-tool-web')).toEqual([expect.objectContaining({ fetch: false })])
   // Spawned subagents run under standard, whose shell moves a command to the background only after 60 s; forked ones, which would run under
   // this preset, are left out.
@@ -51,15 +51,17 @@ it('defines the worker preset Executor Sessions run under, with a shell that mov
     '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names).not.toContain(name)
 })
 
-it('defines the router preset the main Session runs under: the worker\'s 5-second shell and job waits, and only the tools it uses', async () => {
+it('defines the router preset the main Session runs under: the worker\'s 5-second shell waits, and only the tools it uses', async () => {
   const rows = await patched()
   const router = presetOf(rows, ROUTER_PRESET), worker = presetOf(rows, WORKER_PRESET)
   expect(router.order).toBe(91)
   const plugins = flat(router.plugins)
   const named = (preset: Row[], name: string) => preset.filter(row => row.name === name).map(row => row.config)
-  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox', '@deepseek-ai/dsh-tool-jobs']) {
+  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox']) {
     expect(named(plugins, name), name).toEqual(named(flat(worker.plugins), name))
   }
+  // The router keeps the short 5-second job waits a routing Session needs; a worker gets longer waits to finish its jobs.
+  expect(named(plugins, '@deepseek-ai/dsh-tool-jobs')).toEqual([{ waitTimeoutMs: 5000, maxWaitTimeoutMs: 5000 }])
   // The tools its allow list keeps: skill, bash, read, read_image and the job tools; the file tools only read.
   for (const name of ['@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-jobs',
     '@deepseek-ai/dsh-agent-instructions', '@deepseek-ai/dsh-time-context', '@deepseek-ai/dsh-compaction-basic',
@@ -78,10 +80,11 @@ it('defines the project Lead preset: read-only files, code search, and delegatio
   expect(lead.order).toBe(89)
   const plugins = flat(lead.plugins)
   const named = (name: string) => plugins.filter(row => row.name === name).map(row => row.config)
-  // The same 5-second shell and job waits as the other managed Sessions.
-  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox', '@deepseek-ai/dsh-tool-jobs']) {
+  // The same 5-second shell waits and 5-second job waits as the other managed Sessions.
+  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox']) {
     expect(named(name), name).toEqual(flat(worker.plugins).filter(row => row.name === name).map(row => row.config))
   }
+  expect(named('@deepseek-ai/dsh-tool-jobs')).toEqual([{ waitTimeoutMs: 5000, maxWaitTimeoutMs: 5000 }])
   // It reads files and searches code, but does not write or edit: its executors do that in their worktrees.
   expect(named('@deepseek-ai/dsh-tool-fs')).toEqual([{ write: false, edit: false }])
   for (const name of ['@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-skill-filesystem',
