@@ -34,11 +34,14 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import type { LogFilter, Logs, LogsView } from './logs.ts'
 
 export interface HttpHost {
   readonly store: Store
   /** Feishu message links resolved since startup, used by search to match AppLink URLs. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
+  /** Bounded in-memory log of the plugin host's own messages. */
+  readonly logs: Pick<Logs, 'list'>
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
@@ -188,6 +191,8 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
   limit: limit(30, 200) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
+const LogsQuery = z.object({ level: z.enum(['all', 'warn', 'error']).catch('all'), scope: z.string().default(''),
+  limit: z.coerce.number().int().min(1).max(400).default(120) })
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
   offset: count.default(0), limit: limit(20, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
@@ -301,6 +306,10 @@ function routes(runtime: HttpHost): Routes {
     'POST prompts/preview': async input => runtime.prompts.preview(await promptBody(input)),
     // Automations share the service the main Session's tools use; the panel is another client of the same code path. A missing
     // Host schedule service is a 503 instead of a broken page, and no route can re-target scope or project.
+    'GET logs': ({ query }): LogsView => {
+      const { level, scope, limit } = LogsQuery.parse(query)
+      return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit }), level: level as LogFilter, scope }
+    },
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')

@@ -338,3 +338,23 @@ it('serves the Automations page from one service path, with same-origin, validat
   expect((await unavailable('POST', 'automations/auto-1/run')).status).toBe(503)
   expect((await unavailable('DELETE', 'automations/auto-1')).status).toBe(503)
 })
+
+it('serves the Host log page with level and scope filtering', async () => {
+  const entries = [
+    { at: '2026-11-10T01:00:00.000Z', level: 'info' as const, scope: 'github', message: 'polled' },
+    { at: '2026-11-10T01:00:05.000Z', level: 'error' as const, scope: 'feishu', message: 'failed' },
+  ]
+  const asked: unknown[] = []
+  const logs = { list: (query: unknown) => { asked.push(query); return entries } }
+  const call = serve({ logs })
+  expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '' } })
+  expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 120 })
+  expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5'))
+    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu' } })
+  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5 })
+  // An unknown level falls back to all instead of failing the page.
+  expect((await call('GET', 'logs?level=nonsense')).body).toMatchObject({ level: 'all' })
+  // Only the panel's same-origin header reaches the route.
+  expect(await call('GET', 'logs', undefined, { 'x-orchestrator-request': undefined }))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+})

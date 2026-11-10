@@ -8,6 +8,7 @@ import type { HistoryView } from './settings-history.ts'
 import type { MemorySort } from '../memory.ts'
 import type { AutomationCreateInput, AutomationSummary, AutomationUpdate } from './automations.ts'
 import type { AutomationsView } from './views/automations.ts'
+import type { LogFilter, LogsView } from './logs.ts'
 import type { MemoriesView } from './views/memories.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
@@ -66,6 +67,7 @@ export interface Api {
   'POST memory/forget': { body: { id: string }; response: { forgotten: boolean } }
   'POST memory/pin': { body: { id: string; pinned: boolean }; response: { pinned: boolean } }
   /** The Automations page: tasks at installation or project scope, and the projects a new task can target. */
+  'GET logs': { query?: { level?: LogFilter; scope?: string; limit?: number }; response: LogsView }
   'GET automations': { response: AutomationsView }
   'POST automations': { body: AutomationCreateInput; response: AutomationSummary }
   'PUT automations/:id': { body: AutomationUpdate; response: AutomationSummary }

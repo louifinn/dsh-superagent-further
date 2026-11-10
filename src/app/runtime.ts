@@ -29,6 +29,7 @@ import { KV } from '../kv.ts'
 import { Store } from './store.ts'
 import { evalsHealth, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
+import { captureLogs, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
 import { registerHttp, type HttpHost } from './http.ts'
@@ -98,6 +99,9 @@ export class Runtime extends Service implements SourceHost {
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
   private readonly sourceLinks = new TextCache(200_000)
+  /** Bounded in-memory log of the plugin host's own messages; the panel reads it through `GET logs`. */
+  readonly logs = new Logs()
+  private readonly log: CaptureLogs
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
   private releaseLock?: () => Promise<void>
@@ -111,11 +115,12 @@ export class Runtime extends Service implements SourceHost {
     /** Ends the host process once a management shutdown has stopped the runtime (injected so tests can observe it). */
     private readonly exit: (code: number) => void = code => { process.exit(code) }) {
     super(ctx, 'orchestrator')
+    this.log = captureLogs(this.logs, ctx.logger as unknown as HostLogger, 'host')
     const runtime = this
     // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
     // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
-    try { restrictToOwner(machine.stateDir, true) } catch (error) { ctx.logger.warn('dsh-superagent-further: %s', String(error)) }
+    try { restrictToOwner(machine.stateDir, true) } catch (error) { this.log.warn('dsh-superagent-further: %s', String(error)) }
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     let release: (() => unknown) | undefined
     try {
@@ -126,7 +131,7 @@ export class Runtime extends Service implements SourceHost {
     this.releaseLock = async () => { await release?.() }
     let opened: Store | undefined
     try {
-      const report = (error: unknown) => { ctx.logger.warn('dsh-superagent-further: %s', String(error)) }
+      const report = (error: unknown) => { this.log.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
@@ -139,7 +144,7 @@ export class Runtime extends Service implements SourceHost {
       // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
       const schedule = ctx.get('schedule') as ScheduleService | undefined
       this.automations = schedule === undefined ? undefined : new Automations({ schedule, store: store.automations, masterId,
-        logger: ctx.logger, projects: () => store.settings().executor.projects.map(project => project.id),
+        logger: this.log, projects: () => store.settings().executor.projects.map(project => project.id),
         project: id => store.settings().executor.projects.find(project => project.id === id),
         // The Lead Session must exist before the Host task targets it; the closure runs after Sessions is constructed.
         lead: async project => (await runtime.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id })
@@ -265,7 +270,7 @@ export class Runtime extends Service implements SourceHost {
               }, request.ended.at)
             }
           } catch (error) {
-            ctx.logger.warn('dsh-superagent-further could not remember a finished item: %s', String(error))
+            this.log.warn('dsh-superagent-further could not remember a finished item: %s', String(error))
           }
         } })
       // The Lead tools and the reply enforcement act through the Engine; attach it once the composition is complete.
@@ -418,18 +423,18 @@ export class Runtime extends Service implements SourceHost {
     try {
       await this.sessions.lead.reconcile()
     } catch (error) {
-      this.ctx.logger.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
+      this.log.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
     }
     // Reconcile only after the main Session exists, because every Host target names it. A missing or changed Host task is
     // recorded as orphaned or drifted; it is never recreated silently (docs/011 B4).
     try {
       const reconciled = await this.automations?.reconcile()
       if (reconciled && (reconciled.orphaned || reconciled.drifted || reconciled.unrecorded)) {
-        this.ctx.logger.warn('dsh-superagent-further automation reconciliation: %d checked, %d orphaned, %d drifted, %d unrecorded',
+        this.log.warn('dsh-superagent-further automation reconciliation: %d checked, %d orphaned, %d drifted, %d unrecorded',
           reconciled.checked, reconciled.orphaned, reconciled.drifted, reconciled.unrecorded)
       }
     } catch (error) {
-      this.ctx.logger.warn('dsh-superagent-further automation reconciliation failed: %s', String(error))
+      this.log.warn('dsh-superagent-further automation reconciliation failed: %s', String(error))
     }
     this.executor.resume()
     this.passes.start()
@@ -456,21 +461,21 @@ export class Runtime extends Service implements SourceHost {
         + 'If this answers its design proposal, call lead_request_approve with approved true or false and a reply for the raiser. '
         + 'Otherwise call lead_request_reply so the person and the raiser get an answer.'
       void this.sessions.prompt(leadSessionId(request.project), `project-approval:${request.id}:${trigger.id}`, text, 'queue')
-        .catch(error => { this.ctx.logger.warn('dsh-superagent-further could not route an approval reply: %s', String(error)) })
+        .catch(error => { this.log.warn('dsh-superagent-further could not route an approval reply: %s', String(error)) })
     }
   }
   /** Removes the worktrees and `agent/` branches of Tickets that ended past the retention; failures are logged, never fatal. */
   private async reclaimFinishedWorktrees(): Promise<void> {
     try {
       const done = await reclaimWorktrees({ store: this.store, settings: this.store.settings(), stateDir: this.machine.stateDir })
-      for (const item of done) if (item.removed) this.ctx.logger.info('dsh-superagent-further: removed the worktree of Ticket %s at %s', item.ticketId, item.directory)
-    } catch (error) { this.ctx.logger.warn('dsh-superagent-further: worktree cleanup failed: %s', String(error)) }
+      for (const item of done) if (item.removed) this.log.info('dsh-superagent-further: removed the worktree of Ticket %s at %s', item.ticketId, item.directory)
+    } catch (error) { this.log.warn('dsh-superagent-further: worktree cleanup failed: %s', String(error)) }
   }
   private async cleanupLoop(): Promise<void> {
     while (!this.stopped.signal.aborted) {
       await this.reclaimFinishedWorktrees()
       // Memory retention runs on the same schedule, so a changed retention applies without a restart.
-      try { this.store.memories.prune() } catch (error) { this.ctx.logger.warn('dsh-superagent-further: memory cleanup failed: %s', String(error)) }
+      try { this.store.memories.prune() } catch (error) { this.log.warn('dsh-superagent-further: memory cleanup failed: %s', String(error)) }
       try { await delay(6 * 60 * 60_000, undefined, { signal: this.stopped.signal }) } catch { break }
     }
   }
@@ -493,7 +498,7 @@ export class Runtime extends Service implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
       leadOverview: () => runtime.leadOverview(),
       get deployment() { return setup.deployment },
@@ -511,7 +516,7 @@ export class Runtime extends Service implements SourceHost {
   requestShutdown(): void {
     if (this.stopping) return
     void this.stop().then(() => { this.exit(0) }, (error: unknown) => {
-      this.ctx.logger.error('dsh-superagent-further shutdown failed: %s', String(error))
+      this.log.error('dsh-superagent-further shutdown failed: %s', String(error))
       this.exit(1)
     })
   }
@@ -533,7 +538,7 @@ export class Runtime extends Service implements SourceHost {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
       this.setup.restore()
       try { this.store.close() } finally {
-        const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent-further could not release its state directory lock: %s',
+        const unreleased = (error: unknown) => { this.log.warn('dsh-superagent-further could not release its state directory lock: %s',
           String(error)) }
         await this.releaseLock?.().catch(unreleased)
       }

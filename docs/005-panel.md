@@ -17,7 +17,7 @@ Opening the panel answers three questions, in this order:
 
 ## Tabs
 
-The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, **Memory**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
+The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, **Memory**, **Automations**, **Logs**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
 
 | Tab | Shows |
 | --- | --- |
@@ -27,6 +27,8 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 | Eval | Decisions with their reason and matched rules |
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
 | Memory | The master switch, the injection and automatic-write switches, snapshot limits, and the stored memories: search, sort and project filters, expand for the full record, pin or forget one |
+| Automations | Installation- and project-scope scheduled tasks: create, edit, run now, delete with confirmation, delivery history and the missing Host schedule service state |
+| Logs | The Host log ring: newest last, a level filter (all, warning and error, error only) and a scope filter, while nothing is written to disk |
 | Settings | Sources, Eval, Execution, Language, Prompts and Deployment. Each group includes its save history |
 
 ### Reading individual records

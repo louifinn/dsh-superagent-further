@@ -74,6 +74,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   so a manager who is away from the machine can review a decision document. The resolver refuses absolute, parent,
   dot and repeated-separator paths, directories and missing files.
 
+- The panel gains a **Logs** tab and `GET logs`: the plugin keeps a bounded in-memory ring of the Host log (400
+  entries; no new on-disk artefact), with level and scope filters, while the Host logger still receives the raw
+  printf arguments and console output is unchanged.
+
 ### Changed
 
 - The built-in accept rule set now has sixteen categories: `settings` (更改 SuperAgent 配置), `automation`

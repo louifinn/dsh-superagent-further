@@ -284,6 +284,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/notices.ts` | Domain events and worker reports into notices and relays for the main Session |
 | `src/app/lead-dispatch.ts` | Raised project requests and unanswered worker reports into Lead prompts and durable `lead_message` records, the Lead's disposition back to the raising Session, and the bounded `needs-attention` fallback at the Lead activation boundary |
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
+| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters; the Host logger still gets the raw arguments. `GET logs` serves the panel |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
 | `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/session.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, messages into CLI calls, and an independent DSH Session's `superagent_submit` call into one Trigger |
@@ -387,6 +388,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/assessment.ts` | The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers |
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
 | `src/app/files.ts` | `localFile`: resolves a file inside a project's workspace, refusing absolute, parent, dot and repeated-separator paths, directories and missing files |
+| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters, while the Host logger still gets the raw arguments |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
 | `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
 | `src/app/cards.ts` | Compact cards of Triggers, Tickets, Threads and Decisions for models, the closed set of ticket card states `TICKET_STATES`, and `textPage` |
@@ -442,6 +444,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent-further restarts |
 | `src/client/api.ts` | Calls and polls of the management API, typed by `src/app/api.ts`, and the Decision filters of the Eval status |
 | `src/client/route.ts` | The tabs, the settings groups, the typed routes that `parseRoute` reads, and the route memory with the settings group opened last |
+| `src/client/logs.tsx` | The Logs page: the Host log table, the level and scope filters, and the empty and unmatched states |
 | `src/client/overview.tsx` | The overview |
 | `src/client/source.tsx`, `trigger.tsx`, `eval.tsx`, `execution.tsx` | One file per stage: its status, and its settings where it has some |
 | `src/client/memory.tsx` | The Memory page: the switches that save on click, the snapshot limits, and the stored memories as searchable, orderable cards that expand to every stored field and can be pinned or forgotten |
@@ -484,6 +487,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/feishu-file.spec.ts` | Feishu file delivery: the CLI call with the file's directory, an optional idempotency key, an unconfigured Source and a reply without a message id |
 | `tests/automations.spec.ts` | Installation and project automations: title/instruction/rule validation and the 20-task limit, project registration and lead-<projectId> targets, the envelope and the report-only rule, create compensation when the row or the Host delete fails, enable/disable and edit conflicts, no re-target, manual run with a delivery recorded and pending/not-found refusals, delete with the Host task, record and history removed and a failed Host delete keeping the record, orphan and drift reconciliation with unrecorded Host tasks, the delivery history recorded from the catalog and the Host history with newest-50 pruning and no duplicate entries, and the context and tool descriptions |
 | `tests/panel-tasks.spec.tsx` | The Automations page: the task table with scopes and orphan warning, the attention count and error reason without another notice channel, the expandable newest-first delivery history, creating a project task from the project select, editing without re-target, the enabled switch, running one task now and surfacing a Host refusal, deleting after the confirmation dialog, and the service-missing state |
+| `tests/logs.spec.ts` | The Host log ring: newest-last ordering, trimming, level and scope filters and the capture wrapper |
+| `tests/panel-logs.spec.tsx` | The Logs page: rows, the level and scope filters, the empty state and the unmatched-filter state |
 | `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword, project-filter and order combo boxes, paging through the list, pinning, expanding a card to all its fields, and forgetting a stored memory |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations, the localized default rules and their upgrade, and assessment outcomes |

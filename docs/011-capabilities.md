@@ -877,6 +877,20 @@ decision list:
 9. B-D4 Host-wide schedule management — accept the limitation?
 10. B-D5 delivery surface — session turns only, or a notice per delivery too?
 
+## Part H — Host log observability (approved 2026-11-10, Sprint 28)
+
+**Context.** Operators could see Tickets, Decisions and Source health, but not the plugin's own warnings: a poll
+failure or a delivery error existed only in the Host console, which the panel cannot read.
+
+**Decision.** The plugin keeps a bounded in-memory log of its own messages (at most 400 entries; nothing is written
+to disk, so the state directory keeps its single SQLite artefact). The Host logger still receives the raw arguments
+and console output is unchanged. `GET logs` serves the ring with a level filter (`all`, `warn` = warning and error,
+`error`) and an exact scope filter. The Logs tab renders the newest-last table; it is a read-only view, there is no
+log rotation or export, and entries do not survive a Host restart.
+
+**Status.** Implemented in Sprint 28: `src/app/logs.ts`, `GET logs`, the Logs tab, `tests/logs.spec.ts` and
+`tests/panel-logs.spec.tsx`.
+
 ### Resolved (2026-11-09)
 
 The operator approved every recommendation and the suggested order.

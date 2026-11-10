@@ -5,6 +5,7 @@ import { Button, Dot, Icon, Input, Modal, SegmentedTabs } from './controls.tsx'
 import type { DeploymentForm } from './deployment.tsx'
 import { EvalStatus } from './eval.tsx'
 import { ExecutionStatus } from './execution.tsx'
+import { LogsPage } from './logs.tsx'
 import { MemoryPage } from './memory.tsx'
 import { ticketMark } from './marks.ts'
 import { GLOSSARY, GLOSSARY_VALUES, en, zh, type DshSuperagentFurtherKey } from './locales.ts'
@@ -161,6 +162,7 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
       case 'execution': return route.id !== undefined ? <TicketPage key={route.id} id={route.id} />
         : state ? <ExecutionStatus filter={route.query?.filter ?? 'open'} state={state} reload={reload} /> : waiting
       case 'memory': return <MemoryPage />
+    case 'logs': return <LogsPage />
       case 'tasks': return <TasksPage />
       case 'settings': return state ? <SettingsPage key={state.masterId} group={route.query.group} query={route.query} state={state}
         deploymentForm={deploymentForm} /> : waiting

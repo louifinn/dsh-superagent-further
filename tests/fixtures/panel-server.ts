@@ -128,6 +128,8 @@ export interface PanelServer {
   automations: ApiResponse<'GET automations'>['items']
   /** Which automation the fake Host reports as already queued or running, so the run route can answer 409. */
   automationBusy?: string
+  /** Host log entries the Logs page shows. */
+  logs: ApiResponse<'GET logs'>['entries']
 }
 export let server: PanelServer
 
@@ -277,7 +279,7 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], memories: [], proposals: [],
-    automationService: true, automations: [],
+    automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -381,6 +383,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { items: [...rows].sort((a, b) => pinnedFirst(a, b) || order(a, b)).slice(offset, offset + limit),
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
       offset, limit, config: server.settings.memory }
+  } },
+  'GET logs': { query: ['level', 'scope', 'limit'], answer: ({ query }) => {
+    const level = query.level ?? 'all'
+    const scope = query.scope ?? ''
+    const limit = Number(query.limit ?? 120)
+    const kept = server.logs.filter(entry => (scope === '' || entry.scope === scope)
+      && (level === 'all' || (level === 'warn' ? entry.level === 'warn' || entry.level === 'error' : entry.level === 'error')))
+    return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope }
   } },
   'GET automations': { answer: () => {
     if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
