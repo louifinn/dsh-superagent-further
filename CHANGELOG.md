@@ -30,6 +30,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   **Settings → Memory**. Existing installations keep their saved switch value.
 - A background job that settles as its worker's turn ends no longer loses its result: the Executor watches each running worker Session's jobs, records a bounded snapshot on the Assignment for the panel, and wakes a worker that still runs through its project Lead with an idempotent `job-settled:<jobId>` message telling it to read the output with `job_output` and continue. DSH's own completion notice is only injected in that case, and a turn that ends before its next step can miss it.
 - A Runtime watchdog checks open Tickets every minute: when a running Assignment's worker Session has been idle for 10 minutes, the watchdog writes a waiting Report that raises the Ticket's attention and sends its Lead one durable notice to inspect the Session or stop the work; a newer Report or the end of the Assignment clears the attention.
+- A worker's `job_output` wait lasts 60 seconds by default and up to 10 minutes (previously 5 seconds), so it can finish a
+  background job before its turn ends; router and Lead Sessions keep their 5-second waits.
 - A worker finishes every background job it starts before its turn ends: the work instructions tell it to run the command
   in the foreground, wait on the job with `job_output` until it settles, or report blocked naming the job, and forbid
   ending a turn to wait for a wake, which stalled one assignment for three hours.
