@@ -31,6 +31,15 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - `docs/adr/0001-ticket-end-authority.md` records the ticket-end decision: explicit causes, retirement after the reporting
   turn, immediate external preemption, one notification authority per role, the rejected alternatives and the accepted
   crash-window risk.
+- The panel's log ring now carries the plugin's operational record instead of only rare Runtime failures: `src/app/logs.ts`
+  exposes a per-scope capture factory over the one bounded in-memory ring, Sessions/Setup/Automations/Outbox write their
+  warnings under `session`/`setup`/`automation`/`outbox`, and the Runtime records one `info` entry per lifecycle event
+  (`runtime ready`, `trigger.received`, `ticket.created`, `ticket.ended` with by/cause/outcome, `request.ended`,
+  `assignment.started/ended`) and per outbox delivery, with one `warn` for a reply's first failure and none for its
+  retries. `HealthBoard` reports a real state change only, so an error is one `warn` under the claim's name and its
+  recovery one `info`, while the claims that come up ready are summarized in a single startup line. Entries carry ids,
+  scopes, outcomes and short status text, never a message body, and nothing is written to disk;
+  `tests/operational-log.spec.ts` covers the wiring, retry de-duplication and the 400-entry cap.
 
 ### Changed
 

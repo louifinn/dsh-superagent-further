@@ -886,10 +886,18 @@ failure or a delivery error existed only in the Host console, which the panel ca
 to disk, so the state directory keeps its single SQLite artefact). The Host logger still receives the raw arguments
 and console output is unchanged. `GET logs` serves the ring with a level filter (`all`, `warn` = warning and error,
 `error`) and an exact scope filter. The Logs tab renders the newest-last table; it is a read-only view, there is no
-log rotation or export, and entries do not survive a Host restart.
+log rotation or export, and entries do not survive a Host restart. Every part writes into that one ring through a
+per-scope capture factory: Sessions (`session`), Setup (`setup`), Automations (`automation`) and the Outbox
+(`outbox`) replace their Host-logger-only warnings. The Runtime records one `info` entry per operational Engine event
+(`trigger.received`, `ticket.created`, `ticket.ended` with its by/cause/outcome, `request.ended`,
+`assignment.started`, `assignment.ended`), one startup summary for the claims that came up ready, and each outbox
+delivery (its first failure is one `warn`, retries stay silent). `HealthBoard` reports a real state change only:
+entering `error` becomes one `warn` under the claim's name and recovering to `ready` becomes one `info`. Log entries
+carry ids, scopes, outcomes and short status text — never a message body.
 
 **Status.** Implemented in Sprint 28: `src/app/logs.ts`, `GET logs`, the Logs tab, `tests/logs.spec.ts` and
-`tests/panel-logs.spec.tsx`.
+`tests/panel-logs.spec.tsx`. The operational wiring landed in Sprint 37: the scoped capture factory, the lifecycle
+and outbox records, the health-transition listener in `src/infra/health.ts`, and `tests/operational-log.spec.ts`.
 
 ## Part I — One "needs you" view (approved 2026-11-10, Sprint 29)
 

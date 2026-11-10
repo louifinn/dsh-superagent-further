@@ -22,6 +22,7 @@ import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
 import { memoryTools } from './tools/memory.ts'
 import type { Store } from './store.ts'
+import type { CaptureLogs } from './logs.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
@@ -44,6 +45,8 @@ export interface SessionsHost {
   tools(agent: Agent, ticket?: Ticket): Tool[]
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
+  /** A capture logger scoped to this part, so its warnings reach the panel's ring; when absent, only the Host logger sees them. */
+  readonly log?: CaptureLogs
 }
 
 /**
@@ -148,10 +151,16 @@ export class Sessions {
     }, ensureLead: async project => (await this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id,
     prompt: (sessionId, requestId, text) => this.prompt(sessionId, requestId, text, 'queue'),
     notify: (name, value, summary) => this.notify(name, value, summary),
-    warn: (message, error) => this.ctx.logger.warn('dsh-superagent-further %s: %s', message, String(error)) })
+    warn: (message, error) => this.warn('dsh-superagent-further %s: %s', message, String(error)) })
     // Deliver relays and notices to the main Session in the order they were queued.
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
+  }
+  /** Writes a warning into the Host log ring when the Runtime injected a scoped logger; the Host logger's own output is unchanged. */
+  private warn(format: string, ...args: unknown[]): void {
+    const log = this.host.log
+    if (log) log.warn(format, ...args)
+    else this.ctx.logger.warn(format, ...args)
   }
   /** Gives the Lead dispatch and its tools the Engine's project-request commands once the Runtime has composed it. */
   attachEngine(engine: LeadEngine): void { this.leadEngine = engine }
@@ -370,7 +379,7 @@ export class Sessions {
       binding.skills = undefined
       this.bindSkills(binding, host.prompts.current())
     })
-    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.ctx.logger.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
+    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
     await skillScope
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
@@ -490,7 +499,7 @@ export class Sessions {
     this.bindings.delete(agent)
     binding.skills?.dispose()
     for (const dispose of binding.disposers.splice(0).reverse()) {
-      try { dispose() } catch (error) { this.ctx.logger.warn('dsh-superagent-further could not release what it registered for a Session: %s', String(error)) }
+      try { dispose() } catch (error) { this.warn('dsh-superagent-further could not release what it registered for a Session: %s', String(error)) }
     }
   }
   /** Releases prompt sections, skills, and tools registered by `Sessions` across all decorated agents. */
