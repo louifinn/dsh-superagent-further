@@ -721,7 +721,10 @@ export class DshExecutor implements Executor {
       instruction: 'Review this change independently in the project worktree: read the diff and the relevant code, run the checks that matter, '
         + 'and answer with a concise verdict. The Lead records it with lead_review_record; do not edit files, commit or merge.' })
     await this.leads.start(executorActivation({ childId, title: `Review · ${ticket.title}`, cwd: ticket.execution?.directory ?? project.workspace,
-      text, lead, signal: this.host.lifetime, preset: REVIEWER_PRESET }))
+      text, lead, signal: this.host.lifetime, preset: REVIEWER_PRESET,
+      // DSH's parent settlement notice carries the reviewer's closing verdict to the Lead model, which records it: the
+      // reviewer preset has no app tool of its own, and nothing else routes the activation result to the Lead.
+      delivery: 'parent' }))
     this.host.engine.beginReview(ticket.id, childId)
     return { session_id: childId }
   }

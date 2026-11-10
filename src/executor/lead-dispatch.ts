@@ -43,8 +43,10 @@ export interface ActivationSpec {
   }
   readonly signal: AbortSignal
   /**
-   * DSH's settlement delivery. An executor activation uses `caller`: superagent's own Lead messages are the one authority
-   * that tells the Lead a worker ended, so DSH must never inject a second, possibly contradictory settlement message.
+   * DSH's settlement delivery, chosen per role. A worker uses `caller`: superagent's own Lead messages are the single
+   * authority that tells the Lead a worker ended, so DSH must never inject a second, possibly contradictory notice. A
+   * reviewer uses `parent`: its closing verdict reaches the Lead model only as DSH's model-facing completion notice, which
+   * the Lead turns into `lead_review_record` because the reviewer preset carries no app tool of its own.
    */
   readonly delivery: 'parent' | 'caller'
 }
@@ -52,9 +54,9 @@ export interface ActivationSpec {
 /** The provider name the bundle's subagent plugin registers. */
 export const LEAD_PROVIDER = 'spawn'
 
-/** The prompt an executor starts with, as one text block. */
+/** The prompt an executor starts with, as one text block. A worker defaults to `caller` delivery; a reviewer passes `parent`. */
 export function executorActivation(input: { childId: string; title: string; cwd: string; text: string; lead: Agent; signal: AbortSignal,
-  preset: string }): ActivationSpec {
+  preset: string; delivery?: 'parent' | 'caller' }): ActivationSpec {
   return {
     provider: LEAD_PROVIDER,
     label: input.title,
@@ -62,7 +64,7 @@ export function executorActivation(input: { childId: string; title: string; cwd:
     request: { cwd: input.cwd, agentPreset: input.preset, prompt: [{ type: 'text', text: input.text }], parent: input.lead,
       maxDepth: 1 },
     signal: input.signal,
-    delivery: 'caller',
+    delivery: input.delivery ?? 'caller',
   }
 }
 
