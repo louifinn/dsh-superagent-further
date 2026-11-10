@@ -30,9 +30,9 @@ const project = (overrides: Partial<ProjectRequest> = {}): ProjectRequest => ({
 
 it('reports one ended Request once per non-GitHub Channel, naming every Ticket and the pull request it delivered', () => {
   const tickets = [
-    ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', outcome: 'merged' },
+    ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', cause: 'merge', outcome: 'merged' },
       follows: [{ thread: 'github:acme/widgets#12', own: true, closed: { at: '2026-11-10T09:20:00.000Z', outcome: 'merged' } }] }),
-    ticket('t2', { title: 'Documentation', ended: { at: '2026-11-10T09:21:00.000Z', by: 'executor', outcome: 'closed' } }),
+    ticket('t2', { title: 'Documentation', ended: { at: '2026-11-10T09:21:00.000Z', by: 'executor', cause: 'merge', outcome: 'closed' } }),
   ]
   const ticketOf = (id: string) => tickets.find(item => item.id === id)
   const notices = requestResultNotices(request(), '@bot 修复回归', ticketOf, 'acme/widgets')
@@ -52,10 +52,10 @@ it('reports one ended Request once per non-GitHub Channel, naming every Ticket a
 
 it('reports the root project request through its origin Channels only, once, with every Ticket and derived outcome', () => {
   const tickets = [
-    ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', outcome: 'merged' },
+    ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', cause: 'merge', outcome: 'merged' },
       follows: [{ thread: 'github:acme/widgets#12', own: true, closed: { at: '2026-11-10T09:20:00.000Z', outcome: 'merged' } }] }),
-    ticket('t2', { title: 'Documentation', ended: { at: '2026-11-10T09:21:00.000Z', by: 'executor', outcome: 'dropped' } }),
-    ticket('t3', { title: 'Follow-up', ended: { at: '2026-11-10T09:22:00.000Z', by: 'executor', outcome: 'completed' } }),
+    ticket('t2', { title: 'Documentation', ended: { at: '2026-11-10T09:21:00.000Z', by: 'executor', cause: 'report', outcome: 'dropped' } }),
+    ticket('t3', { title: 'Follow-up', ended: { at: '2026-11-10T09:22:00.000Z', by: 'executor', cause: 'report', outcome: 'completed' } }),
   ]
   const derived = project({ id: 'prq-child', title: 'Follow-up', root: { project_request_id: 'prq-root', trigger_id: 'trigger-1', thread_key: 'feishu:oc_team:om_1' },
     tickets: ['t3'], status: 'completed' })
@@ -89,7 +89,7 @@ it('reports the root project request through its origin Channels only, once, wit
 })
 
 it('writes the aggregate report in the language of the project request', () => {
-  const tickets = [ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', outcome: 'merged' } })]
+  const tickets = [ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', cause: 'merge', outcome: 'merged' } })]
   const derived = project({ id: 'prq-child', title: '补充文档', root: { project_request_id: 'prq-root', trigger_id: 'trigger-1', thread_key: 'feishu:oc_team:om_1' },
     tickets: [], status: 'rejected' })
   const root = project({ title: '加一个状态页', instruction: '列出每个项目的进行中工作。', derived: ['prq-child'], tickets: ['t1'], replies: [{ at: '2026-11-10T09:40:00.000Z', by: 'lead-app', text: '页面已上线' }] })

@@ -5,8 +5,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { canComplete, key, latestAssignment, latestReport, liveTicket, requiresPullRequest, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
-import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, JobSnapshot, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
-  from '../core/index.ts'
+import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, ExecutorStopCause, JobSnapshot, Mandate, PolicyEffect, Ticket,
+  TicketInput, Trigger } from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
 import { projectByRepository, projectOf, type Project } from '../projects.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
@@ -21,7 +21,7 @@ import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, jobOutputPreview, killJobs, onJobSettled, runningJobs, stopBackground, stopSubagents, until, untilQuiet }
   from './background.ts'
 import type { JobEvent, JobView } from './background.ts'
-import { executorActivation, LeadActivations, type SubagentService } from './lead-dispatch.ts'
+import { executorActivation, LeadActivations, type Activation, type SubagentService } from './lead-dispatch.ts'
 
 const now = (): string => new Date().toISOString()
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
@@ -36,6 +36,8 @@ const TRANSIENT_TRIES = 3, TRANSIENT_BACKOFF_MS = 15_000
 const BACKGROUND_LIMIT_MS = 30 * 60_000
 /** How long a host stop waits for the workers' background work to stop. */
 const SHUTDOWN_STOP_MS = 10_000
+/** How long a worker whose own report ended its Ticket may take to finish the turn that report belongs to. */
+const RETIRE_GRACE_MS = 60_000
 /** How long a worker that goes on after a passing failure waits for a worker slot, or for processing to resume, between looks. */
 const SLOT_WAIT_MS = 5000
 /** How many settled job snapshots one Ticket keeps, in memory and on its latest Assignment. */
@@ -468,23 +470,40 @@ export class DshExecutor implements Executor {
   }
   /**
    * After the ending transaction commits (so a rollback leaves the worker working, and a launch the same transaction queued
-   * starts after it): ends the look at its background work, cancels its turn unless its last word was a `ready` or `dropped`
-   * report with no Input delivered since, and stops its shell jobs and subagents, including jobs it left to a person.
+   * starts after it): ends the look at its background work and stops its shell jobs and subagents, including jobs it left to
+   * a person. A Ticket ended by its worker's own report retires that worker only after its in-flight turn ends; every other
+   * cause preempts the turn at once, because the work is no longer wanted.
    */
-  stop(ticket: Ticket, assignment: Assignment, reason: string): void {
+  stop(ticket: Ticket, assignment: Assignment, reason: string, cause: ExecutorStopCause): void {
     this.transient.delete(assignment.id); this.transient.delete(`launch:${assignment.id}`)
-    const report = assignment.report
-    const busy = !!assignment.deliveredAt && !!report && assignment.deliveredAt >= report.at
-    const ownTurn = (report?.state === 'ready' || report?.state === 'dropped') && !busy
     const sessionId = workerSessionId(ticket.id)
     this.host.store.afterCommit(() => {
       this.watching.get(ticket.id)?.(); this.watching.delete(ticket.id); this.woke.delete(ticket.id)
       this.settling.get(ticket.id)?.abort()
-      if (!ownTurn) this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
-      // Its shell jobs and subagents stop with it, also those of a worker that ends its own turn.
-      this.stopWork(ticket.id, reason)
+      if (cause === 'report') this.track(ticket.id, this.retire(ticket.id, this.leads.take(sessionId), reason))
+      else {
+        this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
+        this.stopWork(ticket.id, reason)
+      }
       this.left.get(ticket.id)?.collect.abort(); this.left.delete(ticket.id); this.personal.delete(ticket.id)
     })
+  }
+  /**
+   * Retire a worker whose own report ended its Ticket: the report's transaction commits while its tool call still runs, so the
+   * executor waits, bounded by `RETIRE_GRACE_MS`, for that turn to end before disposing the activation and stopping its
+   * background work. Only a turn that outlives the grace is cancelled, and then its report call, already recorded, is the
+   * only thing left to abort. The fake and the real subagent runtime both treat disposing a live activation as cancelling a
+   * running turn, so the dispose must come after the wait.
+   */
+  private async retire(ticketId: string, activation: Activation | undefined, reason: string): Promise<void> {
+    const sessionId = workerSessionId(ticketId)
+    const agent = this.host.context.agents.get(sessionId as SessionId)
+    if (agent && agent.status !== 'idle') {
+      const idle = await until(agent.whenIdle(), this.host.lifetime, RETIRE_GRACE_MS)
+      if (idle === false) agent.cancel({ kind: 'user' }, { keepInbox: false })
+    }
+    if (activation) await activation.dispose().catch(() => {})
+    await stopBackground(this.host.context, sessionId, reason).catch(() => {})
   }
   /** Stop what a ticket's worker runs in the background (see `stopBackground`). */
   private stopWork(ticketId: string, reason: string, keepInbox = false): void {
@@ -506,8 +525,10 @@ export class DshExecutor implements Executor {
     if (stopping) await until(stopping, this.host.lifetime)
   }
   /**
-   * On a host stop, for a bounded time: stop each loaded worker's background work, keeping its inbox; then end the collecting
-   * of the jobs left to a person, which were killed, and cancel a worker turn that started meanwhile, keeping its inbox.
+   * On a host stop, for a bounded time: dispose every Lead activation, including a graceful retirement that has already taken
+   * one; cancel a worker turn that still runs, keeping its inbox, which also releases a retirement waiting on that turn; then
+   * stop each loaded worker's background work, keeping its inbox, and end the collecting of the jobs left to a person, which
+   * were killed.
    */
   async shutdown(): Promise<void> {
     const agents = this.host.store.tickets.list().map(ticket => this.host.context.agents.get(workerSessionId(ticket.id) as SessionId))
@@ -516,11 +537,13 @@ export class DshExecutor implements Executor {
       for (const dispose of this.watching.values()) dispose()
       this.watching.clear()
       await this.leads.disposeAll()
-      await Promise.allSettled(agents.map(agent => stopBackground(this.host.context, agent.id, 'dsh-superagent-further stopped', true)))
-      for (const { collect } of this.left.values()) collect.abort()
       const running = agents.filter(agent => agent.status !== 'idle')
       for (const agent of running) agent.cancel({ kind: 'user' }, { keepInbox: true })
+      // A retirement a report started may still wait on a turn; the cancellation above ends it, and this waits for its dispose.
+      await Promise.allSettled([...this.stopping.values()])
       await Promise.allSettled(running.map(agent => agent.whenIdle()))
+      await Promise.allSettled(agents.map(agent => stopBackground(this.host.context, agent.id, 'dsh-superagent-further stopped', true)))
+      for (const { collect } of this.left.values()) collect.abort()
     }
     await until(stop(), undefined, SHUTDOWN_STOP_MS)
   }

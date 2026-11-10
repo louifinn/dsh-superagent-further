@@ -41,7 +41,7 @@ const ticket = (id: string, state: 'open' | 'ended', assignments: Pick<Assignmen
   id, title: id, decisionId: '', mandate: { strength: 'explicit', policyVersion: '', basis: { via: 'listed' }, actor: { source: 'x', id: '' }, scope: '' },
   deliverable: 'change',
   channels: [], assignments: assignments.map((item, index) => ({ id: `${id}-${index}`, createdAt: '', ...item })), inputs: [],
-  ...state === 'ended' ? { ended: { at: '', by: 'executor' as const, reason: 'closed', outcome: 'closed' as const } } : {},
+  ...state === 'ended' ? { ended: { at: '', by: 'executor' as const, cause: 'merge' as const, reason: 'closed', outcome: 'closed' as const } } : {},
   undelivered, createdAt: '', updatedAt: '', origin: { triggerId: '', triggerIds: [] } })
 const thread = (id: string, source: string, fields: Partial<Thread> = {}): Thread =>
   ({ key: `${source}:${id}`, ref: { source, id }, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {}, ...fields })

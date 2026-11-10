@@ -170,12 +170,13 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
       options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
       // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
       // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
-      // has no turn to cancel, which is what the Executor's graceful retirement relies on.
+      // has no turn to cancel, which is what the Executor's graceful retirement relies on. The child's inbox is the Session's,
+      // so an in-process restart keeps it for the next Assignment.
       return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => {
         const child = children.get(id)
         if (!child?.live) return
         const agent = agents.get(id)
-        if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: false })
+        if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: true })
         child.live = false
       } }
     }),

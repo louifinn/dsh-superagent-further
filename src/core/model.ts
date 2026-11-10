@@ -302,6 +302,8 @@ export interface PolicyEffect {
 }
 
 export type TicketEndBy = 'executor' | 'human'
+/** Why a Ticket ended: its worker's own ready/dropped report, a person stopping it, a followed pull request closing, or an Eval. */
+export type TicketEndCause = 'report' | 'human' | 'merge' | 'eval'
 /** How a ticket ended: with its result, with its pull request merged or closed unmerged, with nothing to do, or stopped by a person. */
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
 /**
@@ -493,8 +495,8 @@ export interface Ticket {
   after?: string[]
   /** The Channels of the messages it was accepted from, which its replies go to. */
   channels: ChannelRef[]
-  /** When, by whom, and how the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */
-  ended?: { at: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
+  /** When, by whom, and why the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */
+  ended?: { at: string; by: TicketEndBy; cause: TicketEndCause; outcome: TicketOutcome; reason?: string }
   /** Open question for a person; cleared by the executor or when the ticket ends. */
   attention?: Attention
   assignments: Assignment[]

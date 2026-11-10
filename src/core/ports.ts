@@ -1,5 +1,5 @@
 /** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
-import type { Assignment, ChannelRef, Decision, DecisionKind, Deliverable as TicketDeliverable, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
+import type { Assignment, ChannelRef, Decision, DecisionKind, Deliverable as TicketDeliverable, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketEndCause, TicketOutcome, Trigger }
   from './model.ts'
 import type { Reason } from './reasons.ts'
 
@@ -62,6 +62,12 @@ export interface Assessor {
 }
 
 /**
+ * Why an Executor stops an Assignment: a Ticket end (see `TicketEndCause`), or a retry, which ends the Assignment but not the
+ * Ticket. The cause decides how the worker is retired, so an Executor must never infer it from report timing.
+ */
+export type ExecutorStopCause = TicketEndCause | 'retry'
+
+/**
  * Executes assignments; concurrency and workspace management are its own concern. The Engine calls it inside its
  * commands, so each method only queues work, which reports back through the Engine's callbacks.
  */
@@ -73,8 +79,11 @@ export interface Executor {
    * or `Engine.deliveryFailed`, and through `Engine.inputsRead` once its worker's Session takes them into a step.
    */
   deliver(ticket: Ticket, assignment: Assignment): void
-  /** End an assignment's work, such as cancelling its Session's turn; called after the ticket or assignment has already ended in the domain. */
-  stop(ticket: Ticket, assignment: Assignment, reason: string): void
+  /**
+   * End an assignment's work, such as cancelling its Session's turn; called after the ticket or assignment has already ended in
+   * the domain. `cause` says why, which decides whether a worker's in-flight turn may finish (`report`) or is preempted.
+   */
+  stop(ticket: Ticket, assignment: Assignment, reason: string, cause: ExecutorStopCause): void
 }
 
 /** A message for a Channel; `ticketId` names the Ticket it is for, when there is one. */
@@ -98,7 +107,7 @@ export interface DomainEvents {
   'decision.recorded': { decisionId: string; kind: DecisionKind; threadKey: string }
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
   'ticket.resumed': { ticketId: string; triggerId: string }
-  'ticket.ended': { ticketId: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
+  'ticket.ended': { ticketId: string; by: TicketEndBy; cause: TicketEndCause; outcome: TicketOutcome; reason?: string }
   /** A Request all of whose Tickets ended; the one place its result is reported. */
   'request.ended': { requestId: string; by: 'human' | 'executor'; outcome: 'done' | 'partial' | 'stopped' }
   'assignment.started': { ticketId: string; assignmentId: string }

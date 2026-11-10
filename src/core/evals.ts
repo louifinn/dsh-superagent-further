@@ -297,7 +297,7 @@ export class Evals extends EnginePart {
       if (evaluation.strength !== 'explicit') return this.finish(thread, evaluation, { kind: 'ignore',
         reason: [{ code: 'stopNotExplicit' }], ...audit })
       const decision = this.finish(thread, evaluation, { kind: 'stop', reason: reasonOf(outcome.reason), ticketId: ticket.id, ...audit })
-      this.tickets.end(ticket.id, 'human', 'stopped', this.now(), typeof outcome.reason === 'string' ? outcome.reason : undefined)
+      this.tickets.end(ticket.id, 'human', 'stopped', 'eval', this.now(), typeof outcome.reason === 'string' ? outcome.reason : undefined)
       return decision
     }
     return this.accept(thread, evaluation, outcome)

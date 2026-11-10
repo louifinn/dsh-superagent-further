@@ -141,9 +141,9 @@ it('summaries carry the deliverable contract, and only an answer Ticket reads as
     mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
       id: 'ou_alice' }, scope: '' },
     origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [], inputs: [] }
-  store.tickets.save({ ...base, deliverable: 'answer', ended: { at, by: 'executor' as const, outcome: 'completed' as const } })
+  store.tickets.save({ ...base, deliverable: 'answer', ended: { at, by: 'executor' as const, cause: 'report' as const, outcome: 'completed' as const } })
   expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'answer', answered: true, stage: 'ended' })
-  store.tickets.save({ ...base, deliverable: 'change', ended: { at, by: 'executor' as const, outcome: 'merged' as const } })
+  store.tickets.save({ ...base, deliverable: 'change', ended: { at, by: 'executor' as const, cause: 'merge' as const, outcome: 'merged' as const } })
   expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'change', answered: false })
   expect(ticketSummary(store.tickets.get('t1')!)).not.toMatchObject({ answered: true })
   void host
@@ -329,7 +329,7 @@ it('offers a person to send a follow-up to Eval while a ticket decides it, or on
   const row = () => triggerView(snapshot(host), store.triggers.get('f1')!)
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: true } })
   // A ticket that ended after its worker had it leaves it to nobody: a person may still send it to Eval.
-  store.tickets.save({ ...store.tickets.get('t1')!, ended: { at, by: 'executor', reason: 'done', outcome: 'completed' } })
+  store.tickets.save({ ...store.tickets.get('t1')!, ended: { at, by: 'executor', cause: 'report', reason: 'done', outcome: 'completed' } })
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: false } })
   // Not once its worker acknowledged it, which took it up; a stop on it decided only the ticket's work.
   store.triggers.saveDisposition('f1', { fanout: ['t1'], acked: ['t1'], at })

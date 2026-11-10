@@ -42,7 +42,10 @@ export interface ActivationSpec {
     readonly maxDepth: number
   }
   readonly signal: AbortSignal
-  /** The parent is told when the child settles; the Lead's model then continues its turn. */
+  /**
+   * DSH's settlement delivery. An executor activation uses `caller`: superagent's own Lead messages are the one authority
+   * that tells the Lead a worker ended, so DSH must never inject a second, possibly contradictory settlement message.
+   */
   readonly delivery: 'parent' | 'caller'
 }
 
@@ -59,7 +62,7 @@ export function executorActivation(input: { childId: string; title: string; cwd:
     request: { cwd: input.cwd, agentPreset: input.preset, prompt: [{ type: 'text', text: input.text }], parent: input.lead,
       maxDepth: 1 },
     signal: input.signal,
-    delivery: 'parent',
+    delivery: 'caller',
   }
 }
 

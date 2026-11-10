@@ -40,7 +40,7 @@ function endedTicket(id: string, directory: string, at: string): Ticket {
     channels: [], assignments: [], inputs: [], undelivered: [], createdAt: at, updatedAt: at,
     execution: { name: 'add-one', directory, assignment: 'work' },
     origin: { triggerId: 'x', triggerIds: [] },
-    ended: { at, by: 'executor', outcome: 'merged' },
+    ended: { at, by: 'executor', cause: 'merge', outcome: 'merged' },
   }
 }
 

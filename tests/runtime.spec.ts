@@ -492,8 +492,8 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(sections.get(runtime.masterId)?.text({})).not.toContain('## Memory')
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
-  // Its worker's last word was its ready report, so its turn is not cancelled: it ends it itself.
-  expect(agents.get(sessionId)!.cancel).not.toHaveBeenCalled()
+  // The merge ends the Ticket, and a merge end preempts the worker's turn; only a report end retires it gracefully.
+  expect(agents.get(sessionId)!.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
   const notice = runtime.store.receipts.waiting().find(item => item.kind === 'notice')
   expect(notice ?? runtime.store.replyStatus(key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
 })
@@ -578,9 +578,9 @@ it('stops a ticket on a person\'s instruction for good, and resumes an ended one
   await receive(request)
   expect(await route({ kind: 'stop', ticket_id: ticket.id, trigger_id: request.id }))
     .toMatchObject({ decision: 'stop', reason: 'Human asked to stop', ticket: { ticket_id: ticket.id, state: 'stopped' } })
-  // The end says it was a person's stop once: no reason that repeats the outcome, none copied onto the Assignment.
+  // The Eval that recorded the person's stop is the cause; the end itself names the person and the outcome once.
   const stopped = runtime.store.tickets.get(ticket.id)!
-  expect(stopped.ended).toEqual({ at: expect.any(String), by: 'human', outcome: 'stopped' })
+  expect(stopped.ended).toEqual({ at: expect.any(String), by: 'human', cause: 'eval', outcome: 'stopped' })
   expect(stopped.assignments[0]).not.toHaveProperty('endedReason')
   expect(agents.get(sessionId)!.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
   // A stop withdraws the mandate: later messages wait as context, and only new work restarts it.
@@ -592,6 +592,8 @@ it('stops a ticket on a person\'s instruction for good, and resumes an ended one
   // A ticket that ended by itself resumes on a person's message on its thread, whoever sent it.
   const other = await acceptedTicket(feishu('20', '@bot 修另一个'))
   await runTool(other.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'not reproduced' })
+  // The worker's turn ends before the follow-up resumes the Ticket, so its report retirement finishes first.
+  agents.get(other.sessionId)!.status = 'idle'
   expect(runtime.store.tickets.get(other.ticket.id)!.ended).toBeDefined()
   await receive(feishu('21', '我这边还能复现', { mentions: [], root_id: 'om_20', sender_id: 'ou_guest' }))
   await runtime.pump()
@@ -1939,7 +1941,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   expect(agents.has(childId)).toBe(true)
   const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;
     request: { agentPreset: string; maxDepth: number; parent: { id: string } } }
-  expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'parent',
+  expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'caller',
     request: { agentPreset: 'dsh-superagent-further-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
   // The child's report reaches the Ticket through its Lead, and a ready report ends it.
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
