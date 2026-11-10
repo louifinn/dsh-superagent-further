@@ -176,7 +176,7 @@ function MemorySettings() {
     disabled={busy} onChange={next => { void flip(key, next) }} />
   return <div className="dt-form">
     <div className="dt-form dt-block">
-      <h2 className="dt-block-title">{t('term.memory')}<InfoTip text={t('memoryIntro')} /></h2>
+      <h2 className="dt-block-title">{t('term.memory')}<Tag tone="warning" title={t('memoryIntro')}>{t('memoryExperimental')}</Tag><InfoTip text={t('memoryIntro')} /></h2>
       {toggle('enabled', t('memoryEnabled'), t('memoryEnabledHint'))}
       {toggle('inject', t('memoryInjection'), t('memoryInjectionHint'))}
       {toggle('autoWrite', t('memoryAutoWrite'), t('memoryAutoWriteHint'))}

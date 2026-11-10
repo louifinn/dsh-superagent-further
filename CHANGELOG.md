@@ -8,6 +8,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Changed
 
+- Memory is labeled an experimental feature and is off by default: a fresh installation injects nothing, the memory tools
+  refuse, and finished work is not recorded until the operator turns on **Memory enabled** in **Settings → Memory**. The
+  Memory page carries the experimental label, pre-injection stays a separate opt-in, and existing installations keep
+  their saved switch value.
 - Memory pre-injection is off by default: a project Lead or the main Session still has the memory tools and automatic
   records, but pinned and recent memories reach the model only after the operator turns on **Inject memory** in
   **Settings → Memory**. Existing installations keep their saved switch value.

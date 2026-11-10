@@ -17,14 +17,17 @@ const memory = (id: string, over: Record<string, unknown> = {}) => ({
 it('saves each switch on click, against the current revision', async () => {
   await mount()
   await click(tab(zh['tab.memory']))
-  // Pre-injection is off by default, so the second switch starts off; enabling it writes the whole block.
-  expect(switches().map(item => item.getAttribute('aria-checked'))).toEqual(['true', 'false', 'true'])
+  // The page labels memory experimental, and the whole mechanism is off by default: only auto-write is on,
+  // and nothing runs until the master switch is.
+  expect(text()).toContain(zh.memoryExperimental)
+  expect(switches().map(item => item.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true'])
+  await click(switches()[0]!)
+  expect(server.settings.memory.enabled).toBe(true)
   await click(switches()[1]!)
   expect(server.settings.memory.inject).toBe(true)
-  expect(switches()[1]!.getAttribute('aria-checked')).toBe('true')
-  expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/memory'])
+  expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/memory', 'settings/memory'])
   await click(switches()[2]!)
-  expect(server.settings.memory).toMatchObject({ inject: true, autoWrite: false })
+  expect(server.settings.memory).toMatchObject({ enabled: true, inject: true, autoWrite: false })
   await click(switches()[0]!)
   expect(server.settings.memory.enabled).toBe(false)
 })

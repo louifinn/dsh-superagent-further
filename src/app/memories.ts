@@ -33,7 +33,7 @@ export class Memories {
 
   /** Stores a memory, or returns the one already stored for the same scope, kind and text. */
   save(input: MemoryInput, at = new Date().toISOString()): Memory {
-    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
+    if (!this.settings().enabled) throw new Error('Memory is experimental and is turned off in the management panel; turn it on on the Memory page.')
     const parsed = MemoryInputSchema.parse(input)
     const hash = memoryHash(parsed)
     const existing = this.db.prepare('SELECT value FROM memory WHERE hash = ?').get(hash)?.value
@@ -127,7 +127,7 @@ export class Memories {
    * first, then the newest; `limit` bounds the page.
    */
   search(query: string, options: { project?: string; ticket?: string; limit?: number } = {}): Memory[] {
-    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
+    if (!this.settings().enabled) throw new Error('Memory is experimental and is turned off in the management panel; turn it on on the Memory page.')
     const needle = this.pattern(query)
     const filters = ["(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
     const values: (string | number)[] = [needle, needle]
@@ -142,7 +142,7 @@ export class Memories {
    * project's memories and the installation-wide ones are never returned, which is the scope a project Lead may see.
    */
   searchFor(project: string, query: string, options: { ticket?: string; limit?: number } = {}): Memory[] {
-    if (!this.settings().enabled) throw new Error('Memory is turned off in the management panel; turn it on on the Memory page.')
+    if (!this.settings().enabled) throw new Error('Memory is experimental and is turned off in the management panel; turn it on on the Memory page.')
     const needle = this.pattern(query)
     const filters = ["project = ?", "(json_extract(value, '$.text') LIKE ? ESCAPE '\\' OR json_extract(value, '$.tags') LIKE ? ESCAPE '\\')"]
     const values: (string | number)[] = [project, needle, needle]
