@@ -4,6 +4,7 @@ import { UserError } from '../core/index.ts'
 import { resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import type { Settings, SettingsBlock } from '../policy.ts'
+import type { CaptureLogs } from './logs.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
 
 export interface SetupHost {
@@ -11,6 +12,8 @@ export interface SetupHost {
   readonly machine: Machine
   readonly lifetime: AbortSignal
   restart(): void
+  /** A capture logger scoped to setup, so its warnings reach the panel's ring; when absent, only the Host logger sees them. */
+  readonly log?: CaptureLogs
 }
 
 // The values setup derives the deployment from: the Source CLIs it probes, and the first project, whose repository is the
@@ -92,6 +95,12 @@ export class Setup {
     if (this.resolved) await writeEnvironment(this.resolved, blocked)
   }
   restore(): void { this.restoreEnvironment?.(); this.restoreEnvironment = undefined }
+  /** Writes a warning into the Host log ring when the Runtime injected a scoped logger; the Host logger's own output is unchanged. */
+  private warn(format: string, ...args: unknown[]): void {
+    const { context, log } = this.host
+    if (log) log.warn(format, ...args)
+    else context.logger.warn(format, ...args)
+  }
   /** Probes CLIs the way worker shells run them, using `stateDir` as `cwd` since it exists even before the repository clone is valid. */
   private probe() {
     const { context, machine, lifetime } = this.host
@@ -107,7 +116,7 @@ export class Setup {
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem
-      context.logger.warn('dsh-superagent-further leaves Feishu out: %s', error.message)
+      this.warn('dsh-superagent-further leaves Feishu out: %s', error.message)
       return undefined
     })
     const resolved = { ...deployment, ...(feishu ? { feishu } : {}) }

@@ -62,3 +62,11 @@ export function captureLogs(logs: Logs, host: HostLogger, scope: string): Captur
     error: (...args) => at('error', args),
   }
 }
+
+/**
+ * One capture factory over a single ring and Host logger, so every part of the plugin writes into the same bounded log
+ * under its own scope. Each call returns a logger shaped like `captureLogs`.
+ */
+export function captureScopes(logs: Logs, host: HostLogger): (scope: string) => CaptureLogs {
+  return scope => captureLogs(logs, host, scope)
+}

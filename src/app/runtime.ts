@@ -15,7 +15,7 @@ import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import { Engine, key, projectRequestOpen, reasonText, runningAssignment, threadKey,
-  type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+  type DomainEvent, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -29,7 +29,7 @@ import { KV } from '../kv.ts'
 import { Store } from './store.ts'
 import { evalsHealth, type DeliveryFailure, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
-import { captureLogs, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
+import { captureLogs, captureScopes, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
 import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
@@ -100,7 +100,9 @@ export class Runtime extends Service implements SourceHost {
   readonly engine: Engine
   readonly passes: Passes
   readonly ready: Promise<void>
-  private readonly board = new HealthBoard()
+  /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
+  private starting = true
+  private readonly board = new HealthBoard((name, previous, next) => this.healthChanged(name, previous, next))
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   readonly masterId: string
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
@@ -109,6 +111,8 @@ export class Runtime extends Service implements SourceHost {
   /** Bounded in-memory log of the plugin host's own messages; the panel reads it through `GET logs`. */
   readonly logs = new Logs()
   private readonly log: CaptureLogs
+  /** Creates a capture logger per scope over the same ring and Host logger. */
+  private readonly capture: (scope: string) => CaptureLogs
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
   private releaseLock?: () => Promise<void>
@@ -126,7 +130,9 @@ export class Runtime extends Service implements SourceHost {
     /** Ends the host process once a management shutdown has stopped the runtime (injected so tests can observe it). */
     private readonly exit: (code: number) => void = code => { process.exit(code) }) {
     super(ctx, 'orchestrator')
-    this.log = captureLogs(this.logs, ctx.logger as unknown as HostLogger, 'host')
+    const host = ctx.logger as unknown as HostLogger
+    this.log = captureLogs(this.logs, host, 'host')
+    this.capture = captureScopes(this.logs, host)
     const runtime = this
     // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
@@ -144,7 +150,7 @@ export class Runtime extends Service implements SourceHost {
     try {
       const report = (error: unknown) => { this.log.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
+      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart, log: this.capture('setup') })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
@@ -155,7 +161,7 @@ export class Runtime extends Service implements SourceHost {
       // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
       const schedule = ctx.get('schedule') as ScheduleService | undefined
       this.automations = schedule === undefined ? undefined : new Automations({ schedule, store: store.automations, masterId,
-        logger: this.log, projects: () => store.settings().executor.projects.map(project => project.id),
+        logger: this.capture('automation'), projects: () => store.settings().executor.projects.map(project => project.id),
         project: id => store.settings().executor.projects.find(project => project.id === id),
         // The Lead Session must exist before the Host task targets it; the closure runs after Sessions is constructed.
         lead: async project => (await runtime.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id })
@@ -175,7 +181,7 @@ export class Runtime extends Service implements SourceHost {
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
-        lifetime: this.lifetime, automations: this.automations,
+        lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
@@ -187,11 +193,12 @@ export class Runtime extends Service implements SourceHost {
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
-      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
+      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(), log: this.capture('outbox') })
       const { assessor, executor } = this
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          this.recordLifecycle(event)
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
@@ -472,6 +479,7 @@ export class Runtime extends Service implements SourceHost {
     this.passes.start()
     this.effects.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
+    this.logStartupSummary()
     void this.cleanupLoop()
     void this.watchdogLoop()
   }
@@ -600,6 +608,62 @@ export class Runtime extends Service implements SourceHost {
    */
   decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult> {
     return decideEscalation(this.engine, this.store, this.sessions, input)
+  }
+  /**
+   * Logs a claim entering error and its recovery; every other state change is a readiness fact. Startup readies are
+   * collected by `logStartupSummary` instead of one entry per claim, and same-state detail updates never reach this.
+   */
+  private healthChanged(name: string, previous: Health | undefined, next: Health): void {
+    if (next.state === 'error') {
+      this.logs.record('warn', name, `${name} is error: ${this.short(next.detail)}`)
+      return
+    }
+    if (next.state !== 'ready') return
+    if (previous?.state === 'error') {
+      this.logs.record('info', name, `${name} recovered: ready`)
+      return
+    }
+    if (this.starting) return
+    this.logs.record('info', name, `${name} is ready`)
+  }
+  /** One startup entry for the claims that came up ready, so a dozen claims do not each produce a line. */
+  private logStartupSummary(): void {
+    this.starting = false
+    const entries = Object.entries(this.board.all)
+    const ready = entries.filter(([, value]) => value.state === 'ready').map(([name]) => name).sort()
+    const notReady = entries.filter(([, value]) => value.state !== 'ready').map(([name, value]) => `${name}=${value.state}`).sort()
+    this.logs.record('info', 'runtime', `runtime ready: ${ready.length} claims ready (${ready.join(', ')})`
+      + (notReady.length ? `; not ready: ${notReady.join(', ')}` : ''))
+  }
+  /** One short info entry per operational Engine event; it carries ids and outcomes, never a message body. */
+  private recordLifecycle(event: DomainEvent): void {
+    switch (event.type) {
+      case 'trigger.received':
+        this.logs.record('info', 'trigger', `trigger.received trigger=${event.data.triggerId} threads=${event.data.threads.length}`)
+        return
+      case 'ticket.created':
+        this.logs.record('info', 'ticket', `ticket.created ticket=${event.data.ticketId} decision=${event.data.decisionId} strength=${event.data.strength}`)
+        return
+      case 'ticket.ended':
+        this.logs.record('info', 'ticket', `ticket.ended ticket=${event.data.ticketId} by=${event.data.by} cause=${event.data.cause} outcome=${event.data.outcome}`)
+        return
+      case 'request.ended':
+        this.logs.record('info', 'request', `request.ended request=${event.data.requestId} by=${event.data.by} outcome=${event.data.outcome}`)
+        return
+      case 'assignment.started':
+        this.logs.record('info', 'assignment', `assignment.started ticket=${event.data.ticketId} assignment=${event.data.assignmentId}`)
+        return
+      case 'assignment.ended':
+        this.logs.record('info', 'assignment', `assignment.ended ticket=${event.data.ticketId} assignment=${event.data.assignmentId} reason=${this.short(event.data.reason)}`)
+        return
+      default:
+        return
+    }
+  }
+  /** A one-line excerpt for a log entry; entries stay short and never carry a message or comment body. */
+  private short(value: string, max = 80): string {
+    const line = value.replace(/\s+/g, ' ').trim()
+    return line.length <= max ? line : `${line.slice(0, max - 3)}...`
   }
   private httpHost(): HttpHost {
     const runtime = this

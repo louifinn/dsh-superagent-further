@@ -290,7 +290,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/notices.ts` | Domain events and worker reports into notices and relays for the main Session |
 | `src/app/lead-dispatch.ts` | Raised project requests and unanswered worker reports into Lead prompts and durable `lead_message` records, the Lead's disposition back to the raising Session, and the bounded `needs-attention` fallback at the Lead activation boundary |
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
-| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters; the Host logger still gets the raw arguments. `GET logs` serves the panel |
+| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters; the Host logger still gets the raw arguments. `GET logs` serves the panel. `captureScopes` gives every operational part its own scope over the same ring, and the Runtime records the lifecycle, outbox and health-transition entries there |
 | `src/app/escalations.ts` | `decideEscalation`: the one path both the main Session tool and the panel take to decide an escalated project request and deliver its mandatory reply to the Lead |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
@@ -312,7 +312,7 @@ Each model request binds the Session to the current prompt revision. The revisio
   | Prompt versions | Prompts |
   | Effect rows | Effects |
   | Outbox receipts | The Outbox: the Engine's messages and Sources' `notify` go through its `send`, and its `reply` effects mark them |
-  | A health entry | The part that claimed it on the `HealthBoard` (`src/infra/health.ts`), which refuses a second claim: `runtime` the Runtime, which Passes report through, `evals` the Runtime after each pass, `models` Sessions, each effect kind Effects, `worker` the DshExecutor, a Source kind's entries the SourceRegistry for that kind's Source, `sync:<id>` Settings |
+  | A health entry | The part that claimed it on the `HealthBoard` (`src/infra/health.ts`), which refuses a second claim: `runtime` the Runtime, which Passes report through, `evals` the Runtime after each pass, `models` Sessions, each effect kind Effects, `worker` the DshExecutor, a Source kind's entries the SourceRegistry for that kind's Source, `sync:<id>` Settings. A real state change reaches the board's optional transition listener, which the Runtime logs as one `warn` on error and one `info` on recovery, under the claim's name |
 
   A Source changes a Ticket only through `SourceContext.tickets.bindThread` and `threadClosed`, which call the Engine.
 - **Requests and facts.** A method that asks for something is named by an imperative verb and its object, such as `stopTicket` or `bindThread`, and may be refused; a method that records what an adapter did is named in the past tense, such as `assignmentStarted` or `deliveryFailed`. Each host receives the Engine as the role type it needs.
@@ -363,7 +363,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop; the consumer of `project-request.completed` that reports a root request's chain; the consumer of `project-request.approval-requested` that asks the root Channel to approve a design; and the router of a human root-thread reply to the project's Lead |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
-| `src/app/outbox.ts` | The Outbox: the Engine's `Outbox` port, the receipts and the `reply` effects that send them |
+| `src/app/outbox.ts` | The Outbox: the Engine's `Outbox` port, the receipts and the `reply` effects that send them; delivery and its first failure are one `outbox` log entry each, while retries stay silent |
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
@@ -395,7 +395,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/assessment.ts` | The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers |
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
 | `src/app/files.ts` | `localFile`: resolves a file inside a project's workspace, refusing absolute, parent, dot and repeated-separator paths, directories and missing files |
-| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters, while the Host logger still gets the raw arguments |
+| `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters, while the Host logger still gets the raw arguments; `captureScopes` shares one ring across the operational scopes |
 | `src/app/escalations.ts` | `decideEscalation`: the one path both the main Session tool and the panel take to decide an escalated project request and deliver its mandatory reply to the Lead |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
 | `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
@@ -424,7 +424,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/infra/acl.ts` | `restrictToOwner`: POSIX modes, or an owner-only `icacls` ACL on Windows, for the state directory and database |
 | `src/infra/paths.ts` | The package's root, where packaged files are |
 | `src/infra/text.ts` | Word counts and the chat message limit, `fill` and `sameName` |
-| `src/infra/health.ts` | The `HealthBoard`, every part's health entry, each claimed by its one writer |
+| `src/infra/health.ts` | The `HealthBoard`, every part's health entry, each claimed by its one writer, and the optional transition listener that fires only when a claim's state changes |
 | `src/sources/kind.ts` | The `SourceKind` protocol |
 | `src/sources/registry.ts` | `SourceRegistry` |
 | `src/sources/session.ts` | The `session` kind and the global `superagent_submit` tool: one call is one Trigger whose Channel is the Session; `sessionDecisionText` writes the always-reply notice; the tool refuses subagents, managed Sessions, unknown projects and a disabled Source |
@@ -496,6 +496,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/automations.spec.ts` | Installation and project automations: title/instruction/rule validation and the 20-task limit, project registration and lead-<projectId> targets, the envelope and the report-only rule, create compensation when the row or the Host delete fails, enable/disable and edit conflicts, no re-target, manual run with a delivery recorded and pending/not-found refusals, delete with the Host task, record and history removed and a failed Host delete keeping the record, orphan and drift reconciliation with unrecorded Host tasks, the delivery history recorded from the catalog and the Host history with newest-50 pruning and no duplicate entries, and the context and tool descriptions |
 | `tests/panel-tasks.spec.tsx` | The Automations page: the task table with scopes and orphan warning, the attention count and error reason without another notice channel, the expandable newest-first delivery history, creating a project task from the project select, editing without re-target, the enabled switch, running one task now and surfacing a Host refusal, deleting after the confirmation dialog, and the service-missing state |
 | `tests/logs.spec.ts` | The Host log ring: newest-last ordering, trimming, level and scope filters and the capture wrapper |
+| `tests/operational-log.spec.ts` | The operational log: the startup summary, one entry per Engine lifecycle event, outbox delivery and its first failure without retry spam, health transitions, and the scoped capture factory |
 | `tests/panel-logs.spec.tsx` | The Logs page: rows, the level and scope filters, the empty state and the unmatched-filter state |
 | `tests/architecture.spec.ts` | The layering check: the allowed import direction of core, application, adapter and client modules, and the reports a wrong-way import produces |
 | `tests/archive-state.spec.ts` | `scripts/archive-state.mjs` against a temporary state database: the `VACUUM INTO` copy, its name, and pruning by count |
