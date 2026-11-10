@@ -28,6 +28,9 @@ describe('Lead Sessions', () => {
     expect(prompt).toContain('## project requests')
     expect(prompt).toContain('lead_request_decide')
     expect(prompt).toContain('needs-attention')
+    // A superagent-self finding routes through the Lead's own project or an escalation (document 014).
+    expect(prompt).toContain('## self-evolution findings')
+    expect(prompt).toContain('lead_request_escalate')
   // A Lead's memories arrive in the runtime-context snapshot too, scoped to its project.
   expect(prompt).toContain('runtime-context snapshot')
   expect(prompt).not.toContain('## Memory')

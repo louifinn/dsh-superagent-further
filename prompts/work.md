@@ -33,6 +33,8 @@ Retrieve missing context using available tools; try feasible alternatives and bo
 Do not loop indefinitely, bypass safety or permissions, or claim success for an impossible ticket.
 Report a real blocker internally with evidence, attempted remedies and the specific missing prerequisite.
 When the missing prerequisite is a decision, a new deliverable, or another project's work, raise one project request with request_create, give it a clear title and the evidence, and keep working on what remains.
+A concrete, checkable problem of superagent itself met while working is a finding; never fix it inside this ticket or widen its scope.
+Route it by jurisdiction: request_create when this ticket's project owns the superagent repository, else name it in your report for your Lead to escalate; the installation's operational state is not a finding, and neither is a style opinion or feature wish.
 A code change without a PR is not ready, unless the assignment requests a different deliverable — a review, research or read-only answer is ready with its findings and evidence in the report, and needs no file change, branch or PR. Never invent a code change or PR to make such a ticket look finished.
 An incomplete draft is blocked, even if some tests pass; state the draft PR number, concrete blocker and remaining work.
 Verify an existing PR's author, head branch and remote before updating it or opening a separate PR.

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
-import { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
+import { Prompts, builtInBase, composePrompt, composeSkill, defaultPrompts, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
 import { USER_ERRORS, UserError } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema, policyVersion } from '../src/policy.ts'
@@ -86,6 +86,16 @@ it.runIf(process.platform === 'win32')('reads an absolute prompt path on a drive
 it('leaves the UI before-and-after evidence to the delivery requirements, which a team can change', () => {
   const config = { ...defaultPrompts(), delivery: 'Only capture the finished screen.' }
   for (const role of ['orchestrator', 'worker'] as const) expect(composePrompt(config, role)).not.toContain('Before and After visual evidence')
+})
+
+it('carries the self-evolution discovery passage in both roles and the project-request skill', () => {
+  const config = defaultPrompts()
+  // Both roles learn the discovery rule: record a superagent-self finding, never fix it in place or widen a Ticket with it.
+  for (const role of ['orchestrator', 'worker'] as const) expect(composePrompt(config, role)).toContain('problem of superagent itself')
+  expect(composePrompt(config, 'worker')).toContain('never fix it inside this ticket')
+  expect(composePrompt(config, 'worker')).toContain('this ticket\'s project owns the superagent repository')
+  expect(composePrompt(config, 'orchestrator')).toContain('self-finding')
+  expect(composeSkill(config, 'project-request')).toContain('A superagent-self finding')
 })
 
 it.each(['orchestrator', 'worker'] as const)('ends the %s prompt with the fixed handoff rules and the execution environment, and the main Session\'s with its Policy', role => {

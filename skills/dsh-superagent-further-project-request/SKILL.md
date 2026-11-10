@@ -9,6 +9,10 @@ decision:
 - **A worker inside a Ticket** raises one with `request_create` (title, instruction, kind, evidence) when the work
   needs a decision, a new deliverable, or another project's change. The Ticket stays open; the completion report must
   name every request it leaves with `requests`.
+- **A superagent-self finding** — a concrete, checkable problem of superagent itself met while working, recorded rather
+  than fixed in place — routes by jurisdiction: inside the project whose repository is superagent's own, the worker
+  raises it with `request_create`; from another project's Ticket the Lead escalates it with `lead_request_escalate`,
+  and the Orchestrator accepts it with a delivery unit in the self project.
 - **A project Lead** answers with `lead_requests` and `lead_request_decide`/`lead_request_reply`/`lead_request_complete`
   or `lead_request_approval`; every disposition needs a non-empty reply, which is delivered to the raising Session.
   Accepting work creates the Request and its staged Tickets under a Lead Mandate confined to that project.
