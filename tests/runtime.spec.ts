@@ -448,11 +448,13 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   const mergedAt = new Date().toISOString()
   const merged = { number: 42, state: 'closed', merged: true, merged_at: mergedAt, html_url: 'https://github.com/acme/widgets/pull/42',
     user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/x', repo: { full_name: 'acme/widgets' } } }
+  // Memory is off by default, so the operator opts in before the ending is remembered deterministically.
+  runtime.store.saveSettings({ ...runtime.store.settings(), memory: { ...runtime.store.settings().memory, enabled: true } })
   await observePull(runtime.context(githubKind), merged)
   const ended = runtime.store.tickets.get(ticket.id)!
   expect(ended).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'merged' }) })
   // The ending is remembered deterministically, so a later Session can recall it. Pre-injection is off by default,
-  // so the operator opts in before the snapshot is expected to carry it.
+  // so the operator opts in to that too before the snapshot is expected to carry it.
   expect(runtime.store.memories.search(ticket.title).some(memory => memory.kind === 'decision' && memory.ticket === ticket.id)).toBe(true)
   runtime.store.saveSettings({ ...runtime.store.settings(), memory: { ...runtime.store.settings().memory, inject: true } })
   expect(runtime.store.memories.promptText()).toContain(ticket.title)

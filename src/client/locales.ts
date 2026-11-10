@@ -121,11 +121,12 @@ const TEXT = {
   'tab.logs': ['日志', 'Logs'],
   // Memory page: the master switch, behavior switches, limits and stored rows. Every string stays short because the page
   // shows settings, not prose: the hints explain the consequences.
-  memoryIntro: ['记忆让以后的主 Session 和项目 Lead 想起跨会话的事实；这里控制它是否生效、如何注入与保留多久。',
-    'Memory lets a later main Session or project Lead recall facts across Sessions; this page controls whether it is on, how it is injected, and how long it is kept.'],
+  memoryExperimental: ['实验性功能', 'Experimental'],
+  memoryIntro: ['实验性功能，默认关闭：记忆让以后的主 Session 和项目 Lead 想起跨会话的事实；打开总开关后生效，这里还控制如何注入与保留多久。',
+    'An experimental feature, off by default: memory lets a later main Session or project Lead recall facts across Sessions; it runs only after the master switch is turned on, and this page also controls how it is injected and how long it is kept.'],
   memoryEnabled: ['启用记忆', 'Memory enabled'],
-  memoryEnabledHint: ['总开关。关闭后不注入快照、不接受 memory_write 或 memory_search，也不再自动记录已结束的工单；已有记忆保留。',
-    'Master switch. When off, no snapshot is injected, memory_write and memory_search refuse, and finished work is no longer recorded automatically; stored memories stay.'],
+  memoryEnabledHint: ['总开关（默认关闭）。关闭后不注入快照、不接受 memory_write 或 memory_search，也不再自动记录已结束的工单；已有记忆保留。',
+    'Master switch, off by default. When off, no snapshot is injected, memory_write and memory_search refuse, and finished work is no longer recorded automatically; stored memories stay.'],
   memoryInjection: ['预注入记忆', 'Inject memory'],
   memoryInjectionHint: ['把置顶和最近的记忆作为运行时上下文快照随请求发送（默认关闭，打开后才随请求携带）；关闭后模型仍可用 memory_search 主动查询。',
     'Carry the pinned and most recent memories in the runtime-context snapshot of each request; when off, a model can still query them with memory_search.'],

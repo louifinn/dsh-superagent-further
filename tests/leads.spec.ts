@@ -48,8 +48,9 @@ describe('Lead Sessions', () => {
     const host = await startRuntime()
     try {
       const settings = host.runtime.store.settings()
+      // Memory is off by default; this test exercises a Lead's memory tools, so it opts in first.
       host.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor,
-        projects: [{ ...PROJECT, workspace: join(host.directory, 'app') }] } })
+        projects: [{ ...PROJECT, workspace: join(host.directory, 'app') }] }, memory: { ...settings.memory, enabled: true } })
       const agent = await host.runtime.sessions.ensureLead('app', join(host.directory, 'app'), 'Project App')
       expect(agent.id).toBe('lead-app')
       expect(host.runtime.store.get(KV.lead.sessions('app'))).toBe('lead-app')

@@ -13,11 +13,14 @@ afterEach(() => {
   directory = undefined
 })
 
-/** Opens a fresh Store in a temporary state directory. */
+/** Opens a fresh Store in a temporary state directory. Memory is off by default, so the Store opts in for these tests. */
 function open(): { store: Store; path: string } {
   directory ??= mkdtempSync(join(tmpdir(), 'memories-'))
   const path = join(directory, 'orchestrator.sqlite')
-  return { store: new Store(path), path }
+  const store = new Store(path)
+  const settings = store.settings()
+  store.saveSettings({ ...settings, memory: { ...settings.memory, enabled: true } })
+  return { store, path }
 }
 
 describe('Memories', () => {
@@ -110,7 +113,7 @@ describe('Memories', () => {
   it('renders the runtime-context snapshot of pinned and recent memories within its character budget', () => {
     const { store } = open()
     try {
-      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, inject: true } })
+      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, enabled: true, inject: true } })
       expect(store.memories.promptText()).toBe('')
       store.memories.save({ kind: 'preference', text: 'Answer in Chinese unless the request is English.', pinned: true }, '2025-01-01T00:00:00.000Z')
       store.memories.save({ kind: 'decision', ticket: 'ticket-1', text: 'The app Tickets run under the lead-app Session.' }, '2026-01-01T00:00:00.000Z')
@@ -128,7 +131,7 @@ describe('Memories', () => {
   it('shows a project only its own memories, never the installation-wide or another project\'s ones', () => {
     const { store } = open()
     try {
-      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, inject: true } })
+      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, enabled: true, inject: true } })
       const app = store.memories.save({ kind: 'fact', project: 'app', text: 'The app builds with pnpm.' }, '2026-01-02T00:00:00.000Z')
       store.memories.save({ kind: 'fact', project: 'lib', text: 'The lib builds with cargo.' }, '2026-01-03T00:00:00.000Z')
       store.memories.save({ kind: 'preference', text: 'Keep replies short.', pinned: true }, '2026-01-01T00:00:00.000Z')
@@ -176,7 +179,7 @@ describe('Memories', () => {
   it('applies the configured snapshot limits and ages out only automatic records', () => {
     const { store } = open()
     try {
-      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, inject: true } })
+      store.saveSettings({ ...store.settings(), memory: { ...store.settings().memory, enabled: true, inject: true } })
       const manual = store.memories.save({ kind: 'fact', text: 'A hand-written fact.' }, '2020-01-01T00:00:00.000Z')
       const pinned = store.memories.save({ kind: 'preference', text: 'Stay short.', pinned: true }, '2020-01-02T00:00:00.000Z')
       const automatic = store.memories.save({ kind: 'decision', ticket: 't1', text: 'Automatic record.',

@@ -328,7 +328,7 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
     },
     "memory": {
       "default": {
-        "enabled": true,
+        "enabled": false,
         "inject": false,
         "autoWrite": true,
         "pinnedLimit": 40,
@@ -339,7 +339,7 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
       "type": "object",
       "properties": {
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "inject": {

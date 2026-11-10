@@ -209,7 +209,7 @@ it('searches, orders, pins and forgets stored memories for the Memory page', asy
   const listed = await call('GET', 'memories?q=fact&project=app&sort=oldest&offset=20&limit=25')
   expect(listed.status).toBe(200)
   expect(listed.body).toMatchObject({ total: 3, matched: 2, pinned: 1, offset: 20, limit: 25,
-    config: { enabled: true, inject: false }, items: [{ id: 'm1' }] })
+    config: { enabled: false, inject: false }, items: [{ id: 'm1' }] })
   expect(browsed).toEqual([{ query: 'fact', project: 'app', sort: 'oldest', offset: 20, limit: 25 }])
   // An unknown order falls back to the newest; omitted filters are empty and paging starts at the first page.
   expect((await call('GET', 'memories?sort=nonsense')).status).toBe(200)

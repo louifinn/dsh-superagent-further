@@ -237,12 +237,13 @@ it('saves Memory behavior from the panel only, and the change applies without a 
   h = await startRuntime()
   const { settings, store } = h.runtime
   const memory = store.settings().memory
-  // Pre-injection is off by default; the panel opts in.
+  // Memory is experimental and off by default; the panel opts in.
+  expect(memory.enabled).toBe(false)
   expect(memory.inject).toBe(false)
   let revision = store.blockRevision('memory')
-  const enabled = await settings.save('memory', { ...memory, inject: true, pinnedLimit: 2 }, revision, 'panel')
+  const enabled = await settings.save('memory', { ...memory, enabled: true, inject: true, pinnedLimit: 2 }, revision, 'panel')
   expect(enabled.saved).toBe(true)
-  expect(store.settings().memory).toMatchObject({ inject: true, pinnedLimit: 2 })
+  expect(store.settings().memory).toMatchObject({ enabled: true, inject: true, pinnedLimit: 2 })
   store.memories.save({ kind: 'fact', text: 'Stored and injected.' })
   expect(store.memories.promptText()).toContain('Stored and injected.')
   // A tool-origin change of the same switch is refused.
