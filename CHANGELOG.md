@@ -18,6 +18,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   never fix it inside the current Ticket, and route it by jurisdiction — `request_create` in the self repository's own
   project, a Lead escalation from any other, and `memory_write` tagged `self-finding` for the main Session until its
   routing outlets land.
+- The Execution tab gains a Workers block: `GET workers` lists each open Ticket's worker Session, its Assignment state,
+  and each background job's status and latest output preview, including jobs still running. `DshExecutor.jobsSnapshot()`
+  now merges a running worker's live jobs (read observe-only from the job registry) with the persisted settled snapshots.
+- A failed `orchestrator_send_file` now says why: `Runtime.sendFile` keeps the Source's reason in the thrown error and the
+  tool response, records it in a bounded delivery-failure ring, writes a warning to the Host log, and Overview shows the
+  recent failures as a problem row naming the file, chat and reason.
 
 ### Changed
 

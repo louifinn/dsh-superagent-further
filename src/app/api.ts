@@ -1,7 +1,7 @@
 /** Type-only management API contract between the web panel and host routes, imported by the panel without bundling host code. */
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { PromptConfig, Prompts } from './prompts.ts'
-import type { PromptsView, StateView, TicketPageView } from './http.ts'
+import type { PromptsView, StateView, TicketPageView, WorkersView } from './http.ts'
 import type { ProposalsView } from './settings.ts'
 import type { Proposal } from './store.ts'
 import type { HistoryView } from './settings-history.ts'
@@ -40,6 +40,8 @@ export interface Api {
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
+  /** The Execution tab's Workers block: open Tickets, their worker Sessions, Assignment state and shell jobs. */
+  'GET workers': { response: WorkersView }
   'POST tickets/:id/retry': { response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }

@@ -46,6 +46,27 @@ const JOB_PREVIEW_BYTES = 2_048
 const JOB_TICKETS = 256
 /** How many job ids a Ticket remembers as woken, so a repeated settle event does not wake its worker twice. */
 const JOB_WAKES = 64
+/** The part of DSH's job registry the panel reads: the jobs one Session owns, observed without waiting on or consuming them. */
+interface JobList {
+  list(caller: string): readonly JobView[]
+}
+/** One shell job in the panel: a settled snapshot, or a job the worker still holds. */
+export interface WorkerJobRow {
+  id: string
+  kind: string
+  label: string
+  status: string
+  /** The tail of the job's retained output, read without taking the worker's cursor. */
+  preview: string
+  /** The job's retained output size in bytes so far. */
+  total: number
+  /** When the job started, ISO 8601; carried by a live row. */
+  startedAt?: string
+  /** When the job settled, ISO 8601; carried by a settled row. */
+  endedAt?: string
+  /** What the job last reported about its progress; carried by a live row when DSH has it. */
+  detail?: string
+}
 /** True when an input comes from a person (a non-context human trigger or a direct text input such as a status request). */
 const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
 /**
@@ -618,14 +639,32 @@ export class DshExecutor implements Executor {
     }
   }
   /**
-   * The settled shell jobs of each Ticket, newest last, for the panel and for M22's review of a late result: what this
-   * process observed, or what an earlier one recorded on the latest Assignment.
+   * The shell jobs a running worker still holds, read from DSH's registry by listing and reading them: no wait, no kill, and
+   * `jobOutputPreview`'s non-consuming `readAt`, so the worker's own cursor and end notice stay untouched.
    */
-  jobsSnapshot(): ReadonlyMap<string, readonly JobSnapshot[]> {
-    const snapshots = new Map<string, readonly JobSnapshot[]>()
+  private liveJobs(ticketId: string): readonly WorkerJobRow[] {
+    const caller = workerSessionId(ticketId)
+    const registry = this.host.context.get('jobs') as JobList | undefined
+    if (!registry) return []
+    try {
+      return registry.list(caller)
+        .filter(job => job.owner === caller && (job.status === 'running' || job.status === 'stopping'))
+        .map(job => ({ id: job.id, kind: job.kind, label: job.label, status: job.status,
+          preview: jobOutputPreview(this.host.context, job.id, caller, JOB_PREVIEW_BYTES), total: job.output?.total ?? 0,
+          startedAt: new Date(job.startedAt).toISOString(), ...(job.detail ? { detail: job.detail } : {}) }))
+    } catch { return [] }
+  }
+  /**
+   * The shell jobs of each Ticket, newest last, for the panel and for M22's review of a late result: what settled in this
+   * process or was recorded on the latest Assignment, followed by what a worker that still holds a slot is running now.
+   */
+  jobsSnapshot(): ReadonlyMap<string, readonly WorkerJobRow[]> {
+    const snapshots = new Map<string, readonly WorkerJobRow[]>()
     for (const ticket of this.host.store.tickets.list()) {
-      const jobs = this.settled.get(ticket.id) ?? latestAssignment(ticket)?.jobs
-      if (jobs?.length) snapshots.set(ticket.id, jobs)
+      const rows = new Map<string, WorkerJobRow>()
+      for (const job of this.settled.get(ticket.id) ?? latestAssignment(ticket)?.jobs ?? []) rows.set(job.id, job)
+      if (!ticket.ended && this.running(ticket)) for (const job of this.liveJobs(ticket.id)) rows.set(job.id, job)
+      if (rows.size) snapshots.set(ticket.id, [...rows.values()])
     }
     return snapshots
   }

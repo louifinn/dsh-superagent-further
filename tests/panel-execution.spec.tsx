@@ -40,6 +40,21 @@ it('lists Tickets under Execution by who they wait on, with the Executor state a
   expect(server.settings).toMatchObject({ paused: true, executor: { maxWorkers: 4 } })
 })
 
+it('shows each worker\'s background jobs and their latest output under Execution', async () => {
+  server.workers = [{ ticket: 't1', title: '修复回归', session: 'worker-t1', assignment: 'running', assignmentId: 'a1',
+    jobs: [{ id: 'bash-1', kind: 'bash', label: 'pnpm test', status: 'running', preview: '2 tests failed', total: 14,
+      startedAt: '2026-11-11T00:00:00.000Z' }] }]
+  await mount()
+  await click(zh['tab.execution'])
+  expect(server.requests.some(request => request.path === 'workers')).toBe(true)
+  expect(text()).toContain(zh.workersTitle)
+  expect(text()).toContain('worker-t1')
+  expect(text()).toContain(zh['assignment.running'])
+  expect(text()).toContain(zh['workerJobStatus.running'])
+  expect(text()).toContain('pnpm test')
+  expect(text()).toContain('2 tests failed')
+})
+
 it('stops an open Ticket from its page after confirmation', async () => {
   await mount()
   await click('修复回归')

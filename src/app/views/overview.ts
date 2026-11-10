@@ -14,6 +14,8 @@ export interface LeadRow { project: string; name: string; session: string; statu
   projectRequests: { pending: number; automated: number } }
 /** One open Request in the panel: the accepted ask and the Tickets delivering it, so a cross-project request reads as one row. */
 export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
+/** One file delivery `Runtime.sendFile` could not complete: what was sent where, the Source's reason, and when. */
+export interface DeliveryFailure { path: string; chat: string; reason: string; at: string }
 import { preview } from './text.ts'
 
 /** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
@@ -44,7 +46,9 @@ export function evalsHealth(store: Store, now = Date.now()): Health {
  */
 export function overview(host: ViewHost, health: HealthMap, policyVersionValue: string, load: ExecutorLoad, setup?: SetupProblem,
   /** One row per registered project, so the panel can show each Lead and what it holds. */
-  leads: LeadRow[] = []) {
+  leads: LeadRow[] = [],
+  /** Recent failed file deliveries, newest last, each shown as a problem with the Source's own reason. */
+  deliveries: readonly DeliveryFailure[] = []) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -72,6 +76,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     ...store.read.failingReplies().map(item => ({ kind: 'outgoing' as const, outgoing: { id: item.id, channel: item.channel,
       text: preview(item.text),
       attempts: item.attempts, error: item.error } })),
+    // A failed `orchestrator_send_file` is actionable: the file never reached its chat, and the reason says why.
+    ...deliveries.map(item => ({ kind: 'delivery-failure' as const, ...item })),
   ]
   const open = store.tickets.open().sort(newestFirst)
   // One row per open Request, naming the Tickets that deliver it; a Request with one Ticket still reads as one row.
