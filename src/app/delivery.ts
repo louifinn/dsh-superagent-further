@@ -46,16 +46,20 @@ export class AgentDelivery {
     const state = seen
     state.loaded ??= (async () => {
       await this.ctx.sessionPersistence.flush()
-      await using handle = await this.ctx.sessionPersistence.open(agent.id, 'read')
-      for (let offset = 0; ; ) {
-        const { events } = await handle.read(offset, 512)
-        if (!events.length) break
-        for (const event of events) {
-          if (event.type !== 'user/message') continue
-          const id = deliveryId(event.data)
-          if (id) state.ids.add(id)
+      const handle = await this.ctx.sessionPersistence.open(agent.id, 'read')
+      try {
+        for (let offset = 0; ; ) {
+          const { events } = await handle.read(offset, 512)
+          if (!events.length) break
+          for (const event of events) {
+            if (event.type !== 'user/message') continue
+            const id = deliveryId(event.data)
+            if (id) state.ids.add(id)
+          }
+          offset += events.length
         }
-        offset += events.length
+      } finally {
+        await handle[Symbol.asyncDispose]()
       }
     })().catch(error => { state.loaded = undefined; throw error })
     await state.loaded
