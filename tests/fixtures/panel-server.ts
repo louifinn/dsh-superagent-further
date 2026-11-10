@@ -114,6 +114,10 @@ export interface PanelServer {
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
+  /** Failed file deliveries the overview shows as problems; each test may replace them. */
+  deliveryFailures: Omit<Extract<Problem, { kind: 'delivery-failure' }>, 'kind'>[]
+  /** Worker rows the Execution tab shows; each test may replace them. */
+  workers: ApiResponse<'GET workers'>['items']
   /** The reply queue summary the overview shows; each test may replace it. */
   outbox: NonNullable<ApiResponse<'GET overview'>>['outbox']
   /** The project Lead rows the overview shows; each test may replace them. */
@@ -224,7 +228,9 @@ const overviewView = (): ApiResponse<'GET overview'> => {
         && !name.startsWith('sync:') && name !== 'evals')
         .map(([name, item]) => ({ kind: 'runtime-error' as const, name, detail: item.detail })),
       ...Object.values(server.settings.policy.sources).some(part => part.allowed.length) ? [] : [{ kind: 'no-allowed' as const }],
-      ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
+      ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing })),
+      ...server.deliveryFailures.map(item => ({ kind: 'delivery-failure' as const, path: item.path, chat: item.chat,
+        reason: item.reason, at: item.at }))],
     person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
     outbox: server.outbox,
     projects: server.settings.executor.projects.map(({ id, name }) => ({ id, name })),
@@ -284,7 +290,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
@@ -513,6 +519,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
   'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },
+  'GET workers': { answer: () => ({ items: server.workers }) },
   'POST tickets/:id/retry': { answer: ({ params }) => {
     const ticket = ticketOf(params.id)
     if (!ticket) return refuse(404, 'Ticket not found')

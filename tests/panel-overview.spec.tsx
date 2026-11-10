@@ -246,6 +246,17 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
 })
 
+it('shows a failed file delivery with the Source\'s reason and where it was meant to go', async () => {
+  server.deliveryFailures = [{ path: 'docs/report.md', chat: '飞书团队群', reason: 'file exceeds the 20 MB upload limit',
+    at: '2026-11-11T00:00:00.000Z' }]
+  await mount()
+  expect(all('.dt-cards .dt-att-what').map(item => item.textContent)).toContain(zh.problemDeliveryFile.replace('{path}', 'docs/report.md'))
+  expect(text()).toContain('file exceeds the 20 MB upload limit')
+  expect(text()).toContain('飞书团队群')
+  await remount(en)
+  expect(all('.dt-cards .dt-att-what').map(item => item.textContent)).toContain(en.problemDeliveryFile.replace('{path}', 'docs/report.md'))
+})
+
 it('answers an open escalation from the overview with the required reply', async () => {
   server.escalations = [{ id: 'pr-1', title: '跨项目依赖升级', project: 'app', instruction: 'Upgrade the shared CLI in both projects.',
     createdAt: '2026-11-10T00:00:00.000Z', session: 'session-lead-app' }]

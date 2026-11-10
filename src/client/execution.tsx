@@ -4,13 +4,13 @@ import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import type { Project } from '../projects.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { Button, DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Tag, type TagTone } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
-import { localized } from './text.ts'
-import { ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './widgets.tsx'
+import { localized, valueLabel } from './text.ts'
+import { ClampText, ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead, When } from './widgets.tsx'
 
 export function ExecutionStatus({ filter: current, state, reload }: {
   filter: TicketFilter; state: StateView; reload: () => Promise<void>
@@ -48,7 +48,38 @@ export function ExecutionStatus({ filter: current, state, reload }: {
       ? <TicketLine key={ticket.id} ticket={ticket} question
         onChanged={reloadTickets} /> : <TicketLine key={ticket.id} ticket={ticket} />)}</ul> : <Hint>{t('none')}</Hint>)}
     {data?.next_offset != null && <LoadMore onMore={() => setLimit(limit + 20)} />}
+    <WorkerJobs />
   </>
+}
+
+const jobTone = (status: string): TagTone => status === 'running' ? 'info' : status === 'stopping' ? 'warning'
+  : status === 'completed' ? 'success' : 'danger'
+/** Each open Ticket's worker Session and its shell jobs: a job settled earlier, or one still writing output right now. */
+function WorkerJobs() {
+  const { t, call } = usePanel()
+  const { data, error } = usePoll(() => call('GET workers'), [])
+  return <Section title={t('workersTitle')} hint={t('workersHint')} count={data?.items.length}>
+    <LoadState error={error} loading={!data} />
+    {data && (data.items.length ? <ul className="dt-list">{data.items.map(worker => <li className="dt-row" key={worker.ticket}>
+      <div className="dt-row-main">
+        <div className="dt-att-what"><span className="dt-mono">{worker.session}</span>
+          <span className="dt-hint"> · {worker.title}</span></div>
+        <div className="dt-row-meta"><Tag tone="neutral">{worker.assignment ? valueLabel(t, 'assignment', worker.assignment)
+          : t('workersNoAssignment')}</Tag></div>
+      </div>
+      {worker.jobs.length ? <ul className="dt-list">{worker.jobs.map(job => <li className="dt-row" key={job.id}>
+        <div className="dt-row-main">
+          <div className="dt-att-what"><Tag tone={jobTone(job.status)}>{valueLabel(t, 'workerJobStatus', job.status)}</Tag>
+            <span className="dt-mono">{job.label}</span>
+            <span className="dt-hint"> · {job.kind} {job.id}</span></div>
+          <div className="dt-row-meta">{job.endedAt ? <span className="dt-hint"><When at={job.endedAt} /></span>
+            : job.startedAt ? <span className="dt-hint"><When at={job.startedAt} /></span> : null}
+            {job.detail && <span className="dt-hint">{job.detail}</span>}</div>
+        </div>
+        {job.preview ? <ClampText text={job.preview} /> : null}
+      </li>)}</ul> : <Hint>{t('workersNoJobs')}</Hint>}
+    </li>)}</ul> : <Hint>{t('workersEmpty')}</Hint>)}
+  </Section>
 }
 
 const firstSentence = (text: string): string => /^[^。；;.]*(?:[。；;]|\.(?=\s|$))?/.exec(text)?.[0] ?? text

@@ -27,7 +27,7 @@ import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
 import { Store } from './store.ts'
-import { evalsHealth, type LeadRow } from './views/overview.ts'
+import { evalsHealth, type DeliveryFailure, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { captureLogs, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
 import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
@@ -67,6 +67,8 @@ const now = (): string => new Date().toISOString()
 const WATCHDOG_MS = 60_000
 /** How long a worker Session may stay idle on a running Assignment before the watchdog raises the Ticket's attention. */
 const STALLED_MS = 10 * 60_000
+/** How many recent file-delivery failures Overview keeps, newest last, until the ring drops them. */
+const DELIVERY_FAILURES = 20
 
 /**
  * DSH's session-ownership failure, said as the operator's action: which state directory another host holds, and how to
@@ -116,6 +118,8 @@ export class Runtime extends Service implements SourceHost {
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** The stalled Assignments the watchdog reported, by Ticket: the Assignment, its attention, and the Report that raised it. */
   private readonly stalled = new Map<string, { assignmentId: string; attentionId?: string; reportAt: string }>()
+  /** Recent file-delivery failures, newest last and bounded, shown by Overview until the ring drops them. */
+  private readonly deliveries: DeliveryFailure[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
   constructor(ctx: Context, readonly machine: Machine, restart: () => void,
@@ -388,11 +392,23 @@ export class Runtime extends Service implements SourceHost {
     } else throw new Error('Name a Trigger or a chat to deliver the file to')
     const kind = this.sources.kind(source)
     if (kind?.sendFile === undefined) throw new Error(`The ${source} Source cannot deliver files`)
-    const file = await localFile(project.workspace, request.path)
-    const idempotencyKey = `dsh-file-${key(chatId, file.directory, file.name, String(file.size), String(file.mtimeMs))}`
-    const result = await kind.sendFile(this, { chatId, directory: file.directory, name: file.name, idempotencyKey })
-    return { source, chatId, messageId: result.messageId }
+    try {
+      const file = await localFile(project.workspace, request.path)
+      const idempotencyKey = `dsh-file-${key(chatId, file.directory, file.name, String(file.size), String(file.mtimeMs))}`
+      const result = await kind.sendFile(this, { chatId, directory: file.directory, name: file.name, idempotencyKey })
+      return { source, chatId, messageId: result.messageId }
+    } catch (error) {
+      // Keep the reason whole: the tool response quotes it, Overview shows it, and the panel's Logs tab keeps the warning.
+      const reason = error instanceof Error ? error.message : String(error)
+      const failure = `Could not deliver ${request.path} to chat ${chatId} through ${source}: ${reason}`
+      this.deliveries.push({ path: request.path, chat: chatId, reason, at: now() })
+      if (this.deliveries.length > DELIVERY_FAILURES) this.deliveries.splice(0, this.deliveries.length - DELIVERY_FAILURES)
+      this.log.warn('%s', failure)
+      throw new Error(failure, { cause: error })
+    }
   }
+  /** The recent file-delivery failures, newest last; Overview turns each into a problem row. */
+  deliveryFailures(): readonly DeliveryFailure[] { return this.deliveries }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }
   configured(): boolean { return this.setup.configured() }
@@ -591,6 +607,7 @@ export class Runtime extends Service implements SourceHost {
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
       leadOverview: () => runtime.leadOverview(),
+      deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },

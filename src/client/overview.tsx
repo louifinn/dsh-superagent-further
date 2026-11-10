@@ -53,6 +53,8 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
         <Button variant="outline" size="sm" icon={<Icon name="dismiss" size={14} />} disabled={post.busy}
           onClick={() => { void post.run(() => call('POST decisions/:id/dismiss', { id: problem.decisionId })) }}>{t('dismiss')}</Button>
       </>)
+    case 'delivery-failure': return row(t('problemDeliveryFile', { path: problem.path }), raw(problem.reason), undefined,
+      t('problemDeliveryChat', { chat: problem.chat, at: when(problem.at, t('lang')) }))
     case 'outgoing': return row(t('problemReply', { source: valueLabel(t, 'source', problem.outgoing.channel.source),
       attempts: problem.outgoing.attempts }),
       raw(problem.outgoing.error), undefined)

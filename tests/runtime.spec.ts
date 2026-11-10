@@ -38,7 +38,7 @@ import { executorLoad, ticketDetail, ticketList } from '../src/app/views/tickets
 
 let runtime: Runtime
 const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
-const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem)
+const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem, [], value.deliveryFailures())
 let directory: string
 let controller: { create: ReturnType<typeof vi.fn>; selectModel: ReturnType<typeof vi.fn>; resolveAgent: ReturnType<typeof vi.fn>; rename: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn>; inspect: ReturnType<typeof vi.fn> }
 type RegisteredTool = { name: string; output: { render: (args: unknown, result: unknown) => unknown }; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
@@ -2065,6 +2065,9 @@ it('wakes a worker through its Lead when a job settles as its turn ends, and kee
   // The job settles while the turn still runs; DSH would only inject its notice, which the turn may end before taking.
   subagents.sendMessage.mockClear()
   jobs.output(job, 'all tests passed')
+  // While the job still runs, the panel already sees it and the output written so far.
+  expect(runtime.executor.jobsSnapshot().get(ticket.id)?.[0]).toMatchObject({ id: job, status: 'running', preview: 'all tests passed',
+    startedAt: expect.any(String) })
   jobs.end(job)
   await vi.waitFor(() => expect(subagents.sendMessage).toHaveBeenCalledTimes(1))
   // The wake names the job and tells the worker to read it with job_output, the path its Lead-hosted Session accepts.
@@ -2080,6 +2083,21 @@ it('wakes a worker through its Lead when a job settles as its turn ends, and kee
   jobs.settle(job)
   await runtime.idle()
   expect(subagents.sendMessage).toHaveBeenCalledTimes(1)
+})
+
+it('keeps the reason of a failed file delivery in its error, the Logs tab, and the Overview problems', async () => {
+  const project = runtime.store.settings().executor.projects.find(item => item.id === 'default')!
+  writeFileSync(join(project.workspace, 'report.md'), 'report body')
+  vi.mocked(Commands.prototype.lark).mockRejectedValueOnce(new Error('file exceeds the 20 MB upload limit'))
+  await expect(runtime.sendFile({ project: 'default', path: 'report.md', chatId: CHAT }))
+    .rejects.toThrow('Could not deliver report.md to chat oc_team through feishu: file exceeds the 20 MB upload limit')
+  const at = expect.any(String)
+  expect(runtime.deliveryFailures()).toEqual([{ path: 'report.md', chat: CHAT, reason: 'file exceeds the 20 MB upload limit', at }])
+  expect(runtime.logs.list({ level: 'warn' })).toEqual([expect.objectContaining({ level: 'warn', message:
+    'Could not deliver report.md to chat oc_team through feishu: file exceeds the 20 MB upload limit' })])
+  // Overview turns the failure into a problem a person can read without opening the log.
+  expect(overviewOf(runtime).problems).toContainEqual({ kind: 'delivery-failure', path: 'report.md', chat: CHAT,
+    reason: 'file exceeds the 20 MB upload limit', at })
 })
 
 it('raises attention once for a running Assignment whose worker Session stays idle, and clears it on a new report', async () => {

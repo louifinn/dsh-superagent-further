@@ -42,6 +42,22 @@ it('decides an escalated project request from the panel through one runtime path
   expect(await call('POST', 'escalations/pr-1/decide', { decision: 'reject', reply: '' })).toMatchObject({ status: 400 })
 })
 
+it('lists each open Ticket worker with its Assignment state and shell jobs for the panel', async () => {
+  const jobs = new Map([['t7', [{ id: 'bash-1', kind: 'bash', label: 'pnpm test', status: 'running', preview: '2 failed', total: 9,
+    startedAt: '2026-11-11T00:00:00.000Z' }]]])
+  const call = serve({
+    store: { tickets: { open: () => [{ id: 't7', title: 'Fix login', assignments: [{ id: 'a7', state: 'running' }] },
+      { id: 't8', title: 'Already ended', assignments: [{ id: 'a8b', state: 'ended' }] }] } },
+    executor: { activeCount: () => 1, jobsSnapshot: () => jobs },
+  })
+  expect(await call('GET', 'workers')).toEqual({ status: 200, body: { items: [
+    { ticket: 't7', title: 'Fix login', session: 'worker-t7', assignment: 'running', assignmentId: 'a7',
+      jobs: [{ id: 'bash-1', kind: 'bash', label: 'pnpm test', status: 'running', preview: '2 failed', total: 9,
+        startedAt: '2026-11-11T00:00:00.000Z' }] },
+    { ticket: 't8', title: 'Already ended', session: 'worker-t8', assignment: 'ended', assignmentId: 'a8b', jobs: [] },
+  ] } })
+})
+
 it('answers each kind of failure with its own status', async () => {
   const saves: unknown[] = []
   const call = serve({

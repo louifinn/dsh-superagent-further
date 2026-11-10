@@ -16,15 +16,15 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, SettingsRevisionNotFound, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
-import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
+import { UserError, latestAssignment, runningAssignment, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
-import type { DshExecutor } from '../executor/dsh.ts'
+import { workerSessionId, type DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
 import type { EscalationDecisionInput, EscalationDecisionResult } from './escalations.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
-import type { LeadRow } from './views/overview.ts'
+import type { LeadRow, DeliveryFailure } from './views/overview.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
@@ -50,9 +50,11 @@ export interface HttpHost {
   readonly engine: EngineForPeople
   /** Decide one escalated project request and deliver its mandatory reply to the Lead. */
   decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult>
-  readonly executor: Pick<DshExecutor, 'activeCount'>
+  readonly executor: Pick<DshExecutor, 'activeCount' | 'jobsSnapshot'>
   /** One row per registered project: its Lead Session, and the executors and messages it holds. */
   leadOverview(): LeadRow[]
+  /** File deliveries that failed since startup, newest last; Overview shows each as a problem. */
+  deliveryFailures(): readonly DeliveryFailure[]
   /** The plugin's automation tasks; absent when the Host's `schedule` service is not installed. */
   readonly automations?: Automations
   readonly health: Record<string, Health>
@@ -169,6 +171,19 @@ function ticketPage(runtime: HttpHost, id: string) {
   return { ...detail, environment: runtime.configured() ? runtime.ticketEnvironment(ticket) : [] }
 }
 export type TicketPageView = ReturnType<typeof ticketPage>
+/**
+ * The Execution tab's Workers block: each open Ticket's worker Session, its current Assignment state, and the shell jobs it
+ * settled or still runs with their output preview. A live job is observed through `DshExecutor.jobsSnapshot`, never waited on.
+ */
+function workersPage(runtime: HttpHost) {
+  const jobs = runtime.executor.jobsSnapshot()
+  return { items: runtime.store.tickets.open().map(ticket => {
+    const assignment = runningAssignment(ticket) ?? latestAssignment(ticket)
+    return { ticket: ticket.id, title: ticket.title, session: workerSessionId(ticket.id), assignment: assignment?.state ?? null,
+      assignmentId: assignment?.id ?? null, jobs: jobs.get(ticket.id) ?? [] }
+  }) }
+}
+export type WorkersView = ReturnType<typeof workersPage>
 function promptsView(runtime: HttpHost, revision: number | undefined, offset: number) {
   const current = runtime.prompts.current()
   const shown = revision === undefined || revision === current.revision ? current : runtime.prompts.version(revision)
@@ -210,7 +225,8 @@ function routes(runtime: HttpHost): Routes {
   return {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
-      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.leadOverview()),
+      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.leadOverview(),
+      runtime.deliveryFailures()),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
@@ -256,6 +272,7 @@ function routes(runtime: HttpHost): Routes {
       return ticketList(views(runtime), state, offset, limit)
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
+    'GET workers': () => workersPage(runtime),
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
