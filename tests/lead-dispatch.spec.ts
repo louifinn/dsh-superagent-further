@@ -1,6 +1,9 @@
-/** Starting an executor as a subagent of a project's Lead Session: the request, and the activations a host keeps. */
+/** Starting an executor as a subagent of a project's Lead Session: the request, the activations a host keeps, and the notices it writes. */
 import { describe, expect, it, vi } from 'vitest'
 import { executorActivation, LEAD_PROVIDER, LeadActivations, type Activation, type ActivationSpec, type SubagentService } from '../src/executor/lead-dispatch.ts'
+import { LeadDispatch, type LeadDispatchHost } from '../src/app/lead-dispatch.ts'
+import type { LeadMessage } from '../src/app/lead-messages.ts'
+import type { Assignment, Ticket } from '../src/core/index.ts'
 import { ExecutorConfigSchema } from '../src/policy.ts'
 
 const signal = new AbortController().signal
@@ -104,6 +107,52 @@ describe('the activations a host keeps', () => {
     expect(one).toHaveBeenCalledTimes(1)
     expect(two).toHaveBeenCalledTimes(1)
     expect(leads.size).toBe(0)
+  })
+})
+
+describe('the stalled-Assignment notice', () => {
+  it('writes one durable notice per Assignment and asks the Lead to inspect or stop the work', async () => {
+    const messages: LeadMessage[] = []
+    let sequence = 0
+    const leads = {
+      send: vi.fn((input: Omit<LeadMessage, 'id' | 'at'>) => {
+        const record = { ...input, id: `message-${++sequence}`, at: '2026-01-01T00:00:00.000Z' } as LeadMessage
+        messages.push(record)
+        return record
+      }),
+      getByRequest: vi.fn((recipient: string, requestId: string) =>
+        messages.find(message => message.to === recipient && message.requestId === requestId)),
+      deliver: vi.fn(),
+    }
+    const host = {
+      store: {
+        leads,
+        settings: () => ({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/w', repository: '', branch: '' }] } }),
+      },
+      engine: () => ({}),
+      ensureLead: vi.fn(async () => 'lead-app'),
+      prompt: vi.fn(async () => {}),
+      notify: vi.fn(),
+    } as unknown as LeadDispatchHost
+    const dispatch = new LeadDispatch(host)
+    const ticket = { id: 't1', title: 'Fix the header', project: 'app' } as Ticket
+    const assignment = { id: 'a1', state: 'running', createdAt: '2026-01-01T00:00:00.000Z',
+      report: { state: 'waiting', summary: 'waiting for CI', at: '2026-01-01T00:00:00.000Z' } } as Assignment
+    await dispatch.stalled(ticket, assignment, '2026-01-01T00:00:00.000Z')
+    await dispatch.stalled(ticket, assignment, '2026-01-01T00:00:00.000Z')
+    expect(leads.send).toHaveBeenCalledTimes(1)
+    expect(leads.send).toHaveBeenCalledWith(expect.objectContaining({ project: 'app', kind: 'notice', from: 'orchestrator', to: 'lead',
+      requestId: 'stalled:t1:a1', ticketId: 't1' }))
+    expect(host.ensureLead).toHaveBeenCalledWith(expect.objectContaining({ id: 'app' }))
+    const body = leads.send.mock.calls[0]![0].body
+    expect(body).toContain('worker-t1')
+    expect(body).toContain('2026-01-01T00:00:00.000Z')
+    expect(body).toContain('waiting for CI')
+    expect(body).toContain('lead_notify_worker')
+    expect(body).toContain('Orchestrator')
+    expect(host.prompt).toHaveBeenCalledTimes(1)
+    expect(host.prompt).toHaveBeenCalledWith('lead-app', 'stalled:t1:a1', body)
+    expect(leads.deliver).toHaveBeenCalledWith('message-1')
   })
 })
 

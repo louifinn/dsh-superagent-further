@@ -7,7 +7,7 @@
  * bounds the attempts without in-memory state. After two reminders a request is marked `needs-attention` in the
  * Store, visible to the panel and to the Orchestrator; it is never silently dropped.
  */
-import { key, projectRequestOpen, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
+import { key, projectRequestOpen, type Assignment, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
 import type { LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
 import type { Store } from './store.ts'
@@ -102,6 +102,35 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s pull request ended`, error)
+    }
+  }
+
+  /**
+   * Tells the project's Lead that a running Assignment has stalled: its worker Session stayed idle past the Runtime's
+   * threshold without a new Report. The Runtime already wrote the waiting Report that raises the Ticket's attention; this
+   * durable notice asks the Lead to inspect the Session and either nudge it or end the work. One notice per Assignment,
+   * also when the threshold is crossed again in another process, because the Lead message's request id deduplicates it.
+   */
+  async stalled(ticket: Ticket, assignment: Assignment, idleSince: string): Promise<void> {
+    if (ticket.project === undefined || ticket.project === '') return
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = `stalled:${ticket.id}:${assignment.id}`
+    if (this.host.store.leads.getByRequest('lead', requestId)) return
+    const worker = `worker-${ticket.id}`
+    const last = assignment.report ? ` Its last Report was ${assignment.report.state}: ${assignment.report.summary}` : ' It has not reported yet.'
+    const body = `Ticket ${ticket.id} "${ticket.title}" in project ${project.id} has Assignment ${assignment.id} running, but its worker Session `
+      + `${worker} has been idle since ${idleSince}.${last}\n`
+      + `Inspect the Session and its latest status. Use the lead_notify_worker tool to ask ${worker} to continue or to report; `
+      + 'or tell the Orchestrator to stop the Ticket if the work should end. Do not start new work for this Ticket yourself.'
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = this.host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
+        requestId, ticketId: ticket.id, body })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s Assignment ${assignment.id} stalled`, error)
     }
   }
 

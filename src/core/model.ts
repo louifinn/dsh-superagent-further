@@ -231,6 +231,19 @@ export interface ReportCheck {
   /** A short line of evidence, such as the key output or the test count. */
   evidence?: string
 }
+/** A background job that settled while an Assignment ran, kept for the panel and for a later review of its result. */
+export interface JobSnapshot {
+  id: string
+  kind: string
+  label: string
+  status: string
+  /** The tail of the job's retained output, read without taking the worker's cursor: empty when nothing was retained. */
+  preview: string
+  /** The job's retained output size in bytes when it settled. */
+  total: number
+  /** When it settled, ISO 8601. */
+  endedAt: string
+}
 /** Binding between a ticket and one executor instance. */
 export interface Assignment {
   id: string
@@ -241,6 +254,8 @@ export interface Assignment {
   endedReason?: string
   /** The worker's last report; pullRequest is the pull request a change deliverable opened, the delivery pointer its ending needs. */
   report?: { state: ReportState; summary: string; at: string; pullRequest?: string; checks?: readonly ReportCheck[] }
+  /** The shell jobs that settled while this Assignment ran, newest last; the panel shows them and a review reads a late result. */
+  jobs?: readonly JobSnapshot[]
   /** When Inputs last reached the worker; one at or after `report.at` means the worker has been busy with Inputs since that report. */
   deliveredAt?: string
   /**
