@@ -27,7 +27,7 @@ it('saves team sections and skills as versions that survive a restart, with hist
   try {
     let prompts = promptsOf(store)
     expect(prompts.current().config).toEqual(defaultPrompts())
-    const config = { ...defaultPrompts(), scope: 'Finish what was asked.', delivery: '', skills: { release: 'Tag releases on Fridays.' } }
+    const config = { ...defaultPrompts(), scope: 'Finish what was asked.', delivery: '', skills: { notes: 'Rotate the on-call notes.' } }
     prompts.save(config, 0, 'panel')
     expect(composePrompt(prompts.current().config, 'worker')).toContain('## Ticket scope\nFinish what was asked.')
     // An empty team section leaves the prompt; the fixed sections stay.
@@ -39,7 +39,7 @@ it('saves team sections and skills as versions that survive a restart, with hist
     expect(prompts.current()).toMatchObject({ revision: 2, previousRevision: 1, config: defaultPrompts() })
     expect(prompts.history(0, 1)).toMatchObject({ revisions: [{ revision: 2 }], next_offset: 1 })
     expect(prompts.history(2, 1).next_offset).toBeNull()
-    expect(prompts.history(1, 1).revisions[0]).toMatchObject({ revision: 1, changed: ['scope', 'delivery', 'skill/release'] })
+    expect(prompts.history(1, 1).revisions[0]).toMatchObject({ revision: 1, changed: ['scope', 'delivery', 'skill/notes'] })
     expect(() => prompts.save(config, 1, 'panel')).toThrow('version changed')
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }) }
 })
@@ -127,12 +127,12 @@ it('lists a ticket\'s execution environment in its prompt, and says setup is inc
 
 it('registers the built-in Source skills, Feishu only with a Feishu bot, before the team skills', () => {
   withStore(store => {
-    const config = { ...defaultPrompts(), skills: { release: 'Tag releases.' } }
+    const config = { ...defaultPrompts(), skills: { notes: 'Rotate the on-call notes.' } }
     const skills = promptsOf(store).skills(config)
-    expect(skills.map(([name]) => name)).toEqual(['feishu', 'github', 'release'])
+    expect(skills.map(([name]) => name)).toEqual(['feishu', 'github', 'triage', 'release', 'project-request', 'notes'])
     expect(skills[1]![1]).toContain('## CLI usage')
-    expect(skills[2]![1]).toBe('Tag releases.')
-    expect(new Prompts(store, () => 100000, variables, () => false).skills(config).map(([name]) => name)).toEqual(['github', 'release'])
+    expect(skills[5]![1]).toBe('Rotate the on-call notes.')
+    expect(new Prompts(store, () => 100000, variables, () => false).skills(config).map(([name]) => name)).toEqual(['github', 'triage', 'release', 'project-request', 'notes'])
   })
 })
 

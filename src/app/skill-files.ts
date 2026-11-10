@@ -25,7 +25,11 @@ function load(name: string) {
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
 }
-export const bundledSkills = { feishu: load('feishu'), github: load('github') }
+/** Operational skills always available to the plugin's Sessions, beyond the two Source skills. */
+export const OPERATIONAL_SKILLS = ['triage', 'release', 'project-request'] as const
+export type OperationalSkill = typeof OPERATIONAL_SKILLS[number]
+export const bundledSkills = { feishu: load('feishu'), github: load('github'), triage: load('triage'), release: load('release'),
+  'project-request': load('project-request') }
 /**
  * Loads a built-in prompt file (`prompts/<name>.md`). Source `.md` files are written one sentence per line for
  * readable diffs; `promptFile` joins lines within each paragraph with spaces while keeping blank-line paragraph breaks.

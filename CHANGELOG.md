@@ -8,6 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Three operational skills ship with the plugin — triage, release and project requests — registered for every Session and protected from a same-named custom skill.
+
+
+### Added
+
 - Project requests (schema 21): `request_create` lets a worker raise a durable project request when its Ticket needs a
   decision, a new deliverable or another project's work, and its completion report names the requests it leaves open
   in `requests`. Project requests bypass the admission gate and grant no wider authority than the Lead already owns.

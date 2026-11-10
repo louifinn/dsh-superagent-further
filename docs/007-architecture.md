@@ -321,7 +321,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 - Runtime sends `pullEndNotices` for merged or closed Tickets.
 - Executor tools bind reported pull requests with `readPull` and `claimPull`, using the GitHub context exposed by Runtime.
 - MasterAssessor reads repository files with `readRepositoryPath`.
-- Sessions and Prompts register built-in skills only for GitHub and Feishu. Migration converts their schema-10 records.
+- Sessions and Prompts register built-in skills for GitHub, Feishu and the three operational workflows (triage, release, project requests). Migration converts their schema-10 records.
 - Setup probes only GitHub and Feishu account fields (`SETUP_FIELDS`). Only those Sources receive account setup problems through `SourceContext.problem`.
 
 
@@ -537,6 +537,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/panel-setup-wizard.spec.tsx` | The setup wizard: opening by itself on a first run once per browser session, the header entry, a skip recorded on the server, registering the first project, moving back and skipping steps, the Feishu switch, and the default language save |
 | `tests/draft.spec.ts`, `tests/prompt-config.spec.ts`, `tests/markdown.spec.ts`, `tests/marks.spec.ts` | Draft states, merges and the save bar's line; the prompt configuration by section and the line diff; the Markdown subset and its links; the mark of every state the views classify |
 | `tests/locales.spec.ts`, `tests/styles.spec.ts` | The copy in both languages, the stylesheet |
+| `tests/skill-files.spec.ts` | The bundled operational skills: each packaged `SKILL.md` loads with its frontmatter name and description, composes from the bundle rather than an editable team skill, and a custom skill keeps its own text |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 

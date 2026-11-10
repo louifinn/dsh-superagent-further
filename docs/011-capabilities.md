@@ -942,3 +942,9 @@ run and delete on 2026-11-09; both landed in Sprint 19 without a schema change.
   local same-origin surface ([005 Panel](005-panel.md)).
 - Reloading a running Session's model when `eval.model` / `executor.model` changes; this proposal
   documents the deferred semantics instead.
+
+## Part J — Operational skills and usage visibility (approved 2026-11-10, Sprint 30)
+
+The workflows this fork documents are now packaged as skills, not only prose: `triage` (classify an Issue or pull request and move only labels the repository already has through `orchestrator_label`), `release` (the release checklist: local check, counts, changelog, tag, workflow, asset, rebuild and hot reload) and `project-request` (worker `request_create`, Lead decision, Lead escalation, independent-Session `superagent_submit`, installation `orchestrator_request_create`, architecture approval). All three register for every Session from the package; a team cannot replace them by naming a custom skill the same, while the two Source skills keep their existing Feishu-only and GitHub behavior.
+
+Usage visibility (tokens and cost per Session or Ticket) is deferred. The Host exposes a model catalog but no accounting of usage, so the panel would have to invent a number; it stays out until the Host exposes it. This is the only item of the approved P1 list that is not implemented.

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { UserError, key } from '../core/index.ts'
 import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
 import { leadPrompt, masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
+import { OPERATIONAL_SKILLS, bundledSkills, type OperationalSkill } from './skill-files.ts'
 import { environmentLines, type Variable } from './execution-environment.ts'
 import { promptsNotice } from './notices.ts'
 import type { Project } from '../projects.ts'
@@ -19,7 +20,8 @@ const TEAM_HEADINGS: Record<TeamSection, string> = { communication: 'Communicati
 export const SKILL_NAME = /^[a-z][a-z0-9-]*$/
 /** Prefix prepended to skill names when registering them in DSH Sessions. */
 export const SKILL_PREFIX = 'dsh-superagent-further-'
-const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.keys(sourceSkills) as string[]).includes(name),
+const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.keys(sourceSkills) as string[]).includes(name)
+  && !(OPERATIONAL_SKILLS as readonly string[]).includes(name),
   'This name belongs to a built-in skill')
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/lead', 'runtime/subscriptions', 'runtime/replies',
@@ -119,6 +121,7 @@ export function composePrompt(config: PromptConfig, role: Role, environment?: st
   return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
 }
 export function composeSkill(config: PromptConfig, name: string): string {
+  if ((OPERATIONAL_SKILLS as readonly string[]).includes(name)) return bundledSkills[name as OperationalSkill].content
   return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
 }
 /**
@@ -162,7 +165,8 @@ export class Prompts {
   }
   /** Returns skills to register in every Session: built-in Source skills (`feishu` only when a Feishu bot is configured) followed by team skills. */
   skills(config: PromptConfig): [string, string][] {
-    return [...this.feishu() ? ['feishu'] : [], 'github', ...Object.keys(config.skills)].map(name => [name, composeSkill(config, name)])
+    return [...this.feishu() ? ['feishu'] : [], 'github', ...OPERATIONAL_SKILLS, ...Object.keys(config.skills)]
+      .map(name => [name, composeSkill(config, name)])
   }
   current(): PromptVersion {
     const revision = this.versions.revision()
