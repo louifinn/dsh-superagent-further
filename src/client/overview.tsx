@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import { usePoll, type Problem } from './api.ts'
-import { Button, Icon } from './controls.tsx'
+import { Button, Icon, Input } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
@@ -78,6 +78,37 @@ function RequestEntry({ request }: { request: ApiResponse<'GET overview'>['reque
   </li>
 }
 
+/**
+ * One open escalation with its reply and the three decisions the Orchestrator can make from here. Accept starts
+ * one Ticket in the escalating project; work that belongs to other units is accepted with orchestrator_escalation_decide.
+ */
+function EscalationEntry({ item, onChanged }: { item: ApiResponse<'GET overview'>['escalations'][number]; onChanged: () => Promise<void> }) {
+  const { t, call } = usePanel()
+  const [reply, setReply] = useState('')
+  const action = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
+  const decide = (decision: 'accept' | 'reject' | 'needs-info') => action.run(async () => {
+    await call('POST escalations/:id/decide', { id: item.id, body: { decision, reply,
+      ...decision === 'accept' ? { units: [{ project: item.project, title: item.title }] } : {} } })
+    setReply('')
+  })
+  return <li className="dt-row" data-escalation={item.id}>
+    <div className="dt-row-main">
+      <div className="dt-att-what">{item.title}</div>
+      <div className="dt-row-meta">
+        <LabelValue label={t('escalationProjectLabel')} value={item.project} />
+        <LabelValue label={t('escalationRaisedLabel')} value={when(item.createdAt, t('lang'))} />
+      </div>
+      <p className="dt-hint">{item.instruction}</p>
+      <div className="dt-row-meta dt-row-buttons">
+        <Input value={reply} placeholder={t('escalationReplyPlaceholder')} aria-label={t('escalationReplyPlaceholder')}
+          onChange={event => setReply(event.target.value)} />
+        <Button size="sm" disabled={!reply.trim()} onClick={() => decide('accept')}>{t('escalationAccept')}</Button>
+        <Button size="sm" variant="outline" disabled={!reply.trim()} onClick={() => decide('reject')}>{t('escalationReject')}</Button>
+        <Button size="sm" variant="outline" disabled={!reply.trim()} onClick={() => decide('needs-info')}>{t('escalationNeedsInfo')}</Button>
+      </div>
+    </div>
+  </li>
+}
 export function OverviewPage() {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
@@ -131,18 +162,9 @@ export function OverviewPage() {
     {data.requests.length > 0 && <Section title={t('requestsTitle')} count={data.requests.length}>
       <ul className="dt-list">{data.requests.map(request => <RequestEntry key={request.id} request={request} />)}</ul>
     </Section>}
-    {/* Open escalations wait for the Orchestrator, which decides them from the main Session. */}
+    {/* Open escalations wait for the Orchestrator. It can answer them here, or accept the work into the escalating project's own Ticket from the main Session when the units differ. */}
     {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
-      <ul className="dt-list">{data.escalations.map(item => <li key={item.id} className="dt-row" data-escalation={item.id}>
-        <div className="dt-row-main">
-          <div className="dt-att-what">{item.title}</div>
-          <div className="dt-row-meta">
-            <LabelValue label={t('escalationProjectLabel')} value={item.project} />
-            <LabelValue label={t('escalationRaisedLabel')} value={when(item.createdAt, t('lang'))} />
-          </div>
-          <p className="dt-hint">{item.instruction}</p>
-        </div>
-      </li>)}</ul>
+      <ul className="dt-list">{data.escalations.map(item => <EscalationEntry key={item.id} item={item} onChanged={reload} />)}</ul>
     </Section>}
     {/* Automation records that lost their Host task or failed delivery; the Automations page has their history. */}
     {data.automationAttention.count > 0 && <Section title={t('automationAttentionTitle')} count={data.automationAttention.count}

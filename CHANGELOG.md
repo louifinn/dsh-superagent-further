@@ -8,6 +8,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Escalations can be decided from the Overview with their required reply; the panel and the main Session share the same decision path and Lead delivery.
+
 - Three operational skills ship with the plugin — triage, release and project requests — registered for every Session and protected from a same-named custom skill.
 
 

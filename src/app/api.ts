@@ -8,6 +8,7 @@ import type { HistoryView } from './settings-history.ts'
 import type { MemorySort } from '../memory.ts'
 import type { AutomationCreateInput, AutomationSummary, AutomationUpdate } from './automations.ts'
 import type { AutomationsView } from './views/automations.ts'
+import type { EscalationDecisionResult } from './escalations.ts'
 import type { LogFilter, LogsView } from './logs.ts'
 import type { MemoriesView } from './views/memories.ts'
 import type { OverviewView } from './views/overview.ts'
@@ -73,6 +74,9 @@ export interface Api {
   'PUT automations/:id': { body: AutomationUpdate; response: AutomationSummary }
   'POST automations/:id/run': { response: { ran: true; automation: AutomationSummary } }
   'DELETE automations/:id': { response: { id: string; deleted: true } }
+  /** Decide one escalated project request from the Overview; its mandatory reply reaches the Lead. */
+  'POST escalations/:id/decide': { body: { decision: 'accept' | 'reject' | 'needs-info'; reply: string
+    ; units?: { project: string; title?: string; after?: number[] }[]; deliverable?: 'change' | 'answer' }; response: EscalationDecisionResult }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

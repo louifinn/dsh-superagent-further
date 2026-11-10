@@ -26,6 +26,22 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
   }
 }
 
+it('decides an escalated project request from the panel through one runtime path', async () => {
+  const decisions: unknown[] = []
+  const call = serve({
+    store: { settings: () => ({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/w/app', repository: 'acme/app', branch: '' }] } }) },
+    decideEscalation: async (input: unknown) => { decisions.push(input); return { id: 'pr-1', project: 'app', status: 'rejected',
+      replies: [{ by: 'orchestrator', at: '2026-11-10T00:00:00.000Z', text: 'No.' }], tickets: [], reply_delivered: true } },
+  })
+  const done = await call('POST', 'escalations/pr-1/decide', { decision: 'reject', reply: 'No.' })
+  expect(done).toMatchObject({ status: 200, body: { id: 'pr-1', status: 'rejected', reply_delivered: true } })
+  expect(decisions).toEqual([{ decision: 'reject', reply: 'No.', id: 'pr-1' }])
+  // The boundary rules hold where the panel enters: accept needs units, every unit names a registered project, and a reply is required.
+  expect(await call('POST', 'escalations/pr-1/decide', { decision: 'accept', reply: 'Yes.' })).toMatchObject({ status: 400 })
+  expect(await call('POST', 'escalations/pr-1/decide', { decision: 'accept', reply: 'Yes.', units: [{ project: 'other' }] })).toMatchObject({ status: 400 })
+  expect(await call('POST', 'escalations/pr-1/decide', { decision: 'reject', reply: '' })).toMatchObject({ status: 400 })
+})
+
 it('answers each kind of failure with its own status', async () => {
   const saves: unknown[] = []
   const call = serve({

@@ -17,6 +17,7 @@ import type { Store } from '../store.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 import { automationTools } from './automation.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../../sources/kind.ts'
+import { decideEscalation } from '../escalations.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -434,24 +435,9 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         for (const [index, unit] of (args.deliverables ?? []).entries()) {
           if (!host.projects().some(item => item.id === unit.project)) throw new Error(`Deliverable ${index}: project ${unit.project} is not registered`)
         }
-        const request = host.engine.decideEscalation(args.id, { by: 'orchestrator', action: args.decision, text: args.reply },
-          { units: (args.deliverables ?? []).map(unit => ({ project: unit.project, ...unit.title ? { title: unit.title } : {},
-            ...unit.after?.length ? { after: unit.after } : {} })), ...args.deliverable ? { deliverable: args.deliverable } : {} })
-        let delivered = false
-        try {
-          const project = host.store.settings().executor.projects.find(item => item.id === request.project)
-          if (project) {
-            const body = `Your escalated project request ${request.id} was ${args.decision}: ${args.reply}`
-            const message = host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
-              requestId: `escalation-result:${request.id}`, body })
-            const session = await host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
-            await host.sessions.prompt(session.id, message.requestId, message.body, 'queue')
-            host.store.leads.deliver(message.id)
-            delivered = true
-          }
-        } catch { delivered = false }
-        return { id: request.id, project: request.project, status: request.status, replies: request.replies,
-          ...request.request_id ? { request_id: request.request_id } : {}, tickets: request.tickets, reply_delivered: delivered }
+        return decideEscalation(host.engine, host.store, host.sessions, { id: args.id, decision: args.decision, reply: args.reply,
+          units: (args.deliverables ?? []).map(unit => ({ project: unit.project, ...unit.title ? { title: unit.title } : {},
+            ...unit.after?.length ? { after: unit.after } : {} })), ...args.deliverable === undefined ? {} : { deliverable: args.deliverable } })
       },
     }),
     tool({

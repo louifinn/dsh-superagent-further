@@ -20,6 +20,7 @@ import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
+import type { EscalationDecisionInput, EscalationDecisionResult } from './escalations.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
@@ -47,6 +48,8 @@ export interface HttpHost {
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
   readonly settings: Pick<Settings, 'view' | 'save' | 'restore' | 'pause' | 'sync' | 'refreshLabels' | 'proposals' | 'proposal' | 'applyProposal' | 'rejectProposal'>
   readonly engine: EngineForPeople
+  /** Decide one escalated project request and deliver its mandatory reply to the Lead. */
+  decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult>
   readonly executor: Pick<DshExecutor, 'activeCount'>
   /** One row per registered project: its Lead Session, and the executors and messages it holds. */
   leadOverview(): LeadRow[]
@@ -288,6 +291,21 @@ function routes(runtime: HttpHost): Routes {
     'GET models': () => runtime.models(),
     'GET memories': ({ query }) => { const { q, project, sort, offset, limit } = MemoriesQuery.parse(query);
       return memoriesView(store, { query: q, project, sort, offset, limit }) },
+    'POST escalations/:id/decide': async ({ params, body }) => {
+      const input = z.object({
+        decision: z.enum(['accept', 'reject', 'needs-info']),
+        reply: z.string().trim().min(1).max(8000),
+        units: z.array(z.object({ project: z.string().trim().min(1).max(40), title: z.string().trim().min(1).max(200).optional(),
+          after: z.array(z.number().int().min(0)).max(7).optional() })).min(1).max(8).optional(),
+        deliverable: z.enum(['change', 'answer']).optional(),
+      }).strict().refine(value => value.decision !== 'accept' || (value.units?.length ?? 0) > 0, 'accept needs at least one delivery unit')
+        .parse(await body())
+      const projects = runtime.store.settings().executor.projects
+      for (const [index, unit] of (input.units ?? []).entries()) {
+        if (!projects.some(item => item.id === unit.project)) throw new RouteError(400, `Deliverable ${index}: project ${unit.project} is not registered`)
+      }
+      return runtime.decideEscalation({ ...input, id: params.id })
+    },
     'POST memory/forget': async ({ body }) => {
       const { id } = z.object({ id: z.string().min(1) }).parse(await body())
       return { forgotten: store.memories.forget(id) }

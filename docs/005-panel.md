@@ -21,7 +21,7 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 
 | Tab | Shows |
 | --- | --- |
-| Overview | Tickets needing action, open Requests, open escalations awaiting the Orchestrator, automation records needing attention, system problems, activity counts for the last 24 hours, Executor load, and the Project Leads block: one row per registered project with its Lead Session's state and its pending project requests. Each block links to its detailed page |
+| Overview | Tickets needing action, open Requests, open escalations awaiting the Orchestrator, automation records needing attention, system problems, activity counts for the last 24 hours, Executor load, and the Project Leads block: one row per registered project with its Lead Session's state and its pending project requests. An escalation can be decided here with its required reply (accept starts one Ticket in the escalating project; reject and needs info record the reply), or from the main Session when its units belong elsewhere. Each block links to its detailed page |
 | Source | Source state, setup problems and non-zero counts. Filtered Triggers and dropped messages cover the same 24-hour window as Overview |
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |
 | Eval | Decisions with their reason and matched rules |

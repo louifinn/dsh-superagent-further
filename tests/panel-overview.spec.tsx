@@ -2,7 +2,7 @@
 // The overview.
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
-import { usePanel, mount, remount, all, find, tab, click, text } from './fixtures/panel.tsx'
+import { usePanel, mount, remount, all, find, tab, click, text, type } from './fixtures/panel.tsx'
 import { server, droppedReply, threadSummary, ticketSummary } from './fixtures/panel-server.ts'
 
 usePanel()
@@ -244,6 +244,18 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   await click(tab(zh['tab.overview']))
   await click('评估超时未决定：#9 迟迟未决')
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
+})
+
+it('answers an open escalation from the overview with the required reply', async () => {
+  server.escalations = [{ id: 'pr-1', title: '跨项目依赖升级', project: 'app', instruction: 'Upgrade the shared CLI in both projects.',
+    createdAt: '2026-11-10T00:00:00.000Z', session: 'session-lead-app' }]
+  await mount()
+  const escalation = all('[data-escalation]')[0] as HTMLElement
+  const reply = escalation.querySelector('input') as HTMLInputElement
+  await type(reply, 'Do it inside the tower project.')
+  await click(zh.escalationReject)
+  expect(server.requests.some(request => request.method === 'POST' && request.path === 'escalations/pr-1/decide')).toBe(true)
+  expect(all('[data-escalation]')).toHaveLength(0)
 })
 
 it('shows the reply queue only while messages wait, with the oldest wait and the next attempt', async () => {

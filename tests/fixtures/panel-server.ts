@@ -424,6 +424,17 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     server.automations = [...server.automations, row]
     return row
   } },
+  'POST escalations/:id/decide': { body: true, answer: ({ params, body }) => {
+    const index = server.escalations.findIndex(item => item.id === params.id)
+    if (index < 0) return refuse(404, `Unknown escalation ${params.id}`)
+    if (body.decision === 'accept' && (body.units?.length ?? 0) === 0) return refuse(400, 'accept needs at least one delivery unit')
+    const [item] = server.escalations.splice(index, 1)
+    return { id: item!.id, project: item!.project,
+      status: body.decision === 'accept' ? 'accepted' as const : body.decision === 'reject' ? 'rejected' as const : 'needs-info' as const,
+      replies: [{ by: 'orchestrator', text: body.reply, at: new Date().toISOString() }],
+      ...body.decision === 'accept' ? { request_id: 'request-escalation' } : {},
+      tickets: body.decision === 'accept' ? ['ticket-escalation'] : [], reply_delivered: true }
+  } },
   'PUT automations/:id': { body: true, answer: ({ params, body }) => {
     const row = server.automations.find(item => item.id === params.id)
     if (!row) return refuse(404, `Unknown automation ${params.id}`)

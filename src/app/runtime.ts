@@ -30,6 +30,7 @@ import { Store } from './store.ts'
 import { evalsHealth, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { captureLogs, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
+import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
 import { registerHttp, type HttpHost } from './http.ts'
@@ -495,12 +496,20 @@ export class Runtime extends Service implements SourceHost {
         projectRequests: { pending: pending.length, automated: pending.filter(request => request.raised_by.automation !== undefined).length } }
     })
   }
+  /**
+   * Decides an escalated project request from the panel. The Lead receives the same mandatory reply the main
+   * Session's tool delivers, because both go through `decideEscalation` (docs/012 D13).
+   */
+  decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult> {
+    return decideEscalation(this.engine, this.store, this.sessions, input)
+  }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
       leadOverview: () => runtime.leadOverview(),
+      decideEscalation: input => runtime.decideEscalation(input),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

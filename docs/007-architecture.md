@@ -285,6 +285,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/lead-dispatch.ts` | Raised project requests and unanswered worker reports into Lead prompts and durable `lead_message` records, the Lead's disposition back to the raising Session, and the bounded `needs-attention` fallback at the Lead activation boundary |
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
 | `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters; the Host logger still gets the raw arguments. `GET logs` serves the panel |
+| `src/app/escalations.ts` | `decideEscalation`: the one path both the main Session tool and the panel take to decide an escalated project request and deliver its mandatory reply to the Lead |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
 | `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/session.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, messages into CLI calls, and an independent DSH Session's `superagent_submit` call into one Trigger |
@@ -389,6 +390,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
 | `src/app/files.ts` | `localFile`: resolves a file inside a project's workspace, refusing absolute, parent, dot and repeated-separator paths, directories and missing files |
 | `src/app/logs.ts` | `Logs`: a bounded in-memory ring of the Host log, formatted at capture time so the panel never receives printf strings, with level and scope filters, while the Host logger still gets the raw arguments |
+| `src/app/escalations.ts` | `decideEscalation`: the one path both the main Session tool and the panel take to decide an escalated project request and deliver its mandatory reply to the Lead |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
 | `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
 | `src/app/cards.ts` | Compact cards of Triggers, Tickets, Threads and Decisions for models, the closed set of ticket card states `TICKET_STATES`, and `textPage` |
