@@ -10,12 +10,14 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
    Orchestrator must decide, automations whose Host task ended or reported an error, and the Leads and Executors per
    project.
 2. Open the Logs tab, filter to `warn` and `error`, and read entries by scope. Healthy operations are `info` entries
-   under `runtime` (one startup summary of the claims that came up ready), `trigger`, `ticket`, `request`,
-   `assignment` and `outbox` (`reply delivered`). A Source that fails three polls in a row reports its claim's name
-   (`github`, `feishu`, `digest`, …) as a `warn` "is error" entry, and its recovery is an `info` "recovered: ready"
-   entry; `session`, `setup` and `automation` carry the plugin's own warnings. A single failed poll is not an error
-   entry, and a failed reply logs one `warn` `reply delivery failed` for its first failure only — later retries of the
-   same reply stay silent.
+   under `runtime` (one startup summary of the claims that came up ready), `trigger`, `ticket`, `request` and
+   `assignment`. `host` holds the Runtime's own warnings, including a failed file delivery; `outbox` carries reply
+   delivery (delivered, dropped or failed). A GitHub Source that fails `failuresBeforeError` polls in a row (default
+   3, configurable from 1 to 20) reports `github` as a `warn` "is error" entry, and its recovery is an `info`
+   "recovered: ready" entry; the Feishu loops (`feishu`) and the Feishu digest (`digest`) report an error on their
+   first observed failure. `session`, `setup` and `automation` carry the plugin's own warnings. A single failed
+   GitHub poll is not an error entry, and a failed reply logs one `warn` `reply delivery failed` for its first
+   failure only — later retries of the same reply stay silent.
 3. Read the artifact log from the current start when a panel entry is not enough:
    `.artifacts/dsh-superagent-further-<profile>-<time>.log` under the workspace that started the Host.
 4. Run `node scripts/verify-install --state-dir <dir>`; it prints the schema version, the enabled blocks and the
