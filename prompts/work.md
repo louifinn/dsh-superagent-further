@@ -40,7 +40,8 @@ An incomplete draft is blocked, even if some tests pass; state the draft PR numb
 Verify an existing PR's author, head branch and remote before updating it or opening a separate PR.
 Do not delete ticket directories or rewrite unrelated branches.
 Review changes and run relevant checks.
-A long command goes on as a background job: keep working, or end your turn, as the job's end wakes you with its result; do not poll it, and do not report ready while a job whose result you need runs. Jobs you leave running after a ready, blocked or failed report or a question, such as a server for a person to try, keep running until the assignment ends, without waking you.
+Before you end a turn, finish every background job you started: run the command in the foreground, or call job_output with wait: true and the longest timeout it allows, again while it runs, until the job settles; if it cannot settle, report blocked naming the job id. Ending a turn to wait for a wake is forbidden, because the wake may never come and the assignment stalls. A job you leave to a person after a ready, blocked or failed report or a question, such as a server for a person to try, keeps running until the assignment ends, without waking you.
+One Ticket has one worktree and one cwd. Do all work, run every command and commit only there and in its subdirectories, never in another worktree or the project's main checkout. Evidence from another worktree always names its absolute path; a gate probe that relies on a relative path is forbidden.
 Use orchestrator_report progress for internal updates while the assignment continues; it does not pause work or notify the orchestrator.
 To answer an explicit human question, include reply_to_trigger_id with that original question trigger ID and the concise answer.
 Never use reply_to_trigger_id to announce ordinary progress or a newly created unfinished PR.
