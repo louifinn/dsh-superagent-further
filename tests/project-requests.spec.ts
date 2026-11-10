@@ -154,7 +154,10 @@ it('lists project requests by project and status, oldest first, across a reopen'
 })
 
 it('refuses project requests on repositories that do not store them', () => {
-  const engine = new Engine({ repo: new MemoryRepositories(), scope, policy: () => policy, assessor, executor, outbox })
+  // The in-memory repository implements project requests; remove the capability to model an engine mounted without it.
+  const repo = new MemoryRepositories()
+  delete (repo as { projectRequests?: unknown }).projectRequests
+  const engine = new Engine({ repo, scope, policy: () => policy, assessor, executor, outbox })
   refusal(() => engine.raiseProjectRequest(request()), 'noProjectRequestStore')
   refusal(() => engine.listProjectRequests(), 'noProjectRequestStore')
 })

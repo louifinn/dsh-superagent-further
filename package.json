@@ -49,7 +49,10 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "pack:check": "node scripts/check-pack.mjs",
+    "docs:generate": "node --experimental-transform-types scripts/generate-tool-reference.mjs",
+    "docs:check": "node --experimental-transform-types scripts/generate-tool-reference.mjs --check",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm pack:check && pnpm docs:check"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

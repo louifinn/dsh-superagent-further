@@ -33,7 +33,7 @@ unchanged from the prototype; this fork extends it to the project layer, operati
 | --- | --- |
 | Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 87 spec files, **1497 passed / 5 skipped (1502)**, typecheck and build; check.yml green on six platform/Node combinations on every push |
+| Checks | `pnpm check`: 89 spec files, **1507 passed / 5 skipped (1512)**, typecheck, build, a pack check of the published tarball and a check that the generated reference pages are current; check.yml green on six platform/Node combinations on every push |
 | Release | `0.3.0` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.3.0.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
 | Project requests | a worker raises a durable `project_request` when its Ticket needs a decision, a new deliverable or another project's work; its project Lead must reply and disposes it, an accepted work request creates a Request and staged Tickets confined to the project, an architecture request waits for a person's recorded approval, an independent DSH Session can submit work and always receives an answer, a project automation delivery may raise one project request through its Lead, an installation automation delivery may create an installation Request from the main Session, and a Lead may escalate work outside its project for the Orchestrator to decide |
@@ -271,12 +271,16 @@ allow list and a test repository, as the responsibility section of the philosoph
 
 ### Engineering and distribution
 
-`pnpm check` is the single check: typecheck, 87 spec files, and a tsdown build. CI runs it on Ubuntu, macOS and
+`pnpm check` is the single check: typecheck, 89 spec files, a tsdown build, `scripts/check-pack.mjs` over the tarball npm
+would publish, and `docs:check` over the generated reference. CI runs it on Ubuntu, macOS and
 Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1502 tests; it drives real timers and SQLite, so timeouts are
+bundle and attaches it to a GitHub release. The suite is 1512 tests; it drives real timers and SQLite, so timeouts are
 30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
 fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
-lists every source file and spec. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package
+lists every source file and spec; `tests/surface.spec.ts` asserts the mounted tool, skill and preset surface, and
+`tests/properties.spec.ts` drives the gate, identity and migration invariants from seeded generators. The reference
+pages under [docs/reference](docs/reference/tools.md) are generated from the code by `pnpm docs:generate` and compared
+by `pnpm docs:check`, so they cannot drift. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package
 and every registration id to `dsh-superagent-further`, so an existing profile follows the migration steps in 006.
 Additions are additive settings and panel rows, with a `CHANGELOG` and semver.
 
@@ -356,6 +360,8 @@ manual for a running installation is 006.
 - [011 Capabilities](docs/011-capabilities.md): the decision record for labels, file delivery, project requests,
   installation self-bootstrap and Lead escalation
 - [012 Project requests](docs/012-project-requests.md): the design of project requests, escalations and installation work
+- [Tool reference](docs/reference/tools.md): generated from the tool factories the model sees
+- [Settings reference](docs/reference/config.md): the generated JSON Schema of the settings blocks
 - [AGENTS.md](AGENTS.md): instructions for coding agents working in this repository
 - [docs/agents/domain.md](docs/agents/domain.md): the engineering-skills scaffolding used with coding agents
 

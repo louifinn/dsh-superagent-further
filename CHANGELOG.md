@@ -8,6 +8,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- `pnpm check` now verifies the packed tarball against `scripts/pack-manifest.json` (`pack:check`) and compares the generated tool and settings references with the code (`docs:generate`, `docs:check`), so packaging or reference drift fails the gate.
+
+- A mounted-surface test asserts every loaded tool set, the bundled skills and the bundle's preset rows, and seeded property tests cover admission, Trigger identity across repositories, idempotent creation, schema 22 migration and reconcile fixed points.
+
 - Escalations can be decided from the Overview with their required reply; the panel and the main Session share the same decision path and Lead delivery.
 
 - Three operational skills ship with the plugin — triage, release and project requests — registered for every Session and protected from a same-named custom skill.
