@@ -891,6 +891,18 @@ log rotation or export, and entries do not survive a Host restart.
 **Status.** Implemented in Sprint 28: `src/app/logs.ts`, `GET logs`, the Logs tab, `tests/logs.spec.ts` and
 `tests/panel-logs.spec.tsx`.
 
+## Part I — One "needs you" view (approved 2026-11-10, Sprint 29)
+
+**Context.** Waiting work was spread over the Overview (Tickets, Requests, Leads) and the Automations page (orphaned or
+failed tasks); an open escalation existed only in the main Session's tool results.
+
+**Decision.** The Overview carries one read-only attention surface: open escalations (title, source project,
+instruction preview, raised time) and automation records that are orphaned or carry a delivery error, with a link to
+the Automations page. Approvals stay in the main Session for now; the panel approval actions are a later slice. No new
+route or page was added.
+
+**Status.** Implemented in Sprint 29 as fields of `GET overview` and two Overview sections.
+
 ### Resolved (2026-11-09)
 
 The operator approved every recommendation and the suggested order.

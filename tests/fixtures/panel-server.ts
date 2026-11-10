@@ -120,6 +120,10 @@ export interface PanelServer {
   leads: NonNullable<ApiResponse<'GET overview'>>['leads']
   /** The open Request rows the overview shows; each test may replace them. */
   asks: NonNullable<ApiResponse<'GET overview'>>['requests']
+  /** Open escalations the overview shows; each test may replace them. */
+  escalations: ApiResponse<'GET overview'>['escalations']
+  /** Automation records needing attention in the overview; each test may replace them. */
+  automationAttention: ApiResponse<'GET overview'>['automationAttention']
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
   /** False simulates a Host without the schedule service: the automations routes answer 503. */
@@ -230,6 +234,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
     leads: server.leads,
     // One row per open Request, with the Tickets that deliver it.
     requests: server.asks,
+    escalations: server.escalations,
+    automationAttention: server.automationAttention,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -278,7 +284,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], memories: [], proposals: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',

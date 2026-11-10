@@ -257,3 +257,19 @@ it('shows the reply queue only while messages wait, with the oldest wait and the
   expect(text()).toContain('3 条回复等待发送')
   expect(text()).toContain('1 条已失败过')
 })
+
+it('lists open escalations and automations needing attention as work for a person', async () => {
+  server.escalations = [{ id: 'pr-1', title: '跨项目依赖升级', project: 'app', instruction: 'Upgrade the shared CLI in both projects.',
+    createdAt: '2026-11-10T00:00:00.000Z', session: 'session-lead-app' }]
+  server.automationAttention = { count: 2, items: [{ id: 'auto-1', title: 'Nightly report', scope: 'installation', project: '',
+    error: 'The Host task is missing' }] }
+  await mount()
+  expect(all('[data-escalation]')).toHaveLength(1)
+  expect(text()).toContain(zh.escalationsTitle)
+  expect(text()).toContain('跨项目依赖升级')
+  expect(text()).toContain(zh.escalationProjectLabel)
+  expect(all('[data-automation-attention]')).toHaveLength(1)
+  expect(text()).toContain(zh.automationAttentionTitle)
+  expect(text()).toContain(zh.automationAttentionTitle)
+  expect(text()).toContain('The Host task is missing')
+})

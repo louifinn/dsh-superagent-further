@@ -131,6 +131,30 @@ export function OverviewPage() {
     {data.requests.length > 0 && <Section title={t('requestsTitle')} count={data.requests.length}>
       <ul className="dt-list">{data.requests.map(request => <RequestEntry key={request.id} request={request} />)}</ul>
     </Section>}
+    {/* Open escalations wait for the Orchestrator, which decides them from the main Session. */}
+    {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
+      <ul className="dt-list">{data.escalations.map(item => <li key={item.id} className="dt-row" data-escalation={item.id}>
+        <div className="dt-row-main">
+          <div className="dt-att-what">{item.title}</div>
+          <div className="dt-row-meta">
+            <LabelValue label={t('escalationProjectLabel')} value={item.project} />
+            <LabelValue label={t('escalationRaisedLabel')} value={when(item.createdAt, t('lang'))} />
+          </div>
+          <p className="dt-hint">{item.instruction}</p>
+        </div>
+      </li>)}</ul>
+    </Section>}
+    {/* Automation records that lost their Host task or failed delivery; the Automations page has their history. */}
+    {data.automationAttention.count > 0 && <Section title={t('automationAttentionTitle')} count={data.automationAttention.count}
+      action={more({ page: 'tasks' })}>
+      <ul className="dt-list">{data.automationAttention.items.map(item => <li key={item.id} className="dt-row"
+        data-automation-attention={item.id}>
+        <div className="dt-row-main">
+          <div className="dt-att-what">{item.title}</div>
+          <p className="dt-hint">{item.error}</p>
+        </div>
+      </li>)}</ul>
+    </Section>}
     {data.problems.length > 0 && <Section title={t('problems')} count={data.problems.length}>
       <ul className="dt-list dt-cards">{data.problems.map((problem, index) => <ProblemLine key={index} problem={problem}
         onChanged={reload} />)}</ul>

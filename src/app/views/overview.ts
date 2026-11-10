@@ -1,5 +1,5 @@
 /** Overview view: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow. */
-import { reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
+import { projectRequestOpen, reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
@@ -82,6 +82,13 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
       return ticket ? [{ id: ticket.id, title: ticket.title, project: ticket.project ?? '', stage: ticketStage(ticket).stage }] : []
     }),
   }))
+  // Open escalations and automation records that need a person; both are part of the single \"needs you\" view.
+  const escalations = store.projectRequests.list().filter(request => request.kind === 'escalation' && projectRequestOpen(request.status))
+    .map(request => ({ id: request.id, title: request.title, project: request.project, instruction: preview(request.instruction),
+      createdAt: request.created_at, session: request.raised_by.session }))
+  const automationAttention = store.automations.list().filter(record => record.orphaned || record.last_error !== null)
+    .map(record => ({ id: record.id, title: record.title, scope: record.scope, project: record.project,
+      error: record.last_error ?? 'The Host task ended' }))
   const stats = Object.values(store.read.triggerStats(since))
   const received = stats.reduce((sum, item) => sum + item.received, 0), filtered = stats.reduce((sum, item) => sum + item.filtered, 0)
   const judgement = store.read.flow(since)
@@ -98,6 +105,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     policyVersion: policyVersionValue,
     leads,
     requests: openRequests,
+    escalations,
+    automationAttention: { count: automationAttention.length, items: automationAttention.slice(0, 5) },
   }
 }
 export type OverviewView = ReturnType<typeof overview>

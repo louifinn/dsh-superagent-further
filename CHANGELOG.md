@@ -78,6 +78,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   entries; no new on-disk artefact), with level and scope filters, while the Host logger still receives the raw
   printf arguments and console output is unchanged.
 
+- The Overview gathers the work that waits for a person in one place: open escalations awaiting the Orchestrator and
+  automation records that are orphaned or failed delivery now appear beside open Requests and Tickets, with a link to
+  the Automations page. The view is read-only; approvals stay in the main Session.
+
 ### Changed
 
 - The built-in accept rule set now has sixteen categories: `settings` (更改 SuperAgent 配置), `automation`
