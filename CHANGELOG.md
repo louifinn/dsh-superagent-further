@@ -13,6 +13,7 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - A layering check (`architecture:check`) rejects core importing the layers above it, the client importing the server, and src importing development tooling.
 - An operations runbook (013) documents the daily checks, state backups, recovery and upgrades; `SECURITY.md` records the trust boundaries and the reporting path.
 - `scripts/archive-state.mjs` takes a consistent `VACUUM INTO` copy of the state database and prunes old archives; `pnpm test:coverage` reports coverage without gating.
+- `CONTRIBUTING.md` describes the working loop, the gates and the hand-offs for a person, an ordinary coding agent, the Orchestrator, a Lead, a Worker and a Reviewer.
 
 ### Added
 

@@ -17,3 +17,9 @@ The five canonical triage roles, each label string equal to its role name. See `
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repository root. See `docs/agents/domain.md`.
+
+## Contributing
+
+Every contributor — a person, an ordinary coding agent, or a SuperAgent member — follows
+[CONTRIBUTING.md](CONTRIBUTING.md): the same working loop and gates, with a role-specific entry point and reporting
+channel. SuperAgent members do not have extra repository authority; they report through Tickets, Leads or the panel.

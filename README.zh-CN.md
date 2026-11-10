@@ -300,12 +300,15 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 - [012 项目请求](docs/012-project-requests.md)：项目请求、升级与安装级工作的设计
 - [013 运维手册](docs/013-operations-runbook.md)：日常检查、状态备份、故障恢复与升级
 - [SECURITY.md](SECURITY.md)：信任边界与漏洞报告方式
+- [CONTRIBUTING.md](CONTRIBUTING.md)：面向人、普通编码智能体，以及 Orchestrator、Lead、Worker、Reviewer 的协作流程、检查门禁与交接规范
 - [工具参考](docs/reference/tools.md)：从模型看到的工具工厂生成
 - [设置参考](docs/reference/config.md)：设置块生成的 JSON Schema
 - [AGENTS.md](AGENTS.md)：给在本仓库工作的编程智能体的说明
 - [docs/agents/domain.md](docs/agents/domain.md)：配合编程智能体使用的工程技能脚手架
 
 ## 开发
+
+完整流程、检查门禁与各角色统一的汇报模板见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ```bash
 pnpm install --frozen-lockfile

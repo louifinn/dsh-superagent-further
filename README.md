@@ -362,12 +362,15 @@ manual for a running installation is 006.
 - [012 Project requests](docs/012-project-requests.md): the design of project requests, escalations and installation work
 - [013 Operations runbook](docs/013-operations-runbook.md): daily checks, state backups, recovery and upgrades
 - [SECURITY.md](SECURITY.md): the trust boundaries and the vulnerability-reporting path
+- [CONTRIBUTING.md](CONTRIBUTING.md): the loop, gates and role hand-offs for a person, an ordinary coding agent, an Orchestrator, a Lead, a Worker and a Reviewer
 - [Tool reference](docs/reference/tools.md): generated from the tool factories the model sees
 - [Settings reference](docs/reference/config.md): the generated JSON Schema of the settings blocks
 - [AGENTS.md](AGENTS.md): instructions for coding agents working in this repository
 - [docs/agents/domain.md](docs/agents/domain.md): the engineering-skills scaffolding used with coding agents
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop, the gates and the reporting template every role uses.
 
 ```bash
 pnpm install --frozen-lockfile
