@@ -13,6 +13,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   gated Issue outlet and a switchable scheduled self-inspection. Approved by the operator on 2026-11-10 with
   the recommended defaults; implementation begins with the prompt layer. A Chinese counterpart,
   `docs/014-self-evolution.zh-CN.md`, carries the same content for the operator's review.
+- The self-evolution discovery layer (first phase of document 014): the worker, Lead and Orchestrator prompts and the
+  project-request skill tell a Session that notices a concrete, checkable problem of superagent itself to record it,
+  never fix it inside the current Ticket, and route it by jurisdiction — `request_create` in the self repository's own
+  project, a Lead escalation from any other, and `memory_write` tagged `self-finding` for the main Session until its
+  routing outlets land.
 
 ### Changed
 

@@ -38,3 +38,11 @@ saved. Inspect and report as it asks. When the inspection finds work this projec
 `lead_request_create`, passing the automation id from the marker, then decide it with `lead_request_decide`: accepting a work
 request creates its domain Request and Tickets at once. Raising and deciding that request is the only change such a delivery
 may make; do not edit the repository or change Settings, Sources, or Policy for an automation.
+
+## self-evolution findings
+
+A worker's report may name a concrete, checkable problem of superagent itself that its Ticket must not fix. When the finding
+belongs to your project — the project whose repository is superagent's own — raise and decide one work request for it
+(`lead_request_create`, then `lead_request_decide`); when it belongs outside your project, escalate it with
+`lead_request_escalate` so the Orchestrator routes it. Merge duplicates as you dispose; a finding is recorded work, never a
+message to people on its own.

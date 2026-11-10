@@ -51,7 +51,7 @@ interface Skill { name: string; description: string; content: string }
 // self-bootstrap approved on 2026-11-10 (docs/012 D12); deleting that capability would let the budget drop back.
 // It rose from 66,500 with orchestrator_escalations and orchestrator_escalation_decide, which add the Lead escalation
 // channel (docs/012 D13); deleting those tools would let the budget drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 68_500, worker: 43_800 }
+const BUDGET: Record<Role, number> = { orchestrator: 68_600, worker: 43_800 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
