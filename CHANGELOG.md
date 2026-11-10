@@ -6,6 +6,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Added
+
+- Design document 014 — self-evolution: discovering superagent's own problems in flight and routing them by
+  jurisdiction to a self-fix Ticket (repository registered) or a GitHub Issue on the self repository, with a
+  gated Issue outlet and a switchable scheduled self-inspection. Proposed for operator approval; no code yet.
+
 ### Changed
 
 - Memory pre-injection is off by default: a project Lead or the main Session still has the memory tools and automatic

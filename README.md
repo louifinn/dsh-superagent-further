@@ -241,6 +241,8 @@ manual for a running installation is 006.
   installation self-bootstrap and Lead escalation
 - [012 Project requests](docs/012-project-requests.md): the design of project requests, escalations and installation work
 - [013 Operations runbook](docs/013-operations-runbook.md): daily checks, state backups, recovery and upgrades
+- [014 Self-evolution](docs/014-self-evolution.md): the design for discovering superagent's own problems in
+  flight and routing them to a self-fix Ticket or an upstream Issue
 - [SECURITY.md](SECURITY.md): the trust boundaries and the vulnerability-reporting path
 - [CONTRIBUTING.md](CONTRIBUTING.md): the loop, gates and role hand-offs for a person, an ordinary coding agent, an Orchestrator, a Lead, a Worker and a Reviewer
 - [Tool reference](docs/reference/tools.md): generated from the tool factories the model sees
