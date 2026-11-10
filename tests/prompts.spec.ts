@@ -98,6 +98,23 @@ it('carries the self-evolution discovery passage in both roles and the project-r
   expect(composeSkill(config, 'project-request')).toContain('A superagent-self finding')
 })
 
+it('tells a worker to finish its background jobs before the turn ends and to keep one worktree with absolute evidence paths', () => {
+  const config = defaultPrompts()
+  const worker = composePrompt(config, 'worker')
+  // A job's end wake is not guaranteed, so the worker waits on the job in its own turn or reports blocked naming it.
+  expect(worker).toContain('Before you end a turn, finish every background job you started')
+  expect(worker).toContain('call job_output with wait: true and the longest timeout it allows, again while it runs, until the job settles')
+  expect(worker).toContain('report blocked naming the job id')
+  expect(worker).toContain('Ending a turn to wait for a wake is forbidden')
+  // One worktree and cwd per Ticket, and another worktree is evidence only through its absolute path.
+  expect(worker).toContain('One Ticket has one worktree and one cwd')
+  expect(worker).toContain('Evidence from another worktree always names its absolute path')
+  expect(worker).toContain('a gate probe that relies on a relative path is forbidden')
+  // The main Session runs no job and owns no worktree, so the rules stay out of its prompt.
+  const orchestrator = composePrompt(config, 'orchestrator')
+  for (const rule of ['Before you end a turn, finish every background job', 'One Ticket has one worktree and one cwd']) expect(orchestrator).not.toContain(rule)
+})
+
 it.each(['orchestrator', 'worker'] as const)('ends the %s prompt with the fixed handoff rules and the execution environment, and the main Session\'s with its Policy', role => {
   withStore(store => {
     const prompts = promptsOf(store)

@@ -28,6 +28,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - Memory pre-injection is off by default: a project Lead or the main Session still has the memory tools and automatic
   records, but pinned and recent memories reach the model only after the operator turns on **Inject memory** in
   **Settings → Memory**. Existing installations keep their saved switch value.
+- A worker finishes every background job it starts before its turn ends: the work instructions tell it to run the command
+  in the foreground, wait on the job with `job_output` until it settles, or report blocked naming the job, and forbid
+  ending a turn to wait for a wake, which stalled one assignment for three hours.
+- A worker keeps one worktree and cwd per Ticket: another worktree is evidence only through its absolute path, and no gate
+  probe relies on a relative path.
 
 ## [0.4.0] - 2026-11-10
 
