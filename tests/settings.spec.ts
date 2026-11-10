@@ -237,16 +237,24 @@ it('saves Memory behavior from the panel only, and the change applies without a 
   h = await startRuntime()
   const { settings, store } = h.runtime
   const memory = store.settings().memory
-  const revision = store.blockRevision('memory')
-  await expect(settings.save('memory', { ...memory, inject: false }, revision, 'tool', { reason: 'The person wants less injection' }))
+  // Pre-injection is off by default; the panel opts in.
+  expect(memory.inject).toBe(false)
+  let revision = store.blockRevision('memory')
+  const enabled = await settings.save('memory', { ...memory, inject: true, pinnedLimit: 2 }, revision, 'panel')
+  expect(enabled.saved).toBe(true)
+  expect(store.settings().memory).toMatchObject({ inject: true, pinnedLimit: 2 })
+  store.memories.save({ kind: 'fact', text: 'Stored and injected.' })
+  expect(store.memories.promptText()).toContain('Stored and injected.')
+  // A tool-origin change of the same switch is refused.
+  revision = store.blockRevision('memory')
+  await expect(settings.save('memory', { ...store.settings().memory, inject: false }, revision, 'tool', { reason: 'The person wants less injection' }))
     .rejects.toMatchObject({ code: 'approvalRequired' })
   expect(store.settings().memory.inject).toBe(true)
-  const saved = await settings.save('memory', { ...memory, inject: false, pinnedLimit: 2 }, revision, 'panel')
-  expect(saved.saved).toBe(true)
-  expect(store.settings().memory).toMatchObject({ inject: false, pinnedLimit: 2 })
-  // The block read used by the panel page carries the saved value, and the new behavior applies to the next snapshot.
+  // The panel can turn it off again; the next snapshot is silent.
+  revision = store.blockRevision('memory')
+  const disabled = await settings.save('memory', { ...store.settings().memory, inject: false, pinnedLimit: 2 }, revision, 'panel')
+  expect(disabled.saved).toBe(true)
   expect(settings.block('memory').value).toMatchObject({ inject: false, pinnedLimit: 2 })
-  store.memories.save({ kind: 'fact', text: 'Stored but not injected.' })
   expect(store.memories.promptText()).toBe('')
 })
 
@@ -315,7 +323,7 @@ it('refuses every tier-B field from a tool with approvalRequired and every tier-
       code: 'approvalRequired' },
     { block: 'policy', value: { ...policy, sources: { ...policy.sources, github: { ...(policy.sources.github ?? { admission: {} }),
       allowed: [...(policy.sources.github?.allowed ?? []), { id: 'tier-b-test' }] } } }, code: 'approvalRequired' },
-    { block: 'memory', value: { ...memory, inject: false }, code: 'approvalRequired' },
+    { block: 'memory', value: { ...memory, inject: true }, code: 'approvalRequired' },
     { block: 'language', value: { default: 'English (US)' }, code: 'approvalRequired' },
     { block: 'source:github', value: { ...github, enabled: false }, code: 'approvalRequired' },
     { block: 'source:feishu', value: { ...feishu, config: { ...feishu.config, chats: [...((feishu.config.chats as unknown[] | undefined) ?? []),

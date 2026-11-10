@@ -127,7 +127,7 @@ const TEXT = {
   memoryEnabledHint: ['总开关。关闭后不注入快照、不接受 memory_write 或 memory_search，也不再自动记录已结束的工单；已有记忆保留。',
     'Master switch. When off, no snapshot is injected, memory_write and memory_search refuse, and finished work is no longer recorded automatically; stored memories stay.'],
   memoryInjection: ['预注入记忆', 'Inject memory'],
-  memoryInjectionHint: ['把置顶和最近的记忆作为运行时上下文快照随请求发送；关闭后模型仍可用 memory_search 主动查询。',
+  memoryInjectionHint: ['把置顶和最近的记忆作为运行时上下文快照随请求发送（默认关闭，打开后才随请求携带）；关闭后模型仍可用 memory_search 主动查询。',
     'Carry the pinned and most recent memories in the runtime-context snapshot of each request; when off, a model can still query them with memory_search.'],
   memoryAutoWrite: ['自动记录已结束的工单与请求', 'Remember finished work'],
   memoryAutoWriteHint: ['工单或请求结束时写一条确定性摘要（不调用模型）；关闭后只保留手动写入的记忆。',

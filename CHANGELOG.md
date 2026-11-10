@@ -6,6 +6,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Changed
+
+- Memory pre-injection is off by default: a project Lead or the main Session still has the memory tools and automatic
+  records, but pinned and recent memories reach the model only after the operator turns on **Inject memory** in
+  **Settings → Memory**. Existing installations keep their saved switch value.
+
 ## [0.4.0] - 2026-11-10
 
 ### Added

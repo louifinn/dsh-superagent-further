@@ -17,14 +17,14 @@ const memory = (id: string, over: Record<string, unknown> = {}) => ({
 it('saves each switch on click, against the current revision', async () => {
   await mount()
   await click(tab(zh['tab.memory']))
-  expect(switches().map(item => item.getAttribute('aria-checked'))).toEqual(['true', 'true', 'true'])
-  // A switch writes the whole block straight away: the next model request sees the new behavior without a restart.
+  // Pre-injection is off by default, so the second switch starts off; enabling it writes the whole block.
+  expect(switches().map(item => item.getAttribute('aria-checked'))).toEqual(['true', 'false', 'true'])
   await click(switches()[1]!)
-  expect(server.settings.memory.inject).toBe(false)
-  expect(switches()[1]!.getAttribute('aria-checked')).toBe('false')
+  expect(server.settings.memory.inject).toBe(true)
+  expect(switches()[1]!.getAttribute('aria-checked')).toBe('true')
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/memory'])
   await click(switches()[2]!)
-  expect(server.settings.memory).toMatchObject({ inject: false, autoWrite: false })
+  expect(server.settings.memory).toMatchObject({ inject: true, autoWrite: false })
   await click(switches()[0]!)
   expect(server.settings.memory.enabled).toBe(false)
 })

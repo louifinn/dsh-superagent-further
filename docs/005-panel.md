@@ -26,7 +26,7 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |
 | Eval | Decisions with their reason and matched rules |
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
-| Memory | The master switch, the injection and automatic-write switches, snapshot limits, and the stored memories: search, sort and project filters, expand for the full record, pin or forget one |
+| Memory | The master switch, the injection and automatic-write switches (pre-injection is off by default), snapshot limits, and the stored memories: search, sort and project filters, expand for the full record, pin or forget one |
 | Automations | Installation- and project-scope scheduled tasks: create, edit, run now, delete with confirmation, delivery history and the missing Host schedule service state |
 | Logs | The Host log ring: newest last, a level filter (all, warning and error, error only) and a scope filter, while nothing is written to disk |
 | Settings | Sources, Eval, Execution, Language, Prompts and Deployment. Each group includes its save history |

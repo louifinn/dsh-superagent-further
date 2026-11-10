@@ -197,12 +197,13 @@ export const ExecutorConfigSchema = z.object({
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 /**
  * Memory behavior, edited on the management panel's Memory page. `enabled` is the master switch (no injection, no tools,
- * no automatic writes); `inject` carries pinned and recent memories in the runtime-context snapshot; `autoWrite` records a
- * finished Ticket or Request without a model call. The limits bound that snapshot and the retention of old rows.
+ * no automatic writes); `inject` carries pinned and recent memories in the runtime-context snapshot and is off by
+ * default, so an operator opts in to the extra context; `autoWrite` records a finished Ticket or Request without a
+ * model call. The limits bound that snapshot and the retention of old rows.
  */
 export const MemoryConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  inject: z.boolean().default(true),
+  inject: z.boolean().default(false),
   autoWrite: z.boolean().default(true),
   /// Pinned memories always carried, up to this many.
   pinnedLimit: z.number().int().min(0).max(LIMITS.memoryPinned).default(LIMITS.memoryPinned),

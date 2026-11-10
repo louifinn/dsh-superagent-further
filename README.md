@@ -151,7 +151,7 @@ The prototype proved the core loop for one repository, one POSIX host and one op
 
 **Know what "done" means.** Every Ticket carries a deliverable contract. A `change` Ticket gets a worktree and a branch and ends only through a followed pull request whose ready report names it. An `answer` Ticket reads the project's live checkout with write tools removed and ends as completed. Reports carry up to twenty verification checks, shown on the Ticket and counted in notices; a Lead can start an independent read-only reviewer whose blocked verdict keeps a merged change open. The panel distinguishes answered from delivered.
 
-**Let it run without standing over it.** Installation and project automations deliver standing instructions to the right Session, and the panel can run or delete them. An approval inbox collects settings proposals, and a per-block restore undoes a change. Memory keeps pinned facts and recent notes across work, and the language setting keeps human-facing text in the language you choose.
+**Let it run without standing over it.** Installation and project automations deliver standing instructions to the right Session, and the panel can run or delete them. An approval inbox collects settings proposals, and a per-block restore undoes a change. Memory keeps pinned facts and recent notes across work — carried into later requests only after you turn on injection — and the language setting keeps human-facing text in the language you choose.
 
 **See what needs a person.** The Overview gathers open Requests, escalations, automations needing attention and each project's Lead; the Logs page filters Host logs by level and scope; health, outbox and reply-queue details stay visible; tickets show their verification evidence and review state.
 
