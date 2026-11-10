@@ -17,30 +17,19 @@
 
 ## Overview
 
-dsh-superagent-further is a proactive coding agent for the repositories your team works in, packaged as a bundle for
-[DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When a
-person the team allowed asks it for work, it opens a Request and the Tickets that deliver it, works each Ticket
-in its own Session and checkout, and answers in the original conversation — usually with a pull request a person
-merges. A web panel lists only what waits for a person.
+dsh-superagent-further is a self-hosted engineering agent that lives in the repositories and chats where your team already works. Install it as a bundle for [DeepSeek Harness](https://www.deepseek.com/en/harness/), register one or more projects, and it watches the places you ask for help: GitHub issues, pull requests, reviews and CI results, and — if you configure it — Feishu mentions and direct messages.
 
-The principle it is engineered around: **take as little human attention as possible, and give as much value as
-possible.** Every message, setting, panel row and document has to earn the attention it costs. That principle is unchanged from the prototype.
+When someone the team allows asks for something, the agent decides whether the request is in scope under your rules, accepts it as a Request, works each Ticket in an isolated checkout, and answers in the original conversation — usually with a pull request you review and merge. Answers to questions and reviews come back in the same thread. A project Lead session keeps each project's context and can hand work to workers, escalate cross-project decisions to the Orchestrator, and wait for your recorded approval before architecture work moves ahead.
 
-Two short claims make the project legible without the interview.
+Use it to:
 
-**What this fork changes relative to the prototype.** The prototype is research code for one repository on one POSIX
-host: a single main Session starts a root worker per Ticket, and no check runs on a second platform. This fork keeps
-that design and adds what daily use needs — a persistent project Lead between the Orchestrator and the executors,
-Requests above Tickets for work that crosses projects, a panel that lists only the rows waiting for a person, native
-Windows, installable releases, and six platform/Node checks with an operator runbook and a security policy. The
-[module-by-module comparison](#what-this-fork-changes-relative-to-the-prototype) records what moved and why.
+- turn an issue, review comment or chat request into a reviewed pull request;
+- have an agent investigate, review or explain code and answer where you asked;
+- keep several repositories moving from one bot and one panel;
+- approve architecture work, settings changes and escalations from the panel;
+- let automations follow standing instructions and surface the exceptions that need a person.
 
-**Product philosophy, extended.** The prototype's principle — take as little human attention as possible and give as
-much value as possible — is unchanged. This fork extends it to three new surfaces: the project layer budgets attention
-per project, so Leads answer the routine questions instead of the Orchestrator; operations list only exceptions
-(health, reply queue, outbox, log, verification evidence and the review gate); and distribution keeps the cost of
-adoption low with an installable tarball, checks and generated references that cannot drift. The
-[full argument](#product-philosophy-extended) is below.
+It is a fork of DeepSeek's SuperAgent research prototype. This README covers what it can do, how it works, how to install and run it, and where its limits are.
 
 ## Status at a glance
 
@@ -148,177 +137,31 @@ executor: parallelism between projects is expressed by several Tickets, not by s
 That direction was settled on 2026-11-08 and the analysis for a later segmented fan-out is kept in
 [010](docs/010-project-orchestrator.md) as a future option, not as pending work.
 
-## What this fork changes relative to the prototype
+## What more can it do?
 
-The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
-fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
-execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **247 files, +26,279 / −1,756** at the current head (the first release on this line was `0.2.0`; `0.4.0` is the current release), and
-the local history started from a byte-identical import, so every change below was made by this fork.
+The prototype proved the core loop for one repository, one POSIX host and one operator: a Source event becomes a Trigger, the Policy admits it, a Request becomes Tickets, and a worker reports where it came from. This fork keeps that loop and adds the abilities below. Each one is user-visible — something you can ask for, watch or operate — and the linked documents carry the internals.
 
-| Area | Prototype | This fork | Why |
-| --- | --- | --- | --- |
-| Platforms | macOS/Linux, POSIX shell script with Python, `tmux`, `fcntl`, `ps` | Windows-native Node service script; Windows batch/CLI handling, `pwsh` shell, `icacls` state ACLs; Linux and macOS kept | The operator's daily machine is Windows; a second dependency set is attention the tool does not earn |
-| Scale | One repository, one host, one state dir | Many projects polled by one Source, per-project checkouts and Leads, per-project concurrency; one host at a time enforced | Teams work in several repositories; a second profile or a second agent would be more concepts and more noise |
-| Execution | Root worker Session per Ticket | Orchestrator → persistent Lead per project → hidden executor subagents, adoption after restart | Cleaner Session list, project context that persists, and a total Orchestrator free of project labour |
-| Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
-| Deliverable contract | A Ticket was implicitly one delivery: a ready report ended it as completed whether or not a pull request existed | Each Ticket carries `deliverable: change` or `answer`; `change` gets a branch and worktree and ends only through a followed pull request (its ready report names the PR), `answer` reads the project's live checkout read-only and ends as `completed` | Answer-only work should not pay for a branch it can never merge, and a change that never opened a PR must not report success |
-| Agent-raised work | Work entered only from a Source event accepted under the person's Policy | Workers, project Leads, installation automations and independent DSH Sessions can raise work as durable requests; every path records its origin, must reply, and cannot bypass Policy or admission | The agent must be able to start work it discovers without turning its own report into authority |
-| Evidence | A worker report and a Ticket end; nothing verifies the change | A change Ticket ends only with a followed pull request whose ready report names it and carries up to twenty verification checks, shown on the Ticket; a Lead starts an independent read-only reviewer whose blocked verdict keeps a merged change Ticket open | "Done" must mean evidenced, and a second pair of eyes must not be the same Session that wrote the change |
-| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 22`, read-only schema check, `scripts/archive-state.mjs` for a consistent snapshot, upgrade and rollback steps | State must survive upgrades if it is to be left running |
-| Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md), [010 Project-level orchestrator](docs/010-project-orchestrator.md), [011 Capabilities](docs/011-capabilities.md), [012 Project requests](docs/012-project-requests.md), [013 Operations runbook](docs/013-operations-runbook.md), generated tool and settings references under [docs/reference](docs/reference/tools.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions, operations and contribution rules must be readable without the interview that produced them |
-| Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs, a state archive script, an operations runbook and a security policy | Unattended use needs visible, scriptable operations on every platform |
-| Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest, a panel Logs page filterable by level and scope, and an Overview that gathers open Requests, escalations and automations needing attention | "Every failure visible" means an operator can see the trend and the exceptions that wait for them, not only the state |
-| Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
-| Engineering | No CI, no release, no changelog; tests assumed POSIX | `pnpm check` runs typecheck, an import-direction check, the suite, the build, a packed-tarball check and a generated-reference check; `check.yml` (3 OS × Node 22/24), `smoke.yml` (real macOS host), `release.yml` (tagged tarball), surface and property tests, report-only coverage, semver/CHANGELOG, reproducible `verify-install` | Platform regressions, reference drift and unverifiable installs are exactly the failures a daily tool cannot afford |
+**Work from more than one place.** GitHub issues, pull requests, review comments and CI results, plus Feishu mentions and direct messages, all become work. An independent DeepSeek Harness Session can hand over work with `superagent_submit` and always receives an answer, a Feishu conversation can receive a workspace document as a file, and a daily digest summarises what happened.
 
-### Platforms and deployment
+**Run several projects from one bot.** Each registered project brings its own clone, repository and base branch; GitHub polling is per project, a Ticket is confined to its project, and a finished worktree is reclaimed. One panel and one Policy cover every project, filtered per project where that helps.
 
-Every POSIX assumption was replaced with an explicit, tested platform path rather than a shim:
+**Give each project a Lead.** A persistent Session per project owns that project's context, receives and answers its workers' requests, creates the project's Tickets only by accepting those requests, starts an independent reviewer for a change, and escalates work outside the project to the Orchestrator. Architecture-level work waits for a person's recorded approval before implementation starts.
 
-- **Paths** — one platform rule (`src/infra/paths.ts`) feeds the schemas; `stateDir` and project workspaces are
-  absolute on both families, and the test that used to assume `/` now runs a Windows branch with real `C:\` paths.
-- **The service script** — `scripts/dsh-superagent-further` is a dependency-free Node program, with a `.cmd` launcher. It
-  discovers the host through `Get-CimInstance Win32_Process` on Windows (fallback `ps` on POSIX), starts it detached
-  with its output in the log, and stops it through the shutdown route with a `taskkill` tree fallback. It no longer
-  needs Python, tmux or `fcntl`; it locks with an exclusive file and a dead-PID takeover.
-- **Batch-file CLIs** — `gh.cmd`, `lark-cli.cmd` and wrapper `.cmd` files cannot be started by `spawn`/`execFile`
-  with an argument array on Windows. A single invocation module (`src/infra/batch.ts`) builds a `cmd.exe /d /s /c`
-  command line with `windowsVerbatimArguments`, refuses an argument that names a variable in the child's
-  environment or contains a line break, and passes multi-line bodies over stdin instead of the command line.
-- **Worker environment** — POSIX extension-less `#!/bin/sh` shims became `<name>.cmd` shims that strip the shim
-  directory from `PATH`, and credential-helper comparison is realpath/case-aware. `git -c -z --show-origin` parsing
-  ended a false "git too old" result.
-- **Shell tools** — the main Session gets `pwsh` on Windows and `bash` elsewhere; executors' prepare command does
-  the same. A `POST /orchestrator/api/shutdown` route was added because Windows cannot deliver a graceful signal to a
-  detached host.
-- **State permissions** — POSIX modes stay 0700/0600; on Windows an inherited-ACL-free `icacls` grant gives only the
-  operator's account access.
-- **Verification** — Linux is exercised in WSL and on CI, macOS on CI plus a real `smoke.yml` host, and Windows
-  locally and on CI, including batch/ACL tests that only run there. `scripts/verify-install` checks the installation
-  in either host mode and exits `0/1/2` for ready / broken / waiting for setup.
+**Accept work the system discovers.** Workers, project Leads, installation automations and independent Sessions can raise durable requests. Every path records its origin, must be answered, is deduplicated, and cannot bypass Policy or admission.
 
-### The project model and the Source
+**Know what "done" means.** Every Ticket carries a deliverable contract. A `change` Ticket gets a worktree and a branch and ends only through a followed pull request whose ready report names it. An `answer` Ticket reads the project's live checkout with write tools removed and ends as completed. Reports carry up to twenty verification checks, shown on the Ticket and counted in notices; a Lead can start an independent read-only reviewer whose blocked verdict keeps a merged change open. The panel distinguishes answered from delivered.
 
-The prototype's GitHub Source addressed one `repository` and one worker directory. This fork makes the project a
-first-class record on the management surface and derives the Source's work from it. One poll round reads
-notifications once and filters them to the watched set, then reads every project repository's streams and default
-branch CI, then the PRs of open Tickets and subscribed Threads. Thread identity keeps the prototype's numeric form for
-the primary repository and qualifies other repositories, so stored Threads and Tickets need no rename. A project
-repository the agent cannot read is tolerated and reported, rather than failing the round. The panel Source card lists
-every watched repository and updates when projects change — the second defect the operator reported when opening the
-project layer.
+**Let it run without standing over it.** Installation and project automations deliver standing instructions to the right Session, and the panel can run or delete them. An approval inbox collects settings proposals, and a per-block restore undoes a change. Memory keeps pinned facts and recent notes across work, and the language setting keeps human-facing text in the language you choose.
 
-### The Project Lead
+**See what needs a person.** The Overview gathers open Requests, escalations, automations needing attention and each project's Lead; the Logs page filters Host logs by level and scope; health, outbox and reply-queue details stay visible; tickets show their verification evidence and review state.
 
-The Lead is the fork's main architectural addition, and it is deliberately a **layer**, not a new domain concept: the
-domain still has Sources, Threads, Triggers, Tickets, Assignments, Reports and Attentions. A Lead is a durable Session
-bound to one project, with (1) its own prompt section carrying the project's clone, repository and base branch,
-(2) the preset tools it uses to reach and message its child executors — an executor's input is delivered
-through it, not by prompting a Session it owns — (3) `lead_status` and the project-request tools
-(`lead_requests`, `lead_request_create`, `lead_request_decide`, `lead_request_reply`, `lead_request_complete`,
-`lead_request_approval`, `lead_request_approve`, `lead_request_escalate`), the review tools `lead_review` and
-`lead_review_record` that start an independent reviewer subagent and record its verdict (a blocked verdict keeps a
-merged change Ticket open), (4) dispatch records in `lead_message`,
-schema 13, and
-(5) no way to change Policy or settings.
-Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. A worker raises a project request
-when its Ticket needs a decision, a new deliverable or another project's work, and the Lead must answer it. The panel
-shows one row per project (Lead Session, running executors, waiting messages) and opens the Lead when a person clicks
-it. Lead-hosted input and report routing were the P3 work; removing the root worker path was P4, finished on
-2026-11-08, so onboarding now requires a project and there is one execution path. Project requests and their
-approval flow are Part E of [011](docs/011-capabilities.md), specified in [012](docs/012-project-requests.md).
+**Operate it as a service.** A setup wizard, a service script for Windows, macOS and Linux, `verify-install`, a one-host guard and graceful shutdown make it usable unattended. Schema migrations upgrade in place, `scripts/archive-state.mjs` takes a consistent snapshot, and the [operations runbook](docs/013-operations-runbook.md) and [security policy](SECURITY.md) record the day-to-day path and the trust boundaries.
 
-### Requests above Tickets
+**Extend it without replumbing.** Sources (GitHub, Feishu, DeepSeek Harness Sessions), the label capability, Feishu file delivery and operational skills (triage, release, project requests) are first-class; the [tool reference](docs/reference/tools.md) and [settings reference](docs/reference/config.md) are generated from the code so they cannot drift.
 
-The prototype's Ticket is the unit of authorized work and one delivery. It stays that way. A Request is the accepted
-human ask that may need several deliveries: it holds the Ticket ids, the single acknowledgement and the single final
-result. The Orchestrator creates cross-project Tickets; a Lead creates a project's Tickets only by accepting one of
-its workers' project requests, and every such Ticket is confined to that project. Dependencies are simple
-`after` edges, not a workflow engine, because the philosophy does not add a concept for a business need that an
-attribute plus a prompt can express. The live proof: one GitHub request created Request `90df28d6…` with two Tickets
-in `louifinn/project-check` and `louifinn/Napkid-Derivate`; PR #18 and PR #12 merged at `00:09Z`, and the Request
-ended `done` at `00:10:25Z`, reporting both pull requests once.
+**And it runs where you do.** Windows 10/11 natively, Linux and macOS; Node 22 and 24; CI on six platform/Node combinations, a real-host smoke test and an installable release for every version.
 
-A project request is the upward path for a worker. It is a durable record, not a Ticket or a Trigger, so it bypasses
-the admission gate and the Policy; accepting it creates an ordinary Request and its staged Tickets under a Mandate
-whose basis is `lead`, with explicit strength and the project as its boundary. Rejecting or asking for more
-information records the reply and changes nothing else. An unanswered request is reminded twice and then recorded as
-needing attention, and the Lead closes a root request with one aggregate report on the channel the chain started
-from. Architecture requests take one extra step: a design Ticket produces a proposal, a person approves it on the
-root Thread, and only then does the implementation Request exist. An independent DSH Session can also submit work
-through the `session` Source and always receives an answer. Automation deliveries extend the same upwards path: the
-main Session turns an installation automation delivery into an installation Request (`orchestrator_request_create`),
-and a Lead escalates work outside its project for the Orchestrator to decide (`lead_request_escalate` →
-`orchestrator_escalations` → `orchestrator_escalation_decide`), whose reply goes back to the Lead and whose acceptance
-creates the installation Request with `escalation` provenance.
-
-### Operations, state and recovery
-
-- **Migrations** — schemas 11–22 reshape records, fill Ticket projects, add Lead messages, add Requests, end
-  Requests of already-ended Tickets, add the cross-Session memory table, remove the retired GitHub `repository`
-  setting, add the settings-proposal, automation, automation-delivery and project-request tables, and write every
-  Ticket's deliverable contract (`change` for open Tickets and for an ended Ticket with a followed pull request,
-  `answer` otherwise). Each step runs in the opening
-  transaction; `OLDEST_SCHEMA` and `verify-install` make an out-of-date or
-  too-new database visible instead of mysterious.
-- **One host** — the state lock message names the other host, its state directory and the switch command; an
-  orchestrator Session held by a live DeepSeek Harness process is explained instead of retried forever. The in-app
-  host applies the worker environment process-wide, which 006 states plainly because it changes who `gh` is in every
-  Session of that application.
-- **Checkouts** — a `change` Ticket gets a worktree and an `agent/` branch from its project clone; an `answer` Ticket
-  reads the project's live clone under a read-only permission preset and opens no branch. Finished worktrees are
-  reclaimed after `worktreeKeepDays` (default 7) by the host every six hours, and `scripts/clean-worktrees` previews
-  or applies the same rule for an operator. Disk growth is a failure mode, so it is automated.
-- **Retries** — the outbox retries with backoff and exposes attempts, the reply queue shows the oldest wait and the
-  next attempt, and a source reports when it will poll again. A silent retry loop is treated as a bug.
-- **Logs and attention** — the panel Logs page shows the Host log filtered by level and scope, and the Overview gathers
-  the rows that wait for a person: open Requests, escalations, automations needing attention and the per-project Leads.
-  Health, the outbox and the reply queue keep their own details; the log is where a transient failure is read.
-- **Archive and runbook** — `scripts/archive-state.mjs` takes a consistent `VACUUM INTO` snapshot of the state
-  database under its own lock and prunes old archives by count; [013](docs/013-operations-runbook.md) records the daily
-  checks, backups, recovery and upgrade path, and [SECURITY.md](SECURITY.md) records the trust boundaries.
-- **Upgrade and rollback** — five documented steps, a backup of `orchestrator.sqlite` with `-wal`/`-shm`, and a
-  rollback that restores it and re-runs `verify-install`; the daily path needs no backup unless the schema advanced.
-
-### Trust, safety and the worker environment
-
-The prototype left "which Trigger fields are trusted" as an open question. This fork answers it and pins the answer:
-source, thread, actor id, `human`, `addressed`, channel, time, URL, the receiving scope and declared routing metadata
-are trusted; message text, titles, bodies, comments, files, images, names and quoted links are not. No untrusted field
-can change a role, tool list, Policy, allow list or request strength. `tests/trust.spec.ts` checks both halves and the
-prompt statements; prompt-injection text cannot widen the allow list. On the machine side, the state database and
-directory are owner-only, the agent runs under its own GitHub and Feishu credentials, the worker environment is
-scoped and documented, an answer Ticket executes with write tools removed and a read-only preset, and the reviewer runs
-read-only. [SECURITY.md](SECURITY.md) states these boundaries and the reporting path for a vulnerability. Credentials are still broader than ideal *by the operator's explicit decision* (a classic
-`louibot` token and the current Feishu secret); 006 records where each lives and how to rotate it. Start with a short
-allow list and a test repository, as the responsibility section of the philosophy asks.
-
-### Engineering and distribution
-
-`pnpm check` is the single check: typecheck, the import-direction check (`architecture:check`), the suite, the tsdown
-build, `pack:check` over the tarball npm would publish (compared with `scripts/pack-manifest.json`), and `docs:check`
-over the generated tool and settings references. CI runs it on Ubuntu, macOS and Windows with Node 22 and 24 (six
-combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the bundle and attaches it to a GitHub
-release. The suite is 91 spec files and 1522 tests; it drives real timers and SQLite, so timeouts are 30 s per test and
-hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the fork. The docs are
-tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007 lists every source
-file and spec; `tests/surface.spec.ts` asserts the mounted tool, skill and preset surface, and
-`tests/properties.spec.ts` drives the gate, identity and creation invariants from seeded generators. The reference
-pages under [docs/reference](docs/reference/tools.md) are generated from the code by `pnpm docs:generate` and compared
-by `pnpm docs:check`, so they cannot drift; coverage is reported by `pnpm test:coverage` without gating the release.
-[CONTRIBUTING.md](CONTRIBUTING.md) gives every contributor the same loop, gates, reporting template and role hand-offs.
-The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package and every registration id to
-`dsh-superagent-further`, so an existing profile follows the migration steps in 006. Additions are additive settings
-and panel rows, with a `CHANGELOG` and semver; 0.4.0 is the current release.
-
-### What did not change
-
-The domain model and vocabulary (Source, Thread, Trigger, admission, Ticket, Assignment, Report, Attention, Mandate,
-Policy), the Engine as the only writer with effects/relay/notice delivery, prompt composition and the numbered
-documents 000–008, the `dsh-superagent-further` bundle layout, and the operator-facing promise that the agent acts only when
-asked or allowed and speaks only when someone must act. A migration from a prototype installation keeps its Tickets,
-Threads, decisions and ended state; upgrade steps are in 006.
+The prototype's invariants stay in place: the Engine is the only writer, and the agent acts only when a Source event, an accepted Request or an explicit request authorises it. [009 Roadmap](docs/009-roadmap.md) records when each ability landed and [011 Capabilities](docs/011-capabilities.md) records the decisions behind it.
 
 ## Product philosophy, extended
 
