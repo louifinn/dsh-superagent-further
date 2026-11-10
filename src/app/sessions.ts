@@ -54,6 +54,7 @@ interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: 
 
 /** The agent presets Executor Sessions, the main Session and project Lead Sessions are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-further-worker', ROUTER_PRESET = 'dsh-superagent-further-router', LEAD_PRESET = 'dsh-superagent-further-lead'
+export const REVIEWER_PRESET = 'dsh-superagent-further-reviewer'
 
 /** The runtime-context contribution that carries memories: volatile, so it must not live in the system prompt. */
 export const MEMORY_CONTEXT = 'dsh-superagent-further-memory'

@@ -204,7 +204,7 @@ Exit codes: `0` every check passed, `1` at least one check failed, `2` the API a
 
 ## Platform and release checks
 
-Part of these checks run in CI; the visible part and the real accounts cannot, so a release does them by hand.
+Part of these checks run in CI; the visible part and the real accounts cannot, so a release does them by hand. Coverage is reported but not gated: `pnpm test:coverage` writes a text and JSON summary under `.artifacts/coverage`, and the CI check runs it with `continue-on-error` so a drop is visible in the job log without failing a release. The operator-facing checks and recovery steps are in 013 Operations runbook.
 
 ### macOS checklist
 
@@ -224,7 +224,7 @@ Record the result in the release notes, with the macOS version and the DSH versi
 
 Before tagging:
 
-1. `pnpm check` green on all three platforms through CI (`.github/workflows/check.yml`), and the [macOS checklist](#macos-checklist) run once for this release. `pnpm check` also runs `pack:check` (the packed tarball's file list against `scripts/pack-manifest.json`) and `docs:check` (the generated tool and settings references under `docs/reference`), so a release cannot ship a stale manifest or reference page; after an intentional packaging or schema change run `pnpm pack:check --update` and `pnpm docs:generate` before the final check.
+1. `pnpm check` green on all three platforms through CI (`.github/workflows/check.yml`), and the [macOS checklist](#macos-checklist) run once for this release. `pnpm check` also runs `architecture:check` (the import-direction rules), `pack:check` (the packed tarball's file list against `scripts/pack-manifest.json`) and `docs:check` (the generated tool and settings references under `docs/reference`), so a release cannot ship a stale manifest or reference page; after an intentional packaging or schema change run `pnpm pack:check --update` and `pnpm docs:generate` before the final check.
 2. The panel renders in a desktop browser for the current build: the sidebar entry, the overview with its Source health and reply queue, one Ticket row, and one settings page. Save a screenshot next to the release notes; a screenshot is evidence for the whole panel, which CI cannot render. Capture them from a real host when the release changes the client, and note the DSH version the host ran; never commit a screenshot of a real workspace, because the sidebar and the account label show the operator's private project names. Where the system browser cannot start headless (Chrome 156 on the Windows machine of 2026-11-07 exits before writing DevToolsActivePort), Playwright's own Chromium renders the panel: open the panel URL with its token, dismiss the preview notice, click **Superagent** in the sidebar, screenshot the Overview and Source tabs.
 3. `pnpm pack --pack-destination dist` produces a tarball, `dsh plugin --profile <name> add "file:<tarball>"` installs it into a fresh profile, and `--dump-config` composes it. Then tag `v<version>`, and the release workflow packs again, attaches the tarball and creates the release.
 

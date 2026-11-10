@@ -28,7 +28,7 @@ dsh-superagent-further 是面向团队所用仓库的主动式编程智能体，
 | --- | --- |
 | 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：89 个 spec 文件，**1507 passed / 5 skipped（1512）**，包含类型检查、构建、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 检查 | `pnpm check`：91 个 spec 文件，**1517 passed / 5 skipped（1522）**，包含类型检查、构建、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.3.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.3.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
 | 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复；项目自动化投递可经其 Lead 提出一个项目请求，安装级自动化投递可由主会话创建安装级 Request，Lead 可把本项目之外的工作升级给 Orchestrator 决定 |
@@ -114,7 +114,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 原型是为单仓库、单 POSIX 主机、单人运维者准备的忠实研究产物。本 fork 保留其领域模型与哲学，改变的是日常使用提出的
 要求：平台、多项目、执行层级、运维、证据与分发。相对原型唯一提交（`8c32a9d`）的差异是当前 HEAD 上的
-**239 个文件、+24,984 / −1,606**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
+**246 个文件、+26,064 / −1,756**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
 改动都来自本 fork。
 
 | 方面 | 原型 | 本 fork | 原因 |
@@ -225,7 +225,7 @@ worker 环境是有范围限制并被文档化的。凭据仍然比理想状态�
 `pnpm check` 是唯一的检查：类型检查、89 个 spec 文件、tsdown 构建、`scripts/check-pack.mjs` 对 npm 将要发布的
 tarball 的检查，以及 `docs:check` 对生成参考页的一致性检查。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
 和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，`release.yml` 打包插件包并附加到 GitHub release。
-测试套件共 1512 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
+测试套件共 1522 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
 Linux 套件，是本 fork 证据的一部分。文档也被测试：[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求
 007 列出每个源文件与 spec；`tests/surface.spec.ts` 断言挂载后的工具、skill 与 preset 表面，
 `tests/properties.spec.ts` 用带种子的生成器驱动门禁、身份与迁移不变量。`docs/reference` 下的参考页由
@@ -298,6 +298,8 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 - [010 项目级编排器](docs/010-project-orchestrator.md)：Orchestrator → Lead → Worker 设计及其决策
 - [011 能力](docs/011-capabilities.md)：标签、文件投递、项目请求、安装级自举与 Lead 升级的决策记录
 - [012 项目请求](docs/012-project-requests.md)：项目请求、升级与安装级工作的设计
+- [013 运维手册](docs/013-operations-runbook.md)：日常检查、状态备份、故障恢复与升级
+- [SECURITY.md](SECURITY.md)：信任边界与漏洞报告方式
 - [工具参考](docs/reference/tools.md)：从模型看到的工具工厂生成
 - [设置参考](docs/reference/config.md)：设置块生成的 JSON Schema
 - [AGENTS.md](AGENTS.md)：给在本仓库工作的编程智能体的说明

@@ -97,6 +97,13 @@ export class Engine {
     this.repo.atomic(() => { this.tickets.threadClosed(thread, outcome, isoTime(at)) })
   }
 
+  /** Start a reviewer on a live change Ticket, recording its Session while the verdict is pending. */
+  beginReview(ticketId: string, sessionId: string): Ticket { return this.repo.atomic(() => this.tickets.beginReview(ticketId, sessionId)) }
+  /** Record a reviewer's verdict on a change Ticket. */
+  recordReview(ticketId: string, input: { state: 'clean' | 'blocked'; summary: string; findings?: readonly string[] }): Ticket {
+    return this.repo.atomic(() => this.tickets.recordReview(ticketId, input))
+  }
+
   // The clock
 
   /**
@@ -728,7 +735,8 @@ export class Engine {
 }
 
 /** What the project Lead's approval tools ask of the Engine (docs/012 D7). */
-export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'requestProjectApproval' | 'approveProjectRequest' | 'escalateProjectRequest'>
+export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'requestProjectApproval' | 'approveProjectRequest' | 'escalateProjectRequest'
+  | 'beginReview' | 'recordReview'>
 /** What Sources ask and tell the Engine. */
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
@@ -741,4 +749,4 @@ export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reeva
 export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */
 export type EngineForExecutor = Pick<Engine, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed'
-  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply' | 'raiseProjectRequest'>
+  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply' | 'raiseProjectRequest' | 'beginReview'>

@@ -283,6 +283,8 @@ export class Runtime extends Service implements SourceHost {
         plan: (id, plan) => engine.planProjectRequest(id, plan),
         requestApproval: id => engine.requestProjectApproval(id),
         approve: (id, input) => engine.approveProjectRequest(id, input),
+        review: ticketId => this.executor.review(ticketId),
+        recordReview: (ticketId, review) => engine.recordReview(ticketId, review),
       })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })

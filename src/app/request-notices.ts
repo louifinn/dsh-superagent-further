@@ -54,7 +54,9 @@ function ticketLine(ticket: Ticket, chinese: boolean, repository: string): strin
   const state = ticket.ended?.outcome ?? 'open'
   const words = ticket.ended?.outcome === 'completed' && canComplete(ticket.deliverable)
     ? (chinese ? '已回答' : 'answered') : chinese ? ZH[state as keyof typeof ZH] ?? state : state
-  return `- ${ticket.project ?? (chinese ? '部署仓库' : 'deployment')}: ${link} ${words}`.trim()
+  const checks = [...ticket.assignments].reverse().find(item => item.report?.checks?.length)?.report?.checks?.length
+  const evidence = checks ? (chinese ? `（${checks} 项检查）` : ` (${checks} checks)`) : ''
+  return `- ${ticket.project ?? (chinese ? '部署仓库' : 'deployment')}: ${link} ${words}${evidence}`.trim()
 }
 
 /**

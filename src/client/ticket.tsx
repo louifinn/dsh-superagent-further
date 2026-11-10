@@ -153,6 +153,16 @@ export function TicketPage({ id }: { id: string }) {
     {data.deliveryError && <p className="dt-banner dt-danger dt-mono">
       <span className="dt-banner-label">{t('deliveryFailedPrefix')}</span>{data.deliveryError}
     </p>}
+    {data.evidence && <Section title={t('evidenceTitle')} count={data.evidence.checks.length}>
+      <ul className="dt-plain-list" data-evidence>
+        {data.evidence.checks.map((check, index) => <li key={index}>
+          <strong>{check.name}</strong>
+          {check.command && <span className="dt-mono"> · {check.command}</span>}
+          {check.exitCode !== undefined && <span> · exit {check.exitCode}</span>}
+          {check.evidence && <div className="dt-hint">{check.evidence}</div>}
+        </li>)}
+      </ul>
+    </Section>}
     <MandateDetails ticket={data} actor={actor} />
     {undelivered.length > 0 && <Section title={t('undeliveredInputs')} count={undelivered.length}>
       <Hint>{data.deliveryError ? t('inputRetryHint') : data.paused ? t('inputPausedHint') : t('inputWaitingHint')}</Hint>

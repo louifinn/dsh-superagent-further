@@ -253,3 +253,15 @@ still needs a root Thread, so escalation stays inside the work kind.
 
 Phases merged in order (M13 → M14 → M15 → M16 → M17 → M18); scopes overlapped in `src/core`, `src/app`, `tests` and
 `docs`, so Tower serialized them.
+
+### D14. Review gate
+
+A change Ticket may carry an independent review. Its project Lead starts one with `lead_review`, which spawns a reviewer
+subagent (`dsh-superagent-further-reviewer` preset) on the Ticket's pull request and records a `pending` review in the
+Ticket; the reviewer reports a `clean` or `blocked` verdict with its findings through `lead_review_record`. The gate lives
+in the core, not in a prompt: a change Ticket whose pull request merges while its review is `blocked` stays open for a
+person, and only a later `clean` verdict (or manual close) ends it. An answer Ticket never needs a reviewer.
+
+- The reviewer cannot edit the repository: the preset carries no write tool and the Ticket carries no assignment.
+- A blocked verdict is visible on the Ticket (`review` returned by `ticketSummary`) and in the panel.
+- Tests: `tests/core-engine.spec.ts` (review gate) and `tests/surface.spec.ts` (the reviewer preset and the Lead tool set).

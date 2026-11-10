@@ -48,3 +48,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm check
+
+      # Report coverage without gating the release; the summary lands in the job log.
+      - run: pnpm test:coverage
+        if: matrix.node == '24.x'
+        continue-on-error: true

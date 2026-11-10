@@ -220,6 +220,17 @@ export type AssignmentState = 'pending' | 'running' | 'ended'
  * ready (`ready`), a person must act to unblock or recover it (`blocked` or `failed`), or nothing is left to do (`dropped`).
  */
 export type ReportState = 'progress' | 'waiting' | 'ready' | 'blocked' | 'failed' | 'dropped'
+/** One verification a worker ran before reporting: a named check with its command and the evidence it produced. */
+export interface ReportCheck {
+  /** What was verified. */
+  name: string
+  /** The command that produced the evidence. */
+  command?: string
+  /** The command's exit code, when it has one. */
+  exitCode?: number
+  /** A short line of evidence, such as the key output or the test count. */
+  evidence?: string
+}
 /** Binding between a ticket and one executor instance. */
 export interface Assignment {
   id: string
@@ -229,7 +240,7 @@ export interface Assignment {
   endedAt?: string
   endedReason?: string
   /** The worker's last report; pullRequest is the pull request a change deliverable opened, the delivery pointer its ending needs. */
-  report?: { state: ReportState; summary: string; at: string; pullRequest?: string }
+  report?: { state: ReportState; summary: string; at: string; pullRequest?: string; checks?: readonly ReportCheck[] }
   /** When Inputs last reached the worker; one at or after `report.at` means the worker has been busy with Inputs since that report. */
   deliveredAt?: string
   /**
@@ -291,6 +302,16 @@ export const requiresPullRequest = (deliverable: Deliverable): boolean => delive
 export const canMerge = (deliverable: Deliverable): boolean => deliverable === 'change'
 /** Whether `completed` is a successful ending for this deliverable: only an answer ticket's report is its deliverable. */
 export const canComplete = (deliverable: Deliverable): boolean => !requiresPullRequest(deliverable)
+/** Where a change Ticket's independent review stands: pending while a reviewer runs, clean or blocked after it reports. */
+export type ReviewState = 'pending' | 'clean' | 'blocked'
+/** One reviewer's verdict on a change Ticket, kept on the Ticket so a request cannot settle without it. */
+export interface TicketReview {
+  state: ReviewState
+  summary: string
+  findings: readonly string[]
+  sessionId: string
+  at: string
+}
 /** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
 export interface Attention { id: string; question: string; triggerId?: string }
 /**
@@ -449,6 +470,8 @@ export interface Ticket {
   mandate: Mandate
   /** What the ticket owes: a reviewable change or an answer. Set at acceptance from the accept outcome; immutable afterwards. */
   deliverable: Deliverable
+  /** The latest independent review of a change ticket's delivery; a change request does not settle without a clean one. */
+  review?: TicketReview
   /** The Request it belongs to; absent only on records from before schema 14 until the upgrade fills it in. */
   requestId?: string
   /** Tickets of the same Request it waits on; the Orchestrator dispatches it only after they end. */

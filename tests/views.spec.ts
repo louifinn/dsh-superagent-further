@@ -149,6 +149,21 @@ it('summaries carry the deliverable contract, and only an answer Ticket reads as
   void host
 })
 
+it('reports the checks of the latest report as verification evidence', () => {
+  const host = views()
+  const checks = [{ name: 'unit tests', command: 'pnpm vitest run', exitCode: 0, evidence: '12 passed' }]
+  const base = { id: 't1', title: 'Fix', decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at,
+    mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
+      id: 'ou_alice' }, scope: '' }, deliverable: 'answer' as const, origin: { triggerId: 'e1', triggerIds: ['e1'] }, inputs: [] }
+  store.tickets.save({ ...base, assignments: [{ id: 'a1', state: 'running' as const, createdAt: at, startedAt: at,
+    report: { state: 'ready' as const, summary: 'done', at, checks } }] })
+  expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ evidence: { state: 'ready', at, checks } })
+  store.tickets.save({ ...base, assignments: [{ id: 'a2', state: 'running' as const, createdAt: at, startedAt: at,
+    report: { state: 'progress' as const, summary: 'working', at } }] })
+  expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ evidence: null })
+  void host
+})
+
 it('does not show a follow-up that reached a ticket as waiting for an Eval, though an older version queued it', () => {
   const host = views()
   live('t1')

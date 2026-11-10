@@ -2,7 +2,7 @@
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { canComplete, latestAssignment, liveTicket, requiresPullRequest, runningAssignment } from './model.ts'
-import type { ReportState, Ticket } from './model.ts'
+import type { ReportCheck, ReportState, Ticket } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
 import { automatic, type Tickets } from './tickets.ts'
@@ -19,6 +19,8 @@ export interface WorkerReport {
   answers?: string
   /** The pull request this change deliverable opened: its followed Thread decides merged or closed, and a ready report without one is refused. */
   pull_request?: string
+  /** The verifications this report rests on; a ready report without any is still accepted, but its evidence is empty. */
+  checks?: readonly ReportCheck[]
 }
 const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Finish the original assignment and report its status.'
 
@@ -114,6 +116,7 @@ export class Assignments extends EnginePart {
     if (assignment.state === 'ended') throw new UserError('assignmentEnded')
     // A change ends through its pull request, never through a bare ready report: demand the delivery pointer before recording the report.
     if (report.state === 'ready' && requiresPullRequest(ticket.deliverable) && !ticket.follows?.length && !report.pull_request) throw new UserError('changeNeedsPullRequest')
+    const checks = this.checks(report.checks)
     const at = this.now()
     const previous = ticket.attention
     const ask = (question: string) => ({ id: key('attention', ticketId, question, at), question, ...(report.askedBy ? { triggerId: report.askedBy } : {}) })
@@ -123,7 +126,8 @@ export class Assignments extends EnginePart {
     else delete ticket.attention
     // A replaced or cleared attention question withdraws any pending unsent reply for the previous question from the outbox.
     if (previous && previous.id !== attention?.id) this.replies.withdrawAttention(previous.id)
-    assignment.report = { state: report.state, summary: report.summary, at, ...(report.pull_request ? { pullRequest: report.pull_request } : {}) }
+    assignment.report = { state: report.state, summary: report.summary, at, ...(report.pull_request ? { pullRequest: report.pull_request } : {}),
+      ...(checks ? { checks } : {}) }
     ticket.updatedAt = at
     if (report.answers && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]
     if (report.answers) this.takeUp(ticketId, report.answers)
@@ -135,6 +139,22 @@ export class Assignments extends EnginePart {
     const outcome = report.state === 'dropped' ? this.tickets.followsDone(ticket)?.outcome ?? 'dropped' : report.state === 'ready' ? ready : undefined
     if (outcome) this.tickets.end(ticketId, 'executor', outcome, at)
     return this.require(ticketId)
+  }
+  /** Validates and trims a report's checks; `undefined` when the report carries none. */
+  private checks(input: readonly ReportCheck[] | undefined): readonly ReportCheck[] | undefined {
+    if (input === undefined) return undefined
+    if (!Array.isArray(input) || input.length > 20) throw new UserError('invalidReportChecks')
+    const cleaned = input.map(item => {
+      const name = typeof item?.name === 'string' ? item.name.trim() : ''
+      if (!name || name.length > 200) throw new UserError('invalidReportChecks')
+      const command = item.command === undefined ? undefined : String(item.command).trim()
+      if (command !== undefined && command.length > 500) throw new UserError('invalidReportChecks')
+      const evidence = item.evidence === undefined ? undefined : String(item.evidence).trim()
+      if (evidence !== undefined && evidence.length > 1000) throw new UserError('invalidReportChecks')
+      if (item.exitCode !== undefined && (!Number.isInteger(item.exitCode) || Math.abs(item.exitCode) > 1000)) throw new UserError('invalidReportChecks')
+      return { name, ...(command ? { command } : {}), ...(item.exitCode !== undefined ? { exitCode: item.exitCode } : {}), ...(evidence ? { evidence } : {}) }
+    })
+    return cleaned.length ? cleaned : undefined
   }
   /** The ticket, while it is open and `assignmentId` runs it. */
   private running(ticketId: string, assignmentId: string): Ticket | undefined {

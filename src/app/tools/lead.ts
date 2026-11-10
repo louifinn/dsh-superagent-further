@@ -12,6 +12,10 @@ export interface LeadApprovalHost {
   raise(input: ProjectRequestInput): ProjectRequest
   /** Raise an escalation to the Orchestrator for work outside this project (docs/012 D13). */
   escalate(input: ProjectRequestInput): ProjectRequest
+  /** Start a reviewer subagent for a live change Ticket of this project; resolves with its Session id. */
+  review(ticketId: string): Promise<{ session_id: string }>
+  /** Record a reviewer's verdict on a change Ticket. */
+  recordReview(ticketId: string, input: { state: 'clean' | 'blocked'; summary: string; findings?: readonly string[] }): Ticket
   plan(id: string, plan: ProjectRequestPlan): ProjectRequest
   requestApproval(id: string): ProjectRequest
   approve(id: string, input: { approved: boolean; trigger_id: string }): ProjectRequest
@@ -126,6 +130,40 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       const raised = engine.escalate({ project: project.id, kind: 'escalation', title, instruction,
         raised_by: { session: host.session } })
       return projectRequestView(raised)
+    },
+  }), tool({
+    name: 'lead_review',
+    description: 'Start an independent reviewer on a live change Ticket of this project. The reviewer runs as a subagent of this Lead '
+      + 'in the Ticket worktree, reads the diff and runs the checks that matter, and reports findings back here. Record its verdict '
+      + 'with lead_review_record; a blocked review keeps the Ticket open when the pull request merges.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).describe('The id of a live change Ticket of this project.'),
+    }).strict(),
+    execute: async ({ ticket_id }: { ticket_id: string }) => {
+      const ticket = host.store.tickets.get(ticket_id)
+      if (!ticket) throw new Error(`Unknown Ticket ${ticket_id}`)
+      if (ticket.project !== project.id) throw new Error(`Ticket ${ticket_id} belongs to project ${ticket.project}, not ${project.id}`)
+      if (ticket.review !== undefined) throw new Error(`Ticket ${ticket_id} already carries a review; record it with lead_review_record`)
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      return engine.review(ticket_id)
+    },
+  }), tool({
+    name: 'lead_review_record',
+    description: 'Record the reviewer\'s verdict on a change Ticket started with lead_review. A blocked review keeps the Ticket '
+      + 'open when its pull request merges; a clean review lets the merge end it.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).describe('The Ticket lead_review started a review on.'),
+      state: z.enum(['clean', 'blocked']).describe('blocked names findings a person must resolve; clean accepts the change.'),
+      summary: z.string().trim().min(1).max(2_000).describe('The verdict in the language of the Ticket.'),
+      findings: z.array(z.string().trim().min(1).max(1_000)).max(50).optional().describe('Concrete problems a blocked review found.'),
+    }).strict(),
+    execute: async (input: { ticket_id: string; state: 'clean' | 'blocked'; summary: string; findings?: string[] }) => {
+      const engine = approvals.get(host.store)
+      if (!engine) throw new Error('Lead approvals are not bound in this runtime')
+      const reviewed = engine.recordReview(input.ticket_id, { state: input.state, summary: input.summary,
+        ...(input.findings ? { findings: input.findings } : {}) })
+      return { ticket_id: reviewed.id, review: reviewed.review }
     },
   }), tool({
     name: 'lead_request_decide',

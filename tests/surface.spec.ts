@@ -43,7 +43,8 @@ describe('mounted surface', () => {
         'orchestrator_ticket_note', 'orchestrator_ticket_request_status', 'orchestrator_ticket_retry', 'orchestrator_trigger_requeue'],
       // A project Lead: its project's requests and messages, plus the memories scoped to its project.
       lead: ['lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
-        'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_status', 'memory_forget', 'memory_search', 'memory_write'],
+        'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'memory_forget',
+        'memory_search', 'memory_write'],
       // An Executor Session: report, read what reached it, follow or detach Threads, and hand a Trigger back.
       worker: ['orchestrator_ack', 'orchestrator_read', 'orchestrator_report', 'orchestrator_thread_follow', 'orchestrator_thread_unrelated',
         'orchestrator_trigger_handback', 'request_create'],
@@ -54,7 +55,7 @@ describe('mounted surface', () => {
     expect(Object.keys(bundledSkills).sort()).toEqual(['feishu', 'github', 'project-request', 'release', 'triage'])
   })
 
-  it('ships one bundle layer, three presets and the client injection its manifest names', () => {
+  it('ships one bundle layer, four presets and the client injection its manifest names', () => {
     expect(packageJson.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(packageJson.files).toEqual(expect.arrayContaining(['lib', 'cordis.patch.yml', 'locale/*.json', 'prompts', 'skills']))
     expect(packageJson.dsh.client.inject.length).toBe(6)
@@ -65,11 +66,13 @@ describe('mounted surface', () => {
       'dsh-superagent-further-worker-preset',
       'dsh-superagent-further-router-preset',
       'dsh-superagent-further-lead-preset',
+      'dsh-superagent-further-reviewer-preset',
     ])
-    expect(listings(patch, /^\s+id: (dsh-superagent-further-(?:worker|router|lead))$/gm)).toEqual([
+    expect(listings(patch, /^\s+id: (dsh-superagent-further-(?:worker|router|lead|reviewer))$/gm)).toEqual([
       'dsh-superagent-further-worker',
       'dsh-superagent-further-router',
       'dsh-superagent-further-lead',
+      'dsh-superagent-further-reviewer',
     ])
     expect(patch).toContain('name: dsh-superagent-further/github-watch')
     expect(patch).toContain('name: dsh-superagent-further/feishu-watch')

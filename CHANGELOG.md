@@ -8,6 +8,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- A change Ticket can carry an independent review its project Lead starts with `lead_review`; a blocked verdict keeps the Ticket open when its pull request merges.
+- Reports may carry up to 20 verification checks, shown as evidence on the Ticket and counted in request notices.
+- A layering check (`architecture:check`) rejects core importing the layers above it, the client importing the server, and src importing development tooling.
+- An operations runbook (013) documents the daily checks, state backups, recovery and upgrades; `SECURITY.md` records the trust boundaries and the reporting path.
+- `scripts/archive-state.mjs` takes a consistent `VACUUM INTO` copy of the state database and prunes old archives; `pnpm test:coverage` reports coverage without gating.
+
+### Added
+
 - `pnpm check` now verifies the packed tarball against `scripts/pack-manifest.json` (`pack:check`) and compares the generated tool and settings references with the code (`docs:generate`, `docs:check`), so packaging or reference drift fails the gate.
 
 - A mounted-surface test asserts every loaded tool set, the bundled skills and the bundle's preset rows, and seeded property tests cover admission, Trigger identity across repositories, idempotent creation, schema 22 migration and reconcile fixed points.

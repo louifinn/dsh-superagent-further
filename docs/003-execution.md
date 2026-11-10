@@ -95,6 +95,8 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 
 - **Ready on an answer:** a `ready` Report ends an `answer` Ticket as completed; it reads the project's live checkout and opens no branch or pull request.
 - **Ready on a change without a pull request:** a `change` Ticket is refused with `changeNeedsPullRequest`; it names the pull request in its report and ends only through the Threads it follows.
+- **Review gate:** a change Ticket may carry a review its project Lead started with `lead_review`. A `clean` verdict lets a followed pull request's merge end the Ticket; a `blocked` verdict keeps it open even after the merge, so a person resolves the findings (docs/012 D14).
+- **Verification evidence:** a Report may carry at most 20 checks, each a name, an optional command, an optional integer exit code and optional evidence text. The Assignment keeps them, the Ticket shows them as evidence, and a request's result notice counts them. The Executor reports only checks it actually ran.
 - **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a person's later message on its Threads resumes it.
 ### Pull requests
 

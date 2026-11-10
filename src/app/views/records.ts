@@ -130,9 +130,11 @@ function ticketNote(ticket: Ticket, stage: TicketStage): { text: string; error: 
 export function ticketSummary(ticket: Ticket) {
   const stage = ticketStage(ticket)
   const note = ticketNote(ticket, stage)
+  const report = latestReport(ticket)
+  const evidence = report?.checks?.length ? { state: report.state, at: report.at, checks: report.checks } : null
   const state = liveTicket(ticket) ? 'open' as const : 'ended' as const
   return { id: ticket.id, title: ticket.title, state, ...stage, ...note ? { note } : {},
-    actions: { retry: canRetry(ticket), stop: liveTicket(ticket) }, strength: ticket.mandate.strength, deliverable: ticket.deliverable,
+    actions: { retry: canRetry(ticket), stop: liveTicket(ticket) }, strength: ticket.mandate.strength, deliverable: ticket.deliverable, evidence,
     answered: !!ticket.ended && ticket.ended.outcome === 'completed' && canComplete(ticket.deliverable), ended: ticket.ended,
     attention: ticket.attention && { ...ticket.attention, question: markdown(ticket.attention.question) },
       assignments: ticket.assignments.length, inputs: ticket.inputs.length, undelivered: ticket.undelivered.length,

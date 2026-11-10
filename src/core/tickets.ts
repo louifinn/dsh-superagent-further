@@ -150,6 +150,8 @@ export class Tickets extends EnginePart {
       this.repo.tickets.save(ticket)
       const done = this.followsDone(ticket)
       if (!done || this.unfinished(ticket, at)) continue
+      // A reviewer who blocked the change keeps the Ticket open even when its pull request merges: a person resolves it.
+      if (done.outcome === 'merged' && ticket.deliverable === 'change' && ticket.review?.state === 'blocked') continue
       // Work resumed after the close and finished ends now.
       const resumed = Date.parse(latestAssignment(ticket)?.createdAt ?? '') > Date.parse(at)
       this.end(ticket.id, 'executor', done.outcome, resumed ? this.now() : done.at)
@@ -170,6 +172,25 @@ export class Tickets extends EnginePart {
    * The Trigger to attach to a ticket, once the ticket may take it.
    * @throws UserError when the trigger or ticket is unknown, a ticket's worker still decides the trigger, a person stopped the ticket, or an ended ticket's Mandate no longer revalidates.
    */
+  /** Start a reviewer on a live change Ticket; the reviewer Session is recorded while its verdict is pending. */
+  beginReview(ticketId: string, sessionId: string): Ticket {
+    const ticket = this.require(ticketId)
+    if (!liveTicket(ticket)) throw new UserError('ticketEnded')
+    if (ticket.deliverable !== 'change') throw new UserError('invalidReview')
+    const reviewed: Ticket = { ...ticket, review: { state: 'pending', summary: '', findings: [], sessionId, at: this.now() } }
+    this.repo.tickets.save(reviewed)
+    return reviewed
+  }
+  /** Record a reviewer's verdict; a blocked review keeps a merged pull request from ending the Ticket. */
+  recordReview(ticketId: string, input: { state: 'clean' | 'blocked'; summary: string; findings?: readonly string[] }): Ticket {
+    const ticket = this.require(ticketId)
+    if (ticket.deliverable !== 'change') throw new UserError('invalidReview')
+    if (ticket.review === undefined) throw new UserError('unknownReview')
+    const reviewed: Ticket = { ...ticket, review: { ...ticket.review, state: input.state, summary: input.summary,
+      findings: [...(input.findings ?? [])], at: this.now() } }
+    this.repo.tickets.save(reviewed)
+    return reviewed
+  }
   attachable(ticketId: string, triggerId: string): Trigger {
     const trigger = this.repo.triggers.get(triggerId)
     if (!trigger) throw new UserError('unknownTrigger')

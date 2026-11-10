@@ -4,7 +4,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { canComplete, key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
+import { canComplete, key, latestAssignment, latestReport, liveTicket, requiresPullRequest, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
@@ -14,7 +14,7 @@ import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
-import { WORKER_PRESET, type Sessions } from '../app/sessions.ts'
+import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
@@ -63,7 +63,7 @@ export interface ExecutorHost {
   readonly context: Context
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
-    | 'assignmentInterrupted'>
+    | 'assignmentInterrupted' | 'beginReview'>
   readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit' | 'leads' | 'requests'>
   /** Durable effect queue through which launches and input deliveries run. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
@@ -503,6 +503,26 @@ export class DshExecutor implements Executor {
     })
   }
   private relay({ id, text }: { id: string; text: string }): void { this.host.sessions.relay(id, text) }
+  /** Start an independent reviewer subagent for a live change Ticket, recorded on the Ticket while its verdict waits. */
+  async review(ticketId: string): Promise<{ session_id: string }> {
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket) throw new Error(`Unknown Ticket ${ticketId}`)
+    if (!liveTicket(ticket)) throw new Error(`Ticket ${ticketId} has ended; start a review on a live Ticket`)
+    if (!requiresPullRequest(ticket.deliverable)) throw new Error('Only a change Ticket carries a review')
+    const project = ticket.project === undefined ? undefined : projectOf(this.host.store.settings().executor.projects, ticket.project)
+    if (!project) throw new Error('This Ticket names no registered project; a review needs a project checkout')
+    const lead = await this.host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+    const childId = `review-${ticket.id}`
+    const report = latestReport(ticket)
+    const text = JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(report?.pullRequest ? { pull_request: report.pullRequest } : {}),
+      ...(report?.summary ? { report: report.summary } : {}), ...(report?.checks?.length ? { checks: report.checks } : {}),
+      instruction: 'Review this change independently in the project worktree: read the diff and the relevant code, run the checks that matter, '
+        + 'and answer with a concise verdict. The Lead records it with lead_review_record; do not edit files, commit or merge.' })
+    await this.leads.start(executorActivation({ childId, title: `Review · ${ticket.title}`, cwd: ticket.execution?.directory ?? project.workspace,
+      text, lead, signal: this.host.lifetime, preset: REVIEWER_PRESET }))
+    this.host.engine.beginReview(ticket.id, childId)
+    return { session_id: childId }
+  }
   private async launch(ticket: Ticket, assignment: Assignment): Promise<void> {
     const current = () => {
       if (this.host.closing()) throw new Error('dsh-superagent-further is stopping')

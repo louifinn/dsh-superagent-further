@@ -1614,6 +1614,44 @@ Parameters:
         "type": "string",
         "minLength": 1
       }
+    },
+    "checks": {
+      "description": "The verifications this report rests on; list only checks you actually ran.",
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "What was verified, such as \"pnpm check\" or \"reproduced the crash\"."
+          },
+          "command": {
+            "description": "The command that produced the evidence.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "exit_code": {
+            "description": "The command's exit code.",
+            "type": "integer",
+            "minimum": -1000,
+            "maximum": 1000
+          },
+          "evidence": {
+            "description": "A short line of evidence, such as the key output or the test count.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -1736,6 +1774,80 @@ Parameters:
   "required": [
     "title",
     "instruction"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_review`
+
+Start an independent reviewer on a live change Ticket of this project. The reviewer runs as a subagent of this Lead in the Ticket worktree, reads the diff and runs the checks that matter, and reports findings back here. Record its verdict with lead_review_record; a blocked review keeps the Ticket open when the pull request merges.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The id of a live change Ticket of this project."
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_review_record`
+
+Record the reviewer's verdict on a change Ticket started with lead_review. A blocked review keeps the Ticket open when its pull request merges; a clean review lets the merge end it.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Ticket lead_review started a review on."
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "blocked"
+      ],
+      "description": "blocked names findings a person must resolve; clean accepts the change."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "The verdict in the language of the Ticket."
+    },
+    "findings": {
+      "description": "Concrete problems a blocked review found.",
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    }
+  },
+  "required": [
+    "ticket_id",
+    "state",
+    "summary"
   ],
   "additionalProperties": false
 }
@@ -2291,4 +2403,4 @@ Parameters:
 
 ## Total
 
-44 distinct tools across 5 groups (51 registrations).
+46 distinct tools across 5 groups (53 registrations).

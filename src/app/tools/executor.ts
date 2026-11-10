@@ -140,6 +140,12 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
         requests: z.array(z.string().trim().min(1)).max(50).optional().describe('The project requests this ticket raised that this report answers or leaves behind; '
           + 'a ready, blocked, failed or dropped report must name every open one it still leaves unanswered, or the report is refused.'),
+        checks: z.array(z.object({
+          name: z.string().trim().min(1).max(200).describe('What was verified, such as "pnpm check" or "reproduced the crash".'),
+          command: z.string().trim().min(1).max(500).optional().describe('The command that produced the evidence.'),
+          exit_code: z.number().int().min(-1000).max(1000).optional().describe('The command\'s exit code.'),
+          evidence: z.string().trim().min(1).max(1000).optional().describe('A short line of evidence, such as the key output or the test count.'),
+        }).strict()).max(20).optional().describe('The verifications this report rests on; list only checks you actually ran.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
@@ -172,7 +178,13 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
-            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
+            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}),
+            ...(args.checks === undefined ? {} : { checks: args.checks.map(check => ({
+              name: check.name,
+              ...(check.command ? { command: check.command } : {}),
+              ...(check.exit_code !== undefined ? { exitCode: check.exit_code } : {}),
+              ...(check.evidence ? { evidence: check.evidence } : {}),
+            })) }) }
           const updated = host.engine.report(ticketId, report)
           const relay = reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)

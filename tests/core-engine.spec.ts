@@ -242,6 +242,16 @@ describe('subscription fan-out', () => {
     expect(ticket.assignments).toHaveLength(2)
     expect(ticket.inputs.filter(input => input.kind === 'resumed')).toHaveLength(1)
   })
+  it('keeps the checks a report carried, and refuses malformed checks', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.engine.report(ticketId, { state: 'progress', summary: 'working', checks: [{ name: 'lint', command: 'pnpm typecheck', exitCode: 0, evidence: 'clean' }] })
+    expect(h.repo.tickets.get(ticketId)?.assignments.at(0)?.report?.checks).toEqual([{ name: 'lint', command: 'pnpm typecheck', exitCode: 0, evidence: 'clean' }])
+    expect(() => h.engine.report(ticketId, { state: 'progress', summary: 'again', checks: [{ name: 'x'.repeat(201) }] }))
+      .toThrow(new UserError('invalidReportChecks'))
+    expect(() => h.engine.report(ticketId, { state: 'progress', summary: 'again', checks: [{ name: 'ok', exitCode: 0.5 }] }))
+      .toThrow(new UserError('invalidReportChecks'))
+  })
   it('takes delivery reports only from the assignment that still runs the open ticket', () => {
     const h = harness()
     const ticketId = accepted(h).ticketId!
@@ -1699,5 +1709,27 @@ describe('requests', () => {
       .toThrow('at least one delivery unit')
     expect(() => h.engine.raiseInstallationRequest({ title: 'Audit', instruction: 'x', automation: 'auto-1', units: [{ project: '' }] }))
       .toThrow('needs a registered project')
+  })
+})
+
+describe('review gate', () => {
+  it('keeps a change Ticket open when a blocked review meets a merged pull request, and lets a clean review pass', () => {
+    const h = harness()
+    const ticketId = accepted(h, '1', 't1', 'change').ticketId!
+    h.engine.bindThread(ticketId, { source: 'gh', id: 'pr-9' }, true)
+    h.engine.report(ticketId, { state: 'ready', summary: 'PR ready' })
+    h.engine.beginReview(ticketId, `review-${ticketId}`)
+    h.engine.recordReview(ticketId, { state: 'blocked', summary: 'It fails on Node 22', findings: ['the new import crashes on Node 22'] })
+    h.engine.threadClosed({ source: 'gh', id: 'pr-9' }, 'merged', '2026-09-23T00:00:01Z')
+    expect(h.repo.tickets.get(ticketId)!.ended).toBeUndefined()
+    expect(h.repo.tickets.get(ticketId)!.review).toMatchObject({ state: 'blocked', findings: ['the new import crashes on Node 22'] })
+    const other = harness()
+    const second = accepted(other, '1', 't1', 'change').ticketId!
+    other.engine.bindThread(second, { source: 'gh', id: 'pr-9' }, true)
+    other.engine.report(second, { state: 'ready', summary: 'PR ready' })
+    other.engine.beginReview(second, `review-${second}`)
+    other.engine.recordReview(second, { state: 'clean', summary: 'Reviewed the diff' })
+    other.engine.threadClosed({ source: 'gh', id: 'pr-9' }, 'merged', '2026-09-23T00:00:01Z')
+    expect(other.repo.tickets.get(second)!.ended).toMatchObject({ outcome: 'merged' })
   })
 })
