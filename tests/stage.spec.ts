@@ -10,7 +10,7 @@ const attention = { id: 'q', question: '?' }
 /** A person's message that reached the Ticket after its report. */
 const answered = { inputs: [{ id: 'i', kind: 'trigger' as const, triggerId: 'e', at: 'later', human: true as const }] }
 const reportedAt = (state: ReportState) => reported(state, { report: { state, summary: '', at: 'earlier' } })
-const ended = { at: '', by: 'executor' as const, reason: 'closed', outcome: 'closed' as const }
+const ended = { at: '', by: 'executor' as const, cause: 'merge' as const, reason: 'closed', outcome: 'closed' as const }
 
 // The rows of the docs/003 table, in order; a Ticket that matches several rows takes the first.
 describe('ticketStage', () => {

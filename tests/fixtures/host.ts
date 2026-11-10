@@ -35,6 +35,8 @@ type RegisteredTool = { name: string; execute: (args: unknown, execution: { sign
 type FakeAgent = {
   id: string; status: string; inbox: { nextTurn: UserMessage[]; nextStep: UserMessage[] }
   cancel: Mock; inject: Mock<(message: UserMessage) => void>; steer: Mock<(message: UserMessage) => void>; followup: Mock<(message: UserMessage) => void>
+  /** Resolves when the turn ends, which a test controls by setting `status = 'idle'`, as DSH's idle does. */
+  whenIdle: () => Promise<void>
 }
 /** A text message, as DSH's job tools and subagents send their notices. */
 const notice = (id: string, text: string) => ({ id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'tool-jobs', form: 'notice' } }) as unknown as UserMessage
@@ -128,7 +130,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   open?: (id: string, parent: string) => Promise<void>
   deliver?: (id: string, content: unknown) => void
 } = {}) {
-  const children = new Map<string, { parent: string; live: boolean; settled: PromiseWithResolvers<void> }>()
+  const children = new Map<string, { parent: string; delivery: 'parent' | 'caller'; preset: string; live: boolean; settled: PromiseWithResolvers<void> }>()
   const closed = new Set<string>()
   const settle = (id: string, wake = true) => {
     const child = children.get(id)
@@ -157,17 +159,26 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     }),
     interrupt: vi.fn((id: string) => { settle(id) }),
     // DSH's spawn provider starts a durable child with the reserved id and reports the same shape the Executor expects.
-    startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string } } }) => {
+    startActivation: vi.fn(async (spec: { childId: string; delivery: 'parent' | 'caller'; request: { parent: { id: string }; agentPreset: string } }) => {
       const parent = spec.request.parent.id
       const id = spec.childId
       // A host with a real subagent service creates the child Session, decorates it and then delivers the activation prompt.
       if (options.open) await options.open(id, parent)
       if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
-      children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+      children.set(id, { parent, delivery: spec.delivery, preset: spec.request.agentPreset, live: true, settled: Promise.withResolvers<void>() })
+      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
       options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
-      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child.
-      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { children.get(id)!.live = false } }
+      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
+      // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
+      // has no turn to cancel, which is what the Executor's graceful retirement relies on. The child's inbox is the Session's,
+      // so an in-process restart keeps it for the next Assignment.
+      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => {
+        const child = children.get(id)
+        if (!child?.live) return
+        const agent = agents.get(id)
+        if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: true })
+        child.live = false
+      } }
     }),
     // The Lead's message reaches the child, which this fake records as a follow-up step.
     sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, content: unknown[]) => {
@@ -184,11 +195,16 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   const spawn = (parent: string) => {
     if (closed.has(parent)) throw new Error('DRAINING: the Session admits no new subagents')
     const id = `child-${children.size + 1}`
-    children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+    children.set(id, { parent, delivery: 'caller', preset: '', live: true, settled: Promise.withResolvers<void>() })
+    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
     return id
   }
-  return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live }
+  return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live,
+    /** The request the fixture started a child with: its Lead, the delivery DSH was asked for, and its preset. */
+    started: (id: string) => {
+      const child = children.get(id)
+      return child === undefined ? undefined : { parent: child.parent, delivery: child.delivery, preset: child.preset }
+    } }
 }
 
 /** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored. */
@@ -278,7 +294,8 @@ export async function startRuntime(seed?: (store: Store) => void) {
         turn++
         take(true)
       })
-      const session = { id: sessionId, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
+      // Every Session has a header; an independent child has no parent Session here.
+      const session = { id: sessionId, header: {} as Record<string, unknown>, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
       let status = 'idle'
       const idle: (() => void)[] = []
       // A cancel drops the inbox unless kept, and the turn it stops ends a moment later, which DSH says.

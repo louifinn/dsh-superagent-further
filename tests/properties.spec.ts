@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Automations } from '../src/app/automations.ts'
-import { migrateTo22 } from '../src/app/migration.ts'
+import { migrateTo22, migrateTo23 } from '../src/app/migration.ts'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { Engine, MemoryRepositories, key } from '../src/core/index.ts'
 import type { Assessor, Executor, Outcome, Policy, ProjectRequest, Trigger } from '../src/core/index.ts'
@@ -189,7 +189,7 @@ describe('Schema migration', () => {
   let directory: string | undefined
   afterEach(() => { if (directory) rmSync(directory, { recursive: true, force: true }); directory = undefined })
 
-  it('writes every schema 21 Ticket a deliverable contract and changes nothing else', () => {
+  it('writes every schema 21 Ticket a deliverable contract and an end cause, and changes nothing else', () => {
     for (const seed of SEEDS) {
       const r = rng(seed)
       directory = mkdtempSync(join(tmpdir(), 'orchestrator-property-'))
@@ -223,13 +223,19 @@ describe('Schema migration', () => {
         for (const ticket of tickets) {
           const record = migrated[ticket.id]!
           expect(record.deliverable, `seed ${seed} ${ticket.id}`).toBe(ticket.expected)
-          // Every other field survives unchanged; only deliverable is written.
+          // The end cause follows the ending the legacy record already described, and nothing else is rewritten.
+          if (ticket.ended) {
+            const cause = ticket.ended.outcome === 'merged' || ticket.ended.outcome === 'closed' ? 'merge' : 'report'
+            expect(record.ended, `seed ${seed} ${ticket.id}`).toMatchObject({ ...ticket.ended, cause })
+          }
+          // Every other field survives unchanged; only deliverable and the end cause are written.
           const { deliverable: _deliverable, ...rest } = record
           const { expected: _expected, ...seedTicket } = ticket
           expect(rest, `seed ${seed} ${ticket.id}`).toMatchObject(seedTicket as never)
         }
         const before = JSON.stringify(store.tickets.list())
         migrateTo22(store)
+        migrateTo23(store)
         expect(JSON.stringify(store.tickets.list())).toBe(before)
       } finally { store.close() }
     }

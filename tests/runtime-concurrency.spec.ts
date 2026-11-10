@@ -824,6 +824,8 @@ it('resumes an ended ticket a person wrote to during a pause once it lifts, unde
   const ended = async (id: string) => {
     const { ticket, sessionId } = await h.acceptedTicket(feishu(id, `@bot 修${id}`, { root_id: `om_${id}` }), 'answer')
     await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
+    // The report ends the Ticket; the worker's turn ends right after it, as the retirement wait expects.
+    h.agents.get(sessionId)!.status = 'idle'
     return ticket.id
   }
   const first = await ended('1'), second = await ended('3')
@@ -852,7 +854,8 @@ it('ends a worker\'s turn only when the stop that ended its Assignment commits',
   expect(worker.cancel).not.toHaveBeenCalled()
   expect(h.runtime.store.tickets.get(one.ticket.id)!.ended).toBeUndefined()
   h.runtime.engine.stopTicket(one.ticket.id)
-  expect(worker.cancel).toHaveBeenCalledOnce()
+  // The stop preempts the turn as `user`; disposing the activation afterwards is the provider tear-down, not a second stop.
+  expect(worker.cancel.mock.calls[0]).toEqual([{ kind: 'user' }, { keepInbox: false }])
 })
 
 describe('the Executor\'s parts', () => {

@@ -285,7 +285,7 @@ function initial(): PanelServer {
     executor: { blockedCommands: ['gh-personal'] },
   })
   const ended = ticketSummary({ id: 't0', title: '旧工单', state: 'ended', actions: { retry: false, stop: false },
-    ended: { at: '2026-09-21T00:00:00Z', by: 'human', reason: 'Human asked to stop', outcome: 'stopped' } }, { stage: 'ended' })
+    ended: { at: '2026-09-21T00:00:00Z', by: 'human', cause: 'human', reason: 'Human asked to stop', outcome: 'stopped' } }, { stage: 'ended' })
   const reply = { source: 'feishu', url: 'https://applink.feishu.cn/client/chat/open?openChatId=oc_1', label: { zh: '飞书消息',
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }

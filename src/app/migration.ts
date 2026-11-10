@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 22
+export const SCHEMA_VERSION = 23
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -235,6 +235,21 @@ export function migrateTo22(store: Store): void {
         : (ticket.follows ?? []).some(follow => pullThreads.has(follow.thread)) ? 'change' : 'answer'
       if (ticket.deliverable === deliverable) continue
       store.tickets.save({ ...ticket, deliverable })
+    }
+  })
+}
+/**
+ * Schema 23 records why every ended Ticket ended (`TicketEndCause`): a Ticket that followed a pull request to `merged`
+ * or `closed` ended on the merge; one a person stopped ended on the person's instruction; every other ended Ticket ended
+ * on its own worker report. Tickets already carrying a cause are left untouched, and every other field survives unchanged.
+ */
+export function migrateTo23(store: Store): void {
+  step('the tickets', () => {
+    for (const ticket of store.tickets.list()) {
+      const ended = ticket.ended
+      if (!ended || ended.cause) continue
+      const cause = ended.outcome === 'merged' || ended.outcome === 'closed' ? 'merge' as const : ended.by === 'human' ? 'human' as const : 'report' as const
+      store.tickets.save({ ...ticket, ended: { ...ended, cause } })
     }
   })
 }

@@ -551,7 +551,7 @@ describe('github source', () => {
       lastAt: new Date(Date.now() - 30 * day).toISOString(), subscriptions: ['t1'], correlated: [], pending: [],
       meta: { number: 7, isPr: false, title: 'Login fails' } })
     const ended = (ago: number) => h.store.tickets.save({ ...openTicket('t1'),
-      ended: { at: new Date(Date.now() - ago).toISOString(), by: 'executor', reason: 'merged', outcome: 'merged' } })
+      ended: { at: new Date(Date.now() - ago).toISOString(), by: 'executor', cause: 'merge', reason: 'merged', outcome: 'merged' } })
     const reads = github(h, {})
     ended(3 * day)
     await pollGithubThreads(h)

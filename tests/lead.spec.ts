@@ -133,3 +133,20 @@ it('reminds the Lead twice at the activation boundary, then marks the request ne
   expect(h.runtime.store.leads.getByRequest('lead', `lead-attention:${request.id}`)?.ackAt).toBeDefined()
 })
 
+it('starts an independent reviewer on parent delivery and keeps the worker on caller delivery', async () => {
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'change')
+  // A worker launch keeps the app's own Lead messages as the single notification authority.
+  expect(h.subagents.started(sessionId)).toMatchObject({ delivery: 'caller', preset: 'dsh-superagent-further-worker' })
+  // A change Ticket's ready report and the pull request it follows let its Lead start an independent review.
+  const thread = { source: 'github', id: `pull-${ticket.id}` }
+  h.runtime.engine.bindThread(ticket.id, thread, true)
+  h.runtime.engine.report(ticket.id, { state: 'ready', summary: 'The pull request is ready.' })
+  expect(h.runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
+  const review = await h.runTool('lead-default', 'lead_review', { ticket_id: ticket.id }) as { session_id: string }
+  expect(review).toEqual({ session_id: `review-${ticket.id}` })
+  // The reviewer's verdict reaches the Lead as DSH's model-facing settlement notice: lead_review_record is a Lead tool,
+  // and the reviewer preset has no app tool that could report it instead.
+  expect(h.subagents.started(`review-${ticket.id}`)).toMatchObject({ delivery: 'parent', preset: 'dsh-superagent-further-reviewer' })
+  expect(h.runtime.store.tickets.get(ticket.id)!.review).toMatchObject({ state: 'pending', sessionId: `review-${ticket.id}` })
+})
+

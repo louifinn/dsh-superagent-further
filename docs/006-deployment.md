@@ -495,8 +495,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 22 (current)`, or
-   `schema 21 migrates to 22 on start` when the next start is the one that upgrades the database.
+5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 23 (current)`, or
+   `schema 22 migrates to 23 on start` when the next start is the one that upgrades the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
 settings and from their history, and setup derives the primary repository from the first project under **Execution →
@@ -560,7 +560,7 @@ steps once; a fresh 0.3.0 installation does not.
    `scripts\dsh-superagent-further.cmd start --profile <name>` on Windows) and run
    `scripts/verify-install --profile <name>`; require exit 0.
 
-What stays valid: the `stateDir` and its database (schema 21 migrates to 22 on start; no rename migration), worktrees, Tickets, Threads,
+What stays valid: the `stateDir` and its database (schema 22 migrates to 23 on start; no rename migration), worktrees, Tickets, Threads,
 Requests, memories, Policy and settings, the `DSH_SUPERAGENT_*` environment variables and prepare commands, the Source
 kinds `github` and `feishu`, and the stored delivery and GitHub-comment markers. Queued acknowledgements, replies and
 comments therefore keep deduplicating across the upgrade, and an old Ticket remains valid and resumable. The worker

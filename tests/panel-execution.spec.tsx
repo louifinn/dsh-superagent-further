@@ -212,7 +212,7 @@ it('gives a Ticket a bot\'s message started its basis, marks a Thread it follows
 
 it('words an ended Ticket by its outcome, on its row and its page, with a person\'s reason after it', async () => {
   const fields = { id: 't3', title: '已合并的工单', state: 'ended' as const, actions: { retry: false, stop: false },
-    ended: { at: '2026-09-21T00:00:00Z', by: 'executor' as const, outcome: 'merged' as const } }
+    ended: { at: '2026-09-21T00:00:00Z', by: 'executor' as const, cause: 'merge' as const, outcome: 'merged' as const } }
   server.tickets.ended = [ticketSummary(fields, { stage: 'ended' }), ...server.tickets.ended]
   server.ticketDetails.t3 = { ...server.ticketDetails.t1!, ...fields, stage: 'ended' }
   await mount()
@@ -223,7 +223,7 @@ it('words an ended Ticket by its outcome, on its row and its page, with a person
   expect(document.querySelector('.dt-status-line .dt-stage')?.textContent).toBe(zh['outcome.merged'])
   expect(text()).toContain(zh['outcome.merged'])
   expect(text()).not.toContain('执行器结束')
-  server.ticketDetails.t3 = { ...server.ticketDetails.t3, ended: { at: '2026-09-21T00:00:00Z', by: 'human', outcome: 'stopped',
+  server.ticketDetails.t3 = { ...server.ticketDetails.t3, ended: { at: '2026-09-21T00:00:00Z', by: 'human', cause: 'human', outcome: 'stopped',
     reason: '不需要了' } }
   await remount(en)
   expect(all('.dt-hint').map(hint => hint.textContent).find(line => line?.includes(en['outcome.stopped']))).toMatch(/Stopped by a person: 不需要了$/)

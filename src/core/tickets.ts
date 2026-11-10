@@ -2,8 +2,8 @@
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, latestReport, liveTicket, readUntil, runningAssignment, settled, threadKey, waitsForPerson } from './model.ts'
-import type { Assignment, ChannelRef, Evaluation, Follow, Mandate, PolicyEffect, Request, ThreadRef, Ticket, TicketEndBy, TicketInput, TicketOutcome,
-  Trigger, TriggerDisposition } from './model.ts'
+import type { Assignment, ChannelRef, Evaluation, Follow, Mandate, PolicyEffect, Request, ThreadRef, Ticket, TicketEndBy, TicketEndCause, TicketInput,
+  TicketOutcome, Trigger, TriggerDisposition } from './model.ts'
 import type { AssessmentOutcome } from './ports.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
@@ -154,7 +154,7 @@ export class Tickets extends EnginePart {
       if (done.outcome === 'merged' && ticket.deliverable === 'change' && ticket.review?.state === 'blocked') continue
       // Work resumed after the close and finished ends now.
       const resumed = Date.parse(latestAssignment(ticket)?.createdAt ?? '') > Date.parse(at)
-      this.end(ticket.id, 'executor', done.outcome, resumed ? this.now() : done.at)
+      this.end(ticket.id, 'executor', done.outcome, 'merge', resumed ? this.now() : done.at)
     }
   }
   /**
@@ -246,7 +246,7 @@ export class Tickets extends EnginePart {
    * @throws UserError when the ticket is unknown.
    */
   stop(ticketId: string, reason?: string): Ticket {
-    this.end(ticketId, 'human', 'stopped', this.now(), reason)
+    this.end(ticketId, 'human', 'stopped', 'human', this.now(), reason)
     return this.require(ticketId)
   }
   /**
@@ -262,7 +262,7 @@ export class Tickets extends EnginePart {
     const assignment = this.newAssignment(ticket)
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
-    this.options.executor.stop(ticket, latest, 'retried')
+    this.options.executor.stop(ticket, latest, 'retried', 'retry')
     this.options.executor.start(ticket, assignment)
     return ticket
   }
@@ -424,13 +424,14 @@ export class Tickets extends EnginePart {
     ticket.undelivered.unshift(...untaken.map(input => input.id))
   }
   /**
-   * End a ticket with its outcome. `at` records when the ending fact happened, such as a PR merge, and `reason` says
-   * why in words, by default the outcome. The ticket lets go (see `letGo`) of the messages its worker never received, and of
-   * the person's messages it decides that its worker did not read before its latest report or turn end, the report that
-   * ends the ticket included (see `readBefore`), and neither acknowledged, answered nor handed back: one may have come while
-   * the worker wrote the report that ends the ticket, or after its turn ended, and either way it can no longer hand it back.
+   * End a ticket with its outcome. `cause` says why, which the Executor uses to retire the worker; `at` records when the
+   * ending fact happened, such as a PR merge, and `reason` says why in words, by default the outcome. The ticket lets go
+   * (see `letGo`) of the messages its worker never received, and of the person's messages it decides that its worker did not
+   * read before its latest report or turn end, the report that ends the ticket included (see `readBefore`), and neither
+   * acknowledged, answered nor handed back: one may have come while the worker wrote the report that ends the ticket, or
+   * after its turn ended, and either way it can no longer hand it back.
    */
-  end(ticketId: string, by: TicketEndBy, outcome: TicketOutcome, at = this.now(), reason?: string): void {
+  end(ticketId: string, by: TicketEndBy, outcome: TicketOutcome, cause: TicketEndCause, at = this.now(), reason?: string): void {
     const ticket = this.require(ticketId)
     if (!liveTicket(ticket)) return
     const stopping = ticket.assignments.filter(assignment => assignment.state !== 'ended')
@@ -440,14 +441,14 @@ export class Tickets extends EnginePart {
     const left = this.untaken(ticket, ticket.inputs.flatMap(input => input.kind === 'trigger'
       && (!readBefore(input, until) || ticket.undelivered.includes(input.id)) ? [input.id] : []))
     // An end dated earlier, such as a PR's merge, does not move the ticket's last change back.
-    ticket.ended = { at, by, outcome, ...why }; ticket.undelivered = []; ticket.updatedAt = this.now()
+    ticket.ended = { at, by, cause, outcome, ...why }; ticket.undelivered = []; ticket.updatedAt = this.now()
     delete ticket.attention; delete ticket.delivery
     // The Assignments the end stops end with it; the ticket's end says why.
     for (const assignment of stopping) { assignment.state = 'ended'; assignment.endedAt = at }
     this.repo.tickets.save(ticket)
     this.letGo(ticketId, waiting, left)
-    this.emit('ticket.ended', { ticketId, by, outcome, ...why })
-    for (const assignment of stopping) this.options.executor.stop(ticket, assignment, reason ?? outcome)
+    this.emit('ticket.ended', { ticketId, by, cause, outcome, ...why })
+    for (const assignment of stopping) this.options.executor.stop(ticket, assignment, reason ?? outcome, cause)
     if (ticket.requestId) this.dispatchRequest(ticket.requestId)
   }
   /**
