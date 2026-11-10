@@ -17,8 +17,6 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - `scripts/archive-state.mjs` takes a consistent `VACUUM INTO` copy of the state database and prunes old archives; `pnpm test:coverage` reports coverage without gating.
 - `CONTRIBUTING.md` describes the working loop, the gates and the hand-offs for a person, an ordinary coding agent, the Orchestrator, a Lead, a Worker and a Reviewer.
 
-### Added
-
 - `pnpm check` now verifies the packed tarball against `scripts/pack-manifest.json` (`pack:check`) and compares the generated tool and settings references with the code (`docs:generate`, `docs:check`), so packaging or reference drift fails the gate.
 
 - A mounted-surface test asserts every loaded tool set, the bundled skills and the bundle's preset rows, and seeded property tests cover admission, Trigger identity across repositories, idempotent creation, schema 22 migration and reconcile fixed points.
@@ -26,9 +24,6 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - Escalations can be decided from the Overview with their required reply; the panel and the main Session share the same decision path and Lead delivery.
 
 - Three operational skills ship with the plugin — triage, release and project requests — registered for every Session and protected from a same-named custom skill.
-
-
-### Added
 
 - Project requests (schema 21): `request_create` lets a worker raise a durable project request when its Ticket needs a
   decision, a new deliverable or another project's work, and its completion report names the requests it leaves open
@@ -122,7 +117,6 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   skipped no item, trusts it for at most ten minutes before one unconditional read confirms the list again, and the first
   start after this upgrade drops saved stream ETags once so a list that was skipped earlier is read in full again. This
   is how an Issue filed in the project's own repository was listed by the poller but never became a Trigger.
-
 
 ## [0.3.0] - 2026-11-09
 

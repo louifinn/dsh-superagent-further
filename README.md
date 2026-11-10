@@ -15,6 +15,8 @@
 > [the philosophy](docs/000-philosophy.md) and [the deployment guide](docs/006-deployment.md) before you leave
 > it running unattended.
 
+## Overview
+
 dsh-superagent-further is a proactive coding agent for the repositories your team works in, packaged as a bundle for
 [DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When a
 person the team allowed asks it for work, it opens a Request and the Tickets that deliver it, works each Ticket
@@ -22,14 +24,27 @@ in its own Session and checkout, and answers in the original conversation — us
 merges. A web panel lists only what waits for a person.
 
 The principle it is engineered around: **take as little human attention as possible, and give as much value as
-possible.** Every message, setting, panel row and document has to earn the attention it costs. That principle is
-unchanged from the prototype; this fork extends it to the project layer, operations and distribution (see
-[What this fork changes](#what-this-fork-changes-relative-to-the-prototype) and
-[Product philosophy, extended](#product-philosophy-extended)).
+possible.** Every message, setting, panel row and document has to earn the attention it costs. That principle is unchanged from the prototype.
+
+Two short claims make the project legible without the interview.
+
+**What this fork changes relative to the prototype.** The prototype is research code for one repository on one POSIX
+host: a single main Session starts a root worker per Ticket, and no check runs on a second platform. This fork keeps
+that design and adds what daily use needs — a persistent project Lead between the Orchestrator and the executors,
+Requests above Tickets for work that crosses projects, a panel that lists only the rows waiting for a person, native
+Windows, installable releases, and six platform/Node checks with an operator runbook and a security policy. The
+[module-by-module comparison](#what-this-fork-changes-relative-to-the-prototype) records what moved and why.
+
+**Product philosophy, extended.** The prototype's principle — take as little human attention as possible and give as
+much value as possible — is unchanged. This fork extends it to three new surfaces: the project layer budgets attention
+per project, so Leads answer the routine questions instead of the Orchestrator; operations list only exceptions
+(health, reply queue, outbox, log, verification evidence and the review gate); and distribution keeps the cost of
+adoption low with an installable tarball, checks and generated references that cannot drift. The
+[full argument](#product-philosophy-extended) is below.
 
 ## Status at a glance
 
-| | |
+| Property | Detail |
 | --- | --- |
 | Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
 | Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
