@@ -32,6 +32,7 @@ export const USER_ERRORS = {
   changeNeedsPullRequest: ['refused', 'A change ticket ends only through a followed pull request. Open a pull request for the change and let its Thread be followed, or report blocked explaining what prevents it; answer-only work belongs on a ticket accepted as answer.'],
   invalidReview: ['refused', 'Only a live change Ticket carries a review verdict. A review starts from the project Lead (lead_review) on the Ticket that owns the change.'],
   unknownReview: ['missing', 'No review is in progress for this Ticket. Start one with lead_review before recording a verdict.'],
+  unknownWorkerSession: ['refused', 'Only a worker or reviewer Session of this project can be notified. Pass the Session id of a Ticket in this project, such as worker-<ticket> or review-<ticket>.'],
   invalidReportChecks: ['refused', 'A report may carry at most 20 checks. Each check needs a name of at most 200 characters, a command of at most 500, an integer exit code and evidence of at most 1000 characters; list only verifications you actually ran.'],
   notReady: ['refused', 'Ticket is not ready for delivery. Keep progress internal and wait for a verified ready report; do not relabel progress as an answer or send it through another channel.'],
   notAttention: ['refused', 'Attention requires the ticket\'s current attention question in human_action. Routine unfinished work stays internal.'],

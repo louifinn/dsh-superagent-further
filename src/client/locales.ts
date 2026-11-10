@@ -971,6 +971,7 @@ const TEXT = {
   'userError.changeNeedsPullRequest': ['变更类工单只能通过已关注的 Pull Request 收尾：请为变更打开 PR 并让它被关注，或上报 blocked 说明无法打开的原因；只读回答请用 answer 类工单。', USER_ERRORS.changeNeedsPullRequest[1]],
   'userError.invalidReview': ['只有进行中的变更工单才能带审查结论：由项目 Lead 用 lead_review 发起，再记录结论。', USER_ERRORS.invalidReview[1]],
   'userError.unknownReview': ['该工单没有进行中的审查：先用 lead_review 发起审查，再记录结论。', USER_ERRORS.unknownReview[1]],
+  'userError.unknownWorkerSession': ['只能通知本项目内的 worker 或审查者会话：请传本项目工单的会话 id，如 worker-<ticket> 或 review-<ticket>。', USER_ERRORS.unknownWorkerSession[1]],
   'userError.invalidReportChecks': ['报告可携带最多 20 项检查；每项需要名称（≤200 字符）、命令（≤500）、整数退出码与证据（≤1000 字符），且只列真正执行过的验证。', USER_ERRORS.invalidReportChecks[1]],
   'userError.notReady': ['工单还不能交付。进展只在内部保留，等待经过验证的就绪报告；不要把进展当作回答，也不要通过其他渠道发送。', USER_ERRORS.notReady[1]],
   'userError.notAttention': ['待人工决定的消息需要在 human_action 中写明工单当前待人工决定的问题。日常未完成的工作只在内部保留。', USER_ERRORS.notAttention[1]],

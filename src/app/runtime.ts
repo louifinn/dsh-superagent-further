@@ -37,7 +37,7 @@ import { registerHttp, type HttpHost } from './http.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
-import { pullEndNotices } from '../sources/github-pull.ts'
+import { pullEndNotices, pullEndReceipt } from '../sources/github-pull.ts'
 import { projectApprovalChannels, projectApprovalNotices, projectResultChannels, projectResultNotices, requestResultNotices }
   from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
@@ -240,6 +240,13 @@ export class Runtime extends Service implements SourceHost {
             // A Request delivered by several Tickets reports once, when the Request ends (see the request.ended branch below).
             if (!requestRecord || requestRecord.ticketIds.length === 1) {
               for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
+              // Relay the end to the project Lead, which tells the Ticket's worker Sessions (docs/010). A project-less
+              // installation Ticket has no Lead to tell.
+              const receipt = pullEndReceipt(ended, setup.deployment.repository)
+              if (receipt) void sessions.lead.pullEnded(ended, receipt).catch(error => {
+                this.log.warn('dsh-superagent-further could not relay a pull request ending to the Lead of project %s: %s',
+                  ended.project ?? '', String(error))
+              })
             }
             // A worktree past its retention no longer needs to exist; a fresh one is kept so a person can inspect it.
             void runtime.reclaimFinishedWorktrees()

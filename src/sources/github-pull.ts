@@ -109,15 +109,24 @@ function closePull(ctx: SourceContext, pr: Pull, thread: string): void {
  * opened, else the last one it followed). The notice language follows the ticket's source request: Chinese when it contains
  * Han characters and no kana, otherwise English.
  */
-export function pullEndNotices(ticket: Ticket, request: string, repository: string): OutboundMessage[] {
+/** The pull request whose merge or closure ended a Ticket, as the pull-end notices and the Lead relay name it. */
+export interface PullEndReceipt { number: number; url: string; outcome: 'merged' | 'closed' }
+/** Finds the pull request that ended `ticket`, selecting the last-closed PR it opened, else the last one it followed. */
+export function pullEndReceipt(ticket: Ticket, repository: string): PullEndReceipt | undefined {
   const outcome = ticket.ended?.outcome
   const follows = (ticket.follows ?? []).filter(item => item.closed && pullNumber(item.thread) !== undefined)
   const latest = (items: Follow[]) => items.sort((a, b) => b.closed!.at.localeCompare(a.closed!.at))[0]
   const follow = latest(follows.filter(item => item.own)) ?? latest(follows)
-  if ((outcome !== 'merged' && outcome !== 'closed') || !follow) return []
+  if ((outcome !== 'merged' && outcome !== 'closed') || !follow) return undefined
   const number = pullNumber(follow.thread)!
   // A project's PR lives in that project's repository, not in the deployment repository the caller names.
   const url = githubPage(githubThreadRef(follow.thread)?.repository ?? repository, number, true)
+  return { number, url, outcome }
+}
+export function pullEndNotices(ticket: Ticket, request: string, repository: string): OutboundMessage[] {
+  const receipt = pullEndReceipt(ticket, repository)
+  if (!receipt) return []
+  const { number, url, outcome } = receipt
   const chinese = /\p{Script=Han}/u.test(request) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(request)
   const text = chinese
     ? outcome === 'merged' ? `[PR #${number}](${url}) 已合并。` : `[PR #${number}](${url}) 已关闭，未合并。`

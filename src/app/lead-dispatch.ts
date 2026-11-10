@@ -78,6 +78,34 @@ export class LeadDispatch {
   }
 
   /**
+   * Tells the project's Lead that a followed pull request ended the Ticket, so the Lead relays the end to the Ticket's
+   * worker Sessions with `lead_notify_worker` (docs/010). Durable like every Lead prompt: the message is written before
+   * its prompt, and a failed prompt is retried by `reconcile` at the next startup.
+   */
+  async pullEnded(ticket: Ticket, receipt: { number: number; url: string; outcome: 'merged' | 'closed' }): Promise<void> {
+    if (ticket.project === undefined || ticket.project === '') return
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = `pull-end:${ticket.id}`
+    if (this.host.store.leads.getByRequest('lead', requestId)) return
+    const verb = receipt.outcome === 'merged' ? 'merged' : 'was closed without merging'
+    const workers = [`worker-${ticket.id}`, ...(ticket.review?.sessionId ? [ticket.review.sessionId] : [])]
+    const body = `Pull request #${receipt.number} (${receipt.url}) ${verb}; this ended Ticket ${ticket.id} "${ticket.title}" in project ${project.id}.\n`
+      + `Relay this to the Ticket's worker Session(s) with the lead_notify_worker tool, one call per Session: ${workers.join(', ')}. `
+      + 'Tell them the work is closed, no further action is expected, and they should not start new work. '
+      + 'Do not open work or change the external thread unless a person asks.'
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = this.host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
+        requestId, ticketId: ticket.id, body })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s pull request ended`, error)
+    }
+  }
+
+  /**
    * Records the worker's report for each unanswered request it names and prompts the Lead once. The requests are the
    * durable record; the report messages make an unanswered worker report visible in `lead_requests` too.
    */

@@ -483,6 +483,16 @@ The distribution, reference and invariant gates now run in `pnpm check`: the pac
 - [x] `tests/properties.spec.ts` covers admission, Trigger identity across repositories, idempotent creation, schema 22 migration and reconcile fixed points over seeded random inputs.
 - [x] `pnpm check` runs typecheck, tests, build, pack:check and docs:check; docs, CHANGELOG and README counts updated.
 
+## Sprint 34 checklist
+
+A merged or closed pull request now reaches the project Lead, and the Lead relays the end to the worker Sessions that did the
+work. The Orchestrator writes one durable Lead message per ended Ticket and the Lead uses a validated relay tool.
+
+- [x] `LeadDispatch.pullEnded` writes and prompts one `lead_message` notice per ended Ticket, naming the PR, the Ticket and the worker Session(s).
+- [x] `lead_notify_worker` relays to a worker or reviewer Session of the same project only; another project's Session is refused.
+- [x] `tests/runtime.spec.ts` covers the merge notice and the relay, and `tests/surface.spec.ts` covers the Lead tool set.
+- [x] docs/004, docs/007, docs/010 and CHANGELOG updated; `pnpm check` green.
+
 ## Sprint 33 checklist
 
 A change Ticket can carry an independent review, the report of a worker can carry verification checks, and the codebase

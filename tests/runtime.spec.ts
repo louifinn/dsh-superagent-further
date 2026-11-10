@@ -453,6 +453,22 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   await observePull(runtime.context(githubKind), merged)
   const ended = runtime.store.tickets.get(ticket.id)!
   expect(ended).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'merged' }) })
+  // The pull request's end reaches the project Lead, which relays it to the Ticket's worker Sessions (docs/010).
+  const pullNotice = await vi.waitFor(() => {
+    const found = runtime.store.leads.list('default', 50).find(message => message.requestId === `pull-end:${ticket.id}`)
+    expect(found).toBeDefined()
+    return found!
+  })
+  expect(pullNotice).toMatchObject({ kind: 'notice', from: 'orchestrator', to: 'lead', ticketId: ticket.id })
+  expect(pullNotice.body).toContain('Pull request #42')
+  expect(pullNotice.body).toContain(`worker-${ticket.id}`)
+  expect(pullNotice.body).toContain('lead_notify_worker')
+  expect(pullNotice.deliveredAt).toBeDefined()
+  const lead = await runtime.sessions.ensureLead('default', join(directory, 'default'), 'Default')
+  expect(await runTool(lead.id, 'lead_notify_worker', { session: sessionId, text: 'PR #42 merged; no further action is needed.' }))
+    .toEqual({ delivered: true })
+  await expect(runTool(lead.id, 'lead_notify_worker', { session: 'worker-not-a-ticket', text: 'x' }))
+    .rejects.toThrow(/Only a worker or reviewer Session/)
   // The ending is remembered deterministically, so a later Session can recall it. Pre-injection is off by default,
   // so the operator opts in to that too before the snapshot is expected to carry it.
   expect(runtime.store.memories.search(ticket.title).some(memory => memory.kind === 'decision' && memory.ticket === ticket.id)).toBe(true)

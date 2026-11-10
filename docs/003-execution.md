@@ -100,7 +100,7 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 - **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a person's later message on its Threads resumes it.
 ### Pull requests
 
-A `change` Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
+When a followed pull request merges or closes, the Orchestrator also tells the Ticket's project Lead, which relays the end to the Ticket's worker Sessions (`lead_notify_worker`); GitHub timelines already show the merge, so the IM notice is the only external Channel notice. A `change` Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
 
 The Ticket is done when none of the pull requests it opened remain open. If it opened none, all pull requests it follows must be closed. It then ends with the outcome of the last relevant close and keeps its Subscriptions, allowing a later human comment to resume it.
 

@@ -42,7 +42,7 @@ describe('mounted surface', () => {
         'orchestrator_send_file', 'orchestrator_settings_propose', 'orchestrator_settings_save', 'orchestrator_thread_unsubscribe',
         'orchestrator_ticket_note', 'orchestrator_ticket_request_status', 'orchestrator_ticket_retry', 'orchestrator_trigger_requeue'],
       // A project Lead: its project's requests and messages, plus the memories scoped to its project.
-      lead: ['lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
+      lead: ['lead_notify_worker', 'lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
         'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'memory_forget',
         'memory_search', 'memory_write'],
       // An Executor Session: report, read what reached it, follow or detach Threads, and hand a Trigger back.

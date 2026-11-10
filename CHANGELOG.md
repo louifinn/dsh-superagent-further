@@ -28,6 +28,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Merged and closed pull requests are relayed to the affected project Lead, which notifies the Ticket's worker Sessions with
+  the new `lead_notify_worker` tool. The Orchestrator writes one durable Lead message per ended Ticket; a project-less
+  installation Ticket has no Lead to notify, and a Lead may only relay to worker or reviewer Sessions of its own project.
+
 - A change Ticket can carry an independent review its project Lead starts with `lead_review`; a blocked verdict keeps the Ticket open when its pull request merges.
 - Reports may carry up to 20 verification checks, shown as evidence on the Ticket and counted in request notices.
 - A layering check (`architecture:check`) rejects core importing the layers above it, the client importing the server, and src importing development tooling.

@@ -6,7 +6,7 @@ import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
-import { canComplete, key, liveTicket, type Ticket } from '../core/index.ts'
+import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
@@ -377,7 +377,8 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     // A Lead gets the preset's native tools (including delegation) plus its project tools; an Executor Session gets the
     // application tools its worker uses.
-    const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id }, project) : host.tools(agent, ticket)
+    const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
+      notify: (session, text) => this.notifyWorker(project.id, session, text) }, project) : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
       : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })
@@ -393,6 +394,18 @@ export class Sessions {
       binding.disposers.push(...this.workOnly(agent, ticket!.id))
     }
   }
+  /**
+   * Delivers a Lead's relay to a worker or reviewer Session of the same project. The Session id must name a Ticket of this
+   * project, so a Lead cannot message arbitrary Sessions or another project's workers; delivery is queued, like any prompt.
+   */
+  async notifyWorker(project: string, sessionId: string, text: string): Promise<{ delivered: true }> {
+    const match = /^(?:worker|review)-(.+)$/.exec(sessionId)
+    const ticket = match ? this.host.store.tickets.get(match[1]!) : undefined
+    if (!ticket || ticket.project !== project) throw new UserError('unknownWorkerSession')
+    await this.prompt(sessionId, key('lead-notify', sessionId, text), text, 'queue')
+    return { delivered: true }
+  }
+
   /** The registered project whose Lead Session `agent` is, if its Session id names one and the project is still registered. */
   private leadProject(agent: Agent): Project | undefined {
     const projectId = leadProjectOf(agent.id)

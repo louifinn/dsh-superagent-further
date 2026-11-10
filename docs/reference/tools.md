@@ -2078,6 +2078,38 @@ Parameters:
 }
 ```
 
+### `lead_notify_worker`
+
+Relay a short notice to a worker or reviewer Session of this project, by Session id, after the work it was doing ended — for example when a pull request merged. Use one call per Session. This is a relay only: it neither starts work nor grants the recipient new authority, and it cannot reach Sessions of another project.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "A worker or reviewer Session id of this project, such as worker-<ticket> or review-<ticket>."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "The notice, in the language of the work."
+    }
+  },
+  "required": [
+    "session",
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## The Host schedule service is installed
 
 ### `automation_create`
@@ -2403,4 +2435,4 @@ Parameters:
 
 ## Total
 
-46 distinct tools across 5 groups (53 registrations).
+47 distinct tools across 5 groups (54 registrations).

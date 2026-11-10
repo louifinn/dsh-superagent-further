@@ -31,6 +31,8 @@ export interface LeadToolsHost {
   readonly lead: LeadDispatch
   /** The Lead Session the tools run in; a request the Lead raises records it as its raiser. */
   readonly session: string
+  /** Relays a notice to a worker or reviewer Session of this project; the Sessions layer validates the Session belongs to it. */
+  notify(session: string, text: string): Promise<{ delivered: true }>
 }
 
 /** What one Ticket looks like to its project's Lead: the stage a person sees and the executor's latest state. */
@@ -277,5 +279,15 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       const result = await host.lead.complete(requestOf(host, project, id), summary)
       return { ...projectRequestView(result.request), reply_delivered: result.delivered }
     },
+  }), tool({
+    name: 'lead_notify_worker',
+    description: 'Relay a short notice to a worker or reviewer Session of this project, by Session id, after the work it was doing '
+      + 'ended — for example when a pull request merged. Use one call per Session. This is a relay only: it neither starts work '
+      + 'nor grants the recipient new authority, and it cannot reach Sessions of another project.',
+    schema: z.object({
+      session: z.string().trim().min(1).max(200).describe('A worker or reviewer Session id of this project, such as worker-<ticket> or review-<ticket>.'),
+      text: z.string().trim().min(1).max(2_000).describe('The notice, in the language of the work.'),
+    }).strict(),
+    execute: async ({ session, text }: { session: string; text: string }) => host.notify(session, text),
   })]
 }

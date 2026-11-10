@@ -140,6 +140,15 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
   settlement), otherwise the Assignment is marked interrupted and requeued through the Engine.
 - The existing host lock still allows one host per state directory; Leads live inside it.
 
+## Pull request endings reach the Lead
+
+When the GitHub Source observes that a followed pull request merged or closed, the Ticket ends in the core (unless a
+reviewer blocked it). The Orchestrator then tells the project Lead through the durable `lead_message` channel
+(`LeadDispatch.pullEnded`): the message names the pull request, the ended Ticket and the worker Session(s) to notify, and
+the Lead relays it with `lead_notify_worker`, one call per Session. A project-less installation Ticket has no Lead, so
+nothing is relayed for it, and the notice is written once per Ticket. This keeps the end of a change visible to the people
+who did the work without waking a worker on its own: a worker Session only runs when its Lead sends it something.
+
 ## Data model changes
 
 - **Schema 13** adds `project_message`: `id, projectId, from ('orchestrator'|'lead'|'person'),
