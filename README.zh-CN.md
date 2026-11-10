@@ -128,7 +128,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 原型是为单仓库、单 POSIX 主机、单人运维者准备的忠实研究产物。本 fork 保留其领域模型与哲学，改变的是日常使用提出的
 要求：平台、多项目、执行层级、运维、证据与分发。相对原型唯一提交（`8c32a9d`）的差异是当前 HEAD 上的
-**246 个文件、+26,064 / −1,756**（这条线上第一个发布是 `0.2.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
+**247 个文件、+26,279 / −1,756**（这条线上第一个发布是 `0.2.0`；当前发布为 `0.4.0`），而本地历史从逐字节一致的导入开始，所以下面每一处
 改动都来自本 fork。
 
 | 方面 | 原型 | 本 fork | 原因 |
@@ -139,12 +139,13 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 | 跨项目 | 一次接受的请求 = 一张工单、一个目录 | Ticket 之上的 Request，每交付单元一张工单、`after` 依赖、一次确认/一次结果/一个 done | 单张工单无法合法跨越项目；而人发的仍是一个请求 |
 | 交付契约 | 工单隐含就是一次交付：标 ready 就以 completed 结束，无论是否开过 PR | 每张工单带 `deliverable: change` 或 `answer`；`change` 获得分支与工作树，只能经被关注的 PR 结束（ready 报告须给出 PR），`answer` 只读项目的 live clone、以 `completed` 结束 | 只读问答不该为永不能合并的分支付费；没开 PR 的变更不能报成功 |
 | Agent 自举工作 | 工作只能来自经人工 Policy 接受的来源事件 | worker、项目 Lead、安装级自动化与独立 DSH 会话都能以持久请求发起工作；每条路径都记录来源、必须回复，且不能绕过 Policy 或准入 | 智能体必须能开始它发现的工作，但不能把自己的报告当作授权 |
-| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 22`、只读架构检查、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
-| 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志 | 无人值守需要每个平台上可见、可脚本化的运维 |
-| 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报 | “每个失败都可见”意味着运维者能看见趋势，而不只是状态 |
+| 证据 | worker 报告与工单结束，没有任何东西验证变更 | `change` 工单只能经受关注的 PR 结束，ready 报告须给出该 PR 并携带最多 20 项验证检查（显示在工单上）；Lead 可启动独立的只读审查者，blocked 结论会让已合并的 change 工单保持开放 | “完成”必须是被证据支撑的，且第二双眼睛不能是写代码的同一个会话 |
+| 状态 | 只认精确架构版本，没有向前迁移 | 逐步迁移 `10 → 11 → … → 22`、只读架构检查、用 `scripts/archive-state.mjs` 取一致快照、升级与回滚步骤 | 要长期运行，状态就必须能跨升级存活 |
+| 运维 | 通过 POSIX `ps`/`tmux` 启停，没有自检 | Node 服务脚本（CIM 发现）、优雅的 `POST /orchestrator/api/shutdown`、`verify-install`、`switch-project`、工作树回收与 `clean-worktrees`、有界日志、状态归档脚本、运维手册与安全策略 | 无人值守需要每个平台上可见、可脚本化的运维 |
+| 可观测性 | 每个组件一个健康词 | 轮询来源的 `nextAt`、连续失败计数、带最久等待与下次尝试的回复队列、等待中工单的动作与时长、Request 行、群日报、可按级别与范围过滤的面板日志页，以及汇总待处理 Request、升级与需要关注的自动化的 Overview | “每个失败都可见”意味着运维者能看见趋势、以及等待他们处理的异常，而不只是状态 |
 | 信任 | 触发的字段信任问题仍列为未决问题 | 可信与不可信字段形成文档并由 `tests/trust.spec.ts` 钉住；消息正文不能改变角色、工具、Policy 或强度；属主独占的状态 ACL；批处理参数防护 | 一旦有第二个人或第二个项目，提示注入与共享机器数据就是真实问题 |
-| 工程 | 没有 CI、没有发布、没有 changelog；测试假定 POSIX | `check.yml`（3 个 OS × Node 22/24）、`smoke.yml`（真实 macOS 主机）、`release.yml`（打标签的 tarball）、`.gitattributes`、semver/CHANGELOG、可复现的 `verify-install` | 平台回归与无法验证的安装正是日常工具不能承受的失败 |
-| 文档 | 只有编号设计文档（000–008） | 增加 [009 路线图](docs/009-roadmap.md)、[010 项目级编排器](docs/010-project-orchestrator.md)、[011 能力](docs/011-capabilities.md)、[012 项目请求](docs/012-project-requests.md)、本 README、`AGENTS.md`，以及 [docs/agents](docs/agents/domain.md) 下的工程技能脚手架 | 本 fork 的决策与理由必须能脱离产生它的访谈被读懂 |
+| 工程 | 没有 CI、没有发布、没有 changelog；测试假定 POSIX | `pnpm check` 依次跑类型检查、导入方向检查、测试、构建、打包 tarball 检查与生成参考页检查；`check.yml`（3 个 OS × Node 22/24）、`smoke.yml`（真实 macOS 主机）、`release.yml`（打标签的 tarball）、挂载表面与属性测试、仅报告的覆盖率、semver/CHANGELOG、可复现的 `verify-install` | 平台回归、参考页漂移与无法验证的安装正是日常工具不能承受的失败 |
+| 文档 | 只有编号设计文档（000–008） | 增加 [009 路线图](docs/009-roadmap.md)、[010 项目级编排器](docs/010-project-orchestrator.md)、[011 能力](docs/011-capabilities.md)、[012 项目请求](docs/012-project-requests.md)、[013 运维手册](docs/013-operations-runbook.md)、[docs/reference](docs/reference/tools.md) 下的生成式工具与设置参考、[CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md)、本 README、`AGENTS.md`，以及 [docs/agents](docs/agents/domain.md) 下的工程技能脚手架 | 本 fork 的决策、运维与贡献规则必须能脱离产生它的访谈被读懂 |
 
 ### 平台与部署
 
@@ -182,7 +183,8 @@ Lead 是本 fork 主要的架构新增，而且它刻意是一个**层**，不�
 (2) 用来够到并给子执行器发消息的预设工具 —— 执行器的输入经由它送达，而不是去 prompt 一个它拥有的会话 ——
 (3) `lead_status` 与项目请求工具（`lead_requests`、`lead_request_create`、`lead_request_decide`、
 `lead_request_reply`、`lead_request_complete`、`lead_request_approval`、`lead_request_approve`、
-`lead_request_escalate`），(4) 记录在 `lead_message`（架构 13）
+`lead_request_escalate`），以及启动独立审查者并记录其结论的审查工具 `lead_review` 与 `lead_review_record`（blocked
+结论会让已合并的 change 工单保持开放），(4) 记录在 `lead_message`（架构 13）
 里的派发记录，以及 (5) 没有任何修改 Policy 或设置的途径。被接受的工作作为派发的工单到达它；执行器是它的隐藏子会话。
 当工单需要决定、新交付物或其他项目的工作时，worker 会提出项目请求，Lead 必须回复。面板为每个项目显示一行（Lead
 会话、运行中的执行器、等待中的消息），有人点击时打开 Lead。Lead 承载的输入与报告路由是 P3 的工作；移除根 worker
@@ -222,6 +224,11 @@ DSH 会话也可以通过 `session` 来源提交工作，并且总会收到答�
   所以它被自动化了。
 - **重试** —— 发件箱带退避重试并暴露尝试次数，回复队列显示最久等待与下次尝试，来源会报告下次轮询时间。静默重试循环被
   视为 bug。
+- **日志与注意力** —— 面板日志页可按级别与范围过滤 Host 日志；Overview 汇总等待人处理的行：打开的 Request、升级、
+  需要关注的自动化，以及每个项目的 Lead。健康状态、发件箱与回复队列保留各自细节；瞬时失败去日志里读。
+- **归档与运维手册** —— `scripts/archive-state.mjs` 在数据库自身锁内用 `VACUUM INTO` 取一致快照，并按数量清理旧
+  归档；[013](docs/013-operations-runbook.md) 记录日常检查、备份、恢复与升级路径，[SECURITY.md](SECURITY.md) 记录
+  信任边界与漏洞报告方式。
 - **升级与回滚** —— 五步文档流程、备份 `orchestrator.sqlite` 及其 `-wal`/`-shm`，以及恢复备份并重跑
   `verify-install` 的回滚；日常路径只有在架构前进时才需要备份。
 
@@ -231,21 +238,24 @@ DSH 会话也可以通过 `session` 来源提交工作，并且总会收到答�
 渠道、时间、URL、接收范围以及声明的路由元数据是可信的；消息正文、标题、正文、评论、文件、图片、名称与引用的链接不是。
 没有任何不可信字段能改变角色、工具列表、Policy、允许名单或请求强度。`tests/trust.spec.ts` 检查两端以及提示词陈述；
 提示注入文本不能扩大允许名单。在机器侧，状态数据库与目录是属主独占的，智能体以自己独立的 GitHub 与飞书凭据运行，
-worker 环境是有范围限制并被文档化的。凭据仍然比理想状态宽 —— 这是**运维者的明确决定**（经典 `louibot` token 与当前
+worker 环境是有范围限制并被文档化的；`answer` 工单在去掉写工具、只读权限预设下执行，审查者同样只读。
+[SECURITY.md](SECURITY.md) 陈述这些边界与漏洞报告路径。凭据仍然比理想状态宽 —— 这是**运维者的明确决定**（经典 `louibot` token 与当前
 飞书 secret）；006 记录每个凭据放在哪里、如何轮换。请按哲学中“责任”一节的要求，从很短的允许名单和一个测试仓库开始。
 
 ### 工程与分发
 
-`pnpm check` 是唯一的检查：类型检查、89 个 spec 文件、tsdown 构建、`scripts/check-pack.mjs` 对 npm 将要发布的
-tarball 的检查，以及 `docs:check` 对生成参考页的一致性检查。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22
-和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，`release.yml` 打包插件包并附加到 GitHub release。
-测试套件共 1522 个测试；它驱动真实定时器与 SQLite，所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的
-Linux 套件，是本 fork 证据的一部分。文档也被测试：[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求
-007 列出每个源文件与 spec；`tests/surface.spec.ts` 断言挂载后的工具、skill 与 preset 表面，
-`tests/properties.spec.ts` 用带种子的生成器驱动门禁、身份与迁移不变量。`docs/reference` 下的参考页由
-`pnpm docs:generate` 从代码生成、由 `pnpm docs:check` 比较，因此不会漂移。插件包保留其配置形态与 CLI 可见行为；
-0.3.0 把包名与全部注册 id 改为 `dsh-superagent-further`，已有安装按 006 的迁移步骤处理。新增内容是增量设置与面板行，
-并配有 `CHANGELOG` 与 semver。
+`pnpm check` 是唯一的检查：类型检查、导入方向检查（`architecture:check`）、测试、tsdown 构建、对 npm 将要发布的
+tarball 的 `pack:check`（与 `scripts/pack-manifest.json` 比对），以及 `docs:check` 对生成的工具与设置参考页的一致性
+检查。CI 在 Ubuntu、macOS 与 Windows 上用 Node 22 和 24 运行它（六种组合），`smoke.yml` 在 macOS 上启动真实主机，
+`release.yml` 打包插件包并附加到 GitHub release。测试套件是 91 个 spec 文件、1522 个测试；它驱动真实定时器与 SQLite，
+所以每个测试与 hook 的超时是 30 秒；十次连续运行且旁边有并发运行的 Linux 套件，是本 fork 证据的一部分。文档也被测试：
+[tests/docs.spec.ts](tests/docs.spec.ts) 强制编号文档顺序，并要求 007 列出每个源文件与 spec；
+`tests/surface.spec.ts` 断言挂载后的工具、skill 与 preset 表面，`tests/properties.spec.ts` 用带种子的生成器驱动
+门禁、身份与创建不变量。`docs/reference` 下的参考页由 `pnpm docs:generate` 从代码生成、由 `pnpm docs:check` 比较，
+因此不会漂移；覆盖率由 `pnpm test:coverage` 报告，但不作为发布门禁。[CONTRIBUTING.md](CONTRIBUTING.md) 为每位贡献者
+给出同一套流程、门禁、汇报模板与角色交接。插件包保留其配置形态与 CLI 可见行为；0.3.0 把包名与全部注册 id 改为
+`dsh-superagent-further`，已有安装按 006 的迁移步骤处理。新增内容是增量设置与面板行，并配有 `CHANGELOG` 与 semver；
+当前发布为 0.4.0。
 
 ### 没有改变的部分
 
@@ -256,7 +266,7 @@ Thread、决策与结束状态；升级步骤在 006。
 
 ## 产品理念的进一步完善
 
-原原则保持不变：**尽可能少占用人的注意力，尽可能多地交付价值。** 日常使用在不增加顶层概念的前提下打磨了五件事：
+原原则保持不变：**尽可能少占用人的注意力，尽可能多地交付价值。** 日常使用在不增加顶层概念的前提下打磨了七件事：
 
 1. **项目是委派的单位。** 原型要求每个仓库一个安装。团队的工作按项目组织，所以项目变成一条带有本地 clone、仓库与
    基线分支的记录 —— Lead 又让它成为持久会话所拥有的单位。
@@ -267,8 +277,14 @@ Thread、决策与结束状态；升级步骤在 006。
 4. **宁可拒绝，不要猜测。** 有多个项目时，静默地选择一个仓库比拒绝更糟：没有归属的请求在接受阶段被拒绝并提示
    **Execution → Projects**，onboarding 也要求项目。原型隐含的单仓库回退在当时是便利，现在不再有唯一正确答案。
 5. **运维也是产品的一部分。** 一个要连续运行数周的工具，评价标准是它的迁移、升级、自检、日志上限、工作树回收、单主机
-   规则与可见重试状态，而不仅是它的智能体循环。这就是本 fork 投资于 `verify-install`、架构版本、CI、smoke 主机与发布
-   tarball 的原因。
+   规则、可见重试状态以及它暴露出来的异常，而不仅是它的智能体循环。这就是本 fork 投资于 `verify-install`、架构版本、
+   CI、smoke 主机、发布 tarball、日志页、Overview 的等待行与 013 运维手册的原因。
+6. **证据优先于声明。** 智能体说“完成了”是最便宜的一句话，也是最难信任的；所以产品在接缝处要求证据：change 工单只能
+   经受关注的 PR 结束，ready 报告携带验证它的检查；answer 工单的报告就是交付物；独立审查者可以用记录在工单上的结论
+   阻止合并。
+7. **系统必须能向下一个智能体解释自己。** 下一个读代码的智能体看不到产生它的对话。所以决策写入编号文档，工具参考页从
+   代码生成，打包与分层规则被检查，[CONTRIBUTING.md](CONTRIBUTING.md) 为人、普通编码智能体、Orchestrator、Lead、
+   Worker 与 Reviewer 写明同一套流程。
 
 刻意**不**增加的东西：第二条持久消息总线或共享任务板（sqlite 记录加 effects 已经能投递，第二个事实来源要消耗注意力）、
 面向依赖的工作流引擎（简单的 `after` 边就是一个属性）、一张工单里的多个执行器（2026-11-08 定案 —— 一单一执行器；跨项目

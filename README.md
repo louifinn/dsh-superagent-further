@@ -153,7 +153,7 @@ That direction was settled on 2026-11-08 and the analysis for a later segmented 
 The prototype is a faithful research artifact for one repository, one POSIX host and a single human operator. This
 fork keeps its domain model and philosophy; it changes what daily use demands: platforms, several projects, an
 execution hierarchy, operations, evidence and distribution. The diff against the prototype's only commit
-(`8c32a9d`) is **246 files, +26,064 / −1,756** at the current head (the first release on this line was `0.2.0`), and
+(`8c32a9d`) is **247 files, +26,279 / −1,756** at the current head (the first release on this line was `0.2.0`; `0.4.0` is the current release), and
 the local history started from a byte-identical import, so every change below was made by this fork.
 
 | Area | Prototype | This fork | Why |
@@ -164,12 +164,13 @@ the local history started from a byte-identical import, so every change below wa
 | Cross-project work | One accepted request = one Ticket, one directory | Request above Tickets, one Ticket per delivery unit, `after` edges, one acknowledgement/result/done | A single Ticket cannot legitimately span projects; the person still made one request |
 | Deliverable contract | A Ticket was implicitly one delivery: a ready report ended it as completed whether or not a pull request existed | Each Ticket carries `deliverable: change` or `answer`; `change` gets a branch and worktree and ends only through a followed pull request (its ready report names the PR), `answer` reads the project's live checkout read-only and ends as `completed` | Answer-only work should not pay for a branch it can never merge, and a change that never opened a PR must not report success |
 | Agent-raised work | Work entered only from a Source event accepted under the person's Policy | Workers, project Leads, installation automations and independent DSH Sessions can raise work as durable requests; every path records its origin, must reply, and cannot bypass Policy or admission | The agent must be able to start work it discovers without turning its own report into authority |
-| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 22`, read-only schema check, upgrade and rollback steps | State must survive upgrades if it is to be left running |
-| Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md), [010 Project-level orchestrator](docs/010-project-orchestrator.md), [011 Capabilities](docs/011-capabilities.md), [012 Project requests](docs/012-project-requests.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions and their reasons must be readable without the interview that produced them |
-| Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs | Unattended use needs visible, scriptable operations on every platform |
-| Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest | "Every failure visible" means an operator can see the trend, not only the state |
+| Evidence | A worker report and a Ticket end; nothing verifies the change | A change Ticket ends only with a followed pull request whose ready report names it and carries up to twenty verification checks, shown on the Ticket; a Lead starts an independent read-only reviewer whose blocked verdict keeps a merged change Ticket open | "Done" must mean evidenced, and a second pair of eyes must not be the same Session that wrote the change |
+| State | Exact schema only, no forward migration | Stepwise migrations `10 → 11 → … → 22`, read-only schema check, `scripts/archive-state.mjs` for a consistent snapshot, upgrade and rollback steps | State must survive upgrades if it is to be left running |
+| Documentation | Numbered design docs only (000–008) | Adds [009 Roadmap](docs/009-roadmap.md), [010 Project-level orchestrator](docs/010-project-orchestrator.md), [011 Capabilities](docs/011-capabilities.md), [012 Project requests](docs/012-project-requests.md), [013 Operations runbook](docs/013-operations-runbook.md), generated tool and settings references under [docs/reference](docs/reference/tools.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), this README, `AGENTS.md`, and engineering-skills scaffolding under [docs/agents](docs/agents/domain.md) | The fork's decisions, operations and contribution rules must be readable without the interview that produced them |
+| Operations | Start/stop via POSIX `ps`/`tmux`, no self-check | Node service script with CIM discovery, graceful `POST /orchestrator/api/shutdown`, `verify-install`, `switch-project`, worktree reclaim and `clean-worktrees`, bounded logs, a state archive script, an operations runbook and a security policy | Unattended use needs visible, scriptable operations on every platform |
+| Observability | One health word per component | `nextAt` for polling Sources, consecutive failure counts, reply queue with oldest wait and next attempt, waiting-Ticket action and age, Request rows, group daily digest, a panel Logs page filterable by level and scope, and an Overview that gathers open Requests, escalations and automations needing attention | "Every failure visible" means an operator can see the trend and the exceptions that wait for them, not only the state |
 | Trust | Trigger-field trust left as an open question | Trusted vs untrusted fields documented and pinned by `tests/trust.spec.ts`; bodies cannot change roles, tools, Policy or strength; owner-only state ACLs; batch-argument guard | Prompt injection and shared-machine data are real once a second person or project exists |
-| Engineering | No CI, no release, no changelog; tests assumed POSIX | `check.yml` (3 OS × Node 22/24), `smoke.yml` (real macOS host), `release.yml` (tagged tarball), `.gitattributes`, semver/CHANGELOG, reproducible `verify-install` | Platform regressions and unverifiable installs are exactly the failures a daily tool cannot afford |
+| Engineering | No CI, no release, no changelog; tests assumed POSIX | `pnpm check` runs typecheck, an import-direction check, the suite, the build, a packed-tarball check and a generated-reference check; `check.yml` (3 OS × Node 22/24), `smoke.yml` (real macOS host), `release.yml` (tagged tarball), surface and property tests, report-only coverage, semver/CHANGELOG, reproducible `verify-install` | Platform regressions, reference drift and unverifiable installs are exactly the failures a daily tool cannot afford |
 
 ### Platforms and deployment
 
@@ -216,7 +217,9 @@ bound to one project, with (1) its own prompt section carrying the project's clo
 (2) the preset tools it uses to reach and message its child executors — an executor's input is delivered
 through it, not by prompting a Session it owns — (3) `lead_status` and the project-request tools
 (`lead_requests`, `lead_request_create`, `lead_request_decide`, `lead_request_reply`, `lead_request_complete`,
-`lead_request_approval`, `lead_request_approve`, `lead_request_escalate`), (4) dispatch records in `lead_message`,
+`lead_request_approval`, `lead_request_approve`, `lead_request_escalate`), the review tools `lead_review` and
+`lead_review_record` that start an independent reviewer subagent and record its verdict (a blocked verdict keeps a
+merged change Ticket open), (4) dispatch records in `lead_message`,
 schema 13, and
 (5) no way to change Policy or settings.
 Accepted work reaches it as a dispatched Ticket; the worker is its hidden child. A worker raises a project request
@@ -269,6 +272,12 @@ creates the installation Request with `escalation` provenance.
   or applies the same rule for an operator. Disk growth is a failure mode, so it is automated.
 - **Retries** — the outbox retries with backoff and exposes attempts, the reply queue shows the oldest wait and the
   next attempt, and a source reports when it will poll again. A silent retry loop is treated as a bug.
+- **Logs and attention** — the panel Logs page shows the Host log filtered by level and scope, and the Overview gathers
+  the rows that wait for a person: open Requests, escalations, automations needing attention and the per-project Leads.
+  Health, the outbox and the reply queue keep their own details; the log is where a transient failure is read.
+- **Archive and runbook** — `scripts/archive-state.mjs` takes a consistent `VACUUM INTO` snapshot of the state
+  database under its own lock and prunes old archives by count; [013](docs/013-operations-runbook.md) records the daily
+  checks, backups, recovery and upgrade path, and [SECURITY.md](SECURITY.md) records the trust boundaries.
 - **Upgrade and rollback** — five documented steps, a backup of `orchestrator.sqlite` with `-wal`/`-shm`, and a
   rollback that restores it and re-runs `verify-install`; the daily path needs no backup unless the schema advanced.
 
@@ -279,25 +288,29 @@ source, thread, actor id, `human`, `addressed`, channel, time, URL, the receivin
 are trusted; message text, titles, bodies, comments, files, images, names and quoted links are not. No untrusted field
 can change a role, tool list, Policy, allow list or request strength. `tests/trust.spec.ts` checks both halves and the
 prompt statements; prompt-injection text cannot widen the allow list. On the machine side, the state database and
-directory are owner-only, the agent runs under its own GitHub and Feishu credentials, and the worker environment is
-scoped and documented. Credentials are still broader than ideal *by the operator's explicit decision* (a classic
+directory are owner-only, the agent runs under its own GitHub and Feishu credentials, the worker environment is
+scoped and documented, an answer Ticket executes with write tools removed and a read-only preset, and the reviewer runs
+read-only. [SECURITY.md](SECURITY.md) states these boundaries and the reporting path for a vulnerability. Credentials are still broader than ideal *by the operator's explicit decision* (a classic
 `louibot` token and the current Feishu secret); 006 records where each lives and how to rotate it. Start with a short
 allow list and a test repository, as the responsibility section of the philosophy asks.
 
 ### Engineering and distribution
 
-`pnpm check` is the single check: typecheck, 91 spec files, a tsdown build, `scripts/check-pack.mjs` over the tarball npm
-would publish, and `docs:check` over the generated reference. CI runs it on Ubuntu, macOS and
-Windows with Node 22 and 24 (six combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the
-bundle and attaches it to a GitHub release. The suite is 1522 tests; it drives real timers and SQLite, so timeouts are
-30 s per test and hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the
-fork. The docs are tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007
-lists every source file and spec; `tests/surface.spec.ts` asserts the mounted tool, skill and preset surface, and
-`tests/properties.spec.ts` drives the gate, identity and migration invariants from seeded generators. The reference
+`pnpm check` is the single check: typecheck, the import-direction check (`architecture:check`), the suite, the tsdown
+build, `pack:check` over the tarball npm would publish (compared with `scripts/pack-manifest.json`), and `docs:check`
+over the generated tool and settings references. CI runs it on Ubuntu, macOS and Windows with Node 22 and 24 (six
+combinations), `smoke.yml` starts a real host on macOS, and `release.yml` packs the bundle and attaches it to a GitHub
+release. The suite is 91 spec files and 1522 tests; it drives real timers and SQLite, so timeouts are 30 s per test and
+hook, and ten consecutive runs next to a concurrent Linux suite are part of the evidence behind the fork. The docs are
+tested too: [tests/docs.spec.ts](tests/docs.spec.ts) enforces numbered-document order and that 007 lists every source
+file and spec; `tests/surface.spec.ts` asserts the mounted tool, skill and preset surface, and
+`tests/properties.spec.ts` drives the gate, identity and creation invariants from seeded generators. The reference
 pages under [docs/reference](docs/reference/tools.md) are generated from the code by `pnpm docs:generate` and compared
-by `pnpm docs:check`, so they cannot drift. The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package
-and every registration id to `dsh-superagent-further`, so an existing profile follows the migration steps in 006.
-Additions are additive settings and panel rows, with a `CHANGELOG` and semver.
+by `pnpm docs:check`, so they cannot drift; coverage is reported by `pnpm test:coverage` without gating the release.
+[CONTRIBUTING.md](CONTRIBUTING.md) gives every contributor the same loop, gates, reporting template and role hand-offs.
+The bundle keeps its config shape and CLI-facing behaviour; 0.3.0 renamed the package and every registration id to
+`dsh-superagent-further`, so an existing profile follows the migration steps in 006. Additions are additive settings
+and panel rows, with a `CHANGELOG` and semver; 0.4.0 is the current release.
 
 ### What did not change
 
@@ -310,7 +323,7 @@ Threads, decisions and ended state; upgrade steps are in 006.
 ## Product philosophy, extended
 
 The original principle stands: **take as little human attention as possible, and give as much value as possible.**
-Daily use sharpened five things without adding a top-level concept:
+Daily use sharpened seven things without adding a top-level concept:
 
 1. **The project is the unit of delegation.** The prototype required one installation per repository. A team's work is
    organised by project, so a project became a record with a local clone, a repository and a base branch — and the
@@ -325,8 +338,17 @@ Daily use sharpened five things without adding a top-level concept:
    unowned request is refused at acceptance and points at **Execution → Projects**, and onboarding requires a project.
    The prototype's implicit single-repository fallback was a convenience that no longer has one correct answer.
 5. **Operations are part of the product.** A tool left running for weeks is judged by its migrations, upgrades,
-   self-checks, log bounds, worktree reclamation, one-host rule and visible retry state, not only by its agent loop.
-   That is why this fork invests in `verify-install`, schemas, CI, smoke hosts and a release tarball.
+   self-checks, log bounds, worktree reclamation, one-host rule, visible retry state and the exceptions it surfaces,
+   not only by its agent loop. That is why this fork invests in `verify-install`, schemas, CI, smoke hosts, a release
+   tarball, the Logs page, the Overview's waiting rows and the runbook in 013.
+6. **Evidence over assertion.** An agent that says "done" is the cheapest sentence to write and the most expensive to
+   trust, so the product asks for evidence at the seams: a change Ticket ends only through a followed pull request, its
+   ready report carries the checks that verified it, an answer Ticket's report is the deliverable, and an independent
+   reviewer can block a merge with a verdict recorded on the Ticket.
+7. **The system must explain itself to the next agent.** Another agent will read the code, not the conversation that
+   produced it. So decisions are written in numbered docs, tool references are generated from the code, the packing and
+   layering rules are checked, and [CONTRIBUTING.md](CONTRIBUTING.md) states the same loop for a person, an ordinary
+   coding agent, the Orchestrator, a Lead, a Worker and a Reviewer.
 
 Deliberately *not* added: a second durable bus or shared board (sqlite records plus effects already deliver, and a
 second source of truth costs attention), a workflow engine for dependencies (simple `after` edges are an attribute),
