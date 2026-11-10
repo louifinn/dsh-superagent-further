@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const NUMBERED = /^(\d{3})-[a-z0-9-]+\.md$/
+/** An ADR has its own directory and its own four-digit number, so it is not a numbered document in `docs/`. */
+const ADR = join(ROOT, 'docs', 'adr')
+const ADR_NAME = /^\d{4}-[a-z0-9-]+\.md$/
 const numbered = readdirSync(join(ROOT, 'docs')).filter(name => NUMBERED.test(name)).sort()
 const entries = ['README.md', 'SETUP.md']
 const documents = [...entries, ...readdirSync(join(ROOT, 'docs')).filter(name => name.endsWith('.md')).map(name => `docs/${name}`)]
@@ -44,6 +47,8 @@ describe('documentation', () => {
     const violations = numbered.flatMap(name => links(join(ROOT, 'docs', name)).flatMap(target => {
       const linked = resolve(ROOT, 'docs', target)
       if (!linked.endsWith('.md')) return []
+      // A numbered document may link to an ADR: ADRs live in docs/adr and are numbered on their own.
+      if (dirname(linked) === ADR && ADR_NAME.test(basename(linked))) return []
       // Take the file name with `basename`: on Windows `lastIndexOf('/')` never matches a resolved path.
       const number = NUMBERED.exec(basename(linked))?.[1]
       return dirname(linked) === join(ROOT, 'docs') && number !== undefined && number < name.slice(0, 3) ? [] : [`${name} → ${target}`]

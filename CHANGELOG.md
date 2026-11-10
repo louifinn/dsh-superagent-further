@@ -24,6 +24,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - A failed `orchestrator_send_file` now says why: `Runtime.sendFile` keeps the Source's reason in the thrown error and the
   tool response, records it in a bounded delivery-failure ring, writes a warning to the Host log, and Overview shows the
   recent failures as a problem row naming the file, chat and reason.
+- A Ticket now records why it ended: `ended.cause` is `report` (the worker's own ready or dropped Report), `human` (a
+  person's stop), `merge` (a followed pull request's close) or `eval`, beside `ended.by` (`executor` or `human`) and the
+  outcome. `Executor.stop` receives the matching `ExecutorStopCause` (`TicketEndCause | 'retry'`) instead of inferring
+  teardown authority from report timing, and schema 23 backfills every ended Ticket's cause.
+- `docs/adr/0001-ticket-end-authority.md` records the ticket-end decision: explicit causes, retirement after the reporting
+  turn, immediate external preemption, one notification authority per role, the rejected alternatives and the accepted
+  crash-window risk.
 
 ### Changed
 
@@ -43,6 +50,20 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   ending a turn to wait for a wake, which stalled one assignment for three hours.
 - A worker keeps one worktree and cwd per Ticket: another worktree is evidence only through its absolute path, and no gate
   probe relies on a relative path.
+- A report that ends an `answer` Ticket no longer cancels the turn that made it. Retirement runs after the ending
+  transaction commits and waits up to `RETIRE_GRACE_MS` (60 s) for the worker's turn to end before disposing its
+  activation and stopping background work; a turn that outlives the grace is cancelled as a user stop. External endings
+  (a person's stop, a followed pull request's close, an Eval stop, a retry) still preempt the turn at once, and a retry
+  ends only the Assignment. Covered by `tests/executor-retirement.spec.ts`.
+- Worker activations now start with DSH delivery `caller`, so the application's own durable Lead messages are the single
+  notification authority and DSH settlement notices never reach the Lead model; reviewer activations keep `parent`
+  delivery because the reviewer has no application tool, and its settlement notice is what prompts the Lead's
+  `lead_review_record` verdict. This also stops a report-caused retirement from telling the Lead the worker was stopped
+  before its turn ended.
+- Documentation pass for the ticket-end contract: docs/003 and docs/010 describe retirement and the caller/parent split,
+  docs/007 names `TicketEndBy`/`TicketEndCause` and the grace, docs/014 plans the future `self_report` at schema 24
+  (schema 23 is the cause backfill), the roadmap carries the current counts and a Sprint 36 checklist, and numbered docs
+  may link to `docs/adr/*.md`.
 
 ## [0.4.0] - 2026-11-10
 
