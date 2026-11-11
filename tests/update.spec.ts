@@ -4,7 +4,7 @@
  * update. The fake bundles are tiny ESM files under the test's state directory, as in `supervisor.spec.ts`.
  */
 import { createHash } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Journal } from '../src/supervisor/journal.ts'
 import { Supervisor, type SupervisorOptions } from '../src/supervisor/supervisor.ts'
 import {
-  backupDatabase, claimUpdateRequest, readUpdateHistory, updateBackupsDirectory, updateProcessingPath, updateRequestPath,
+  backupDatabase, claimUpdateRequest, readUpdateHistory, restoreDatabase, updateBackupsDirectory, updateProcessingPath,
+  updateRequestPath,
 } from '../src/supervisor/update-state.ts'
 import { currentPointer, previousPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
 import { HOST_API, type RuntimeDescriptor } from '../src/runtime-host.ts'
@@ -132,6 +133,62 @@ function migrateDatabase(schema = 26, value = 'new'): void {
     connection.close()
   }
 }
+/**
+ * Commit a migration into the database's write-ahead log, as a candidate's `init` does before it dies, and leave the state
+ * directory in the crash shape: the main file still holds the baseline rows while the `-wal`/`-shm` sidecars carry the
+ * migration. A holder with an open read transaction keeps SQLite from checkpointing the frames; the trio is snapshotted, the
+ * holder closed and the snapshot put back, so no live connection holds the files when the supervisor boots.
+ */
+function migrateInWal(schema = 26, value = 'new'): void {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+  const path = join(directory, 'orchestrator.sqlite')
+  const snapshot = mkdtempSync(join(tmpdir(), 'update-wal-'))
+  const holder = new DatabaseSync(path)
+  try {
+    holder.exec('PRAGMA journal_mode = WAL')
+    holder.exec('PRAGMA wal_autocheckpoint = 0')
+    holder.exec('BEGIN')
+    holder.prepare("SELECT value FROM kv WHERE key = 'schema'").get()
+    const writer = new DatabaseSync(path)
+    try {
+      writer.exec('PRAGMA wal_autocheckpoint = 0')
+      writer.prepare("UPDATE kv SET value = ? WHERE key = 'schema'").run(String(schema))
+      writer.prepare("UPDATE kv SET value = ? WHERE key = 'marker'").run(value)
+    } finally {
+      writer.close()
+    }
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (!existsSync(`${path}${suffix}`)) throw new Error(`the WAL database has no ${suffix === '' ? 'main' : suffix} file`)
+      copyFileSync(`${path}${suffix}`, join(snapshot, `orchestrator.sqlite${suffix}`))
+    }
+    holder.exec('COMMIT')
+  } finally {
+    holder.close()
+  }
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true })
+  for (const suffix of ['', '-wal', '-shm']) copyFileSync(join(snapshot, `orchestrator.sqlite${suffix}`), `${path}${suffix}`)
+  rmSync(snapshot, { recursive: true, force: true })
+}
+/** The schema of a copy of the main database file alone, ignoring the WAL: the baseline a crashed candidate left behind. */
+function mainFileSchema(): number | undefined {
+  const scratch = mkdtempSync(join(tmpdir(), 'update-main-'))
+  try {
+    const copy = join(scratch, 'main.sqlite')
+    copyFileSync(join(directory, 'orchestrator.sqlite'), copy)
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+    const connection = new DatabaseSync(copy, { readOnly: true })
+    try {
+      const row = connection.prepare("SELECT value FROM kv WHERE key = 'schema'").get() as { value?: string } | undefined
+      return row?.value === undefined ? undefined : Number(row.value)
+    } finally {
+      connection.close()
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+/** The WAL sidecar SQLite would replay over the main file. */
+const walPath = (): string => join(directory, 'orchestrator.sqlite-wal')
 /** The schema marker the supervisor reads at boot, or undefined when the database is missing. */
 function schemaVersion(): number | undefined {
   const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
@@ -393,6 +450,130 @@ describe('update engine', () => {
     expect(supervisor.logs.list({ limit: 200 }).some(entry => entry.message.startsWith('update.database-restored'))).toBe(false)
     expect(supervisor.logs.list({ limit: 200 }).some(entry =>
       entry.message.startsWith('update.database-restore-skipped phase=init'))).toBe(true)
+  })
+
+  it('leaves a WAL-migrated database untouched when the journaled backup is missing and refuses on the next boot too', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:20:00.000Z')
+    expect(backup).toBeDefined()
+    migrateInWal(26, 'new')
+    // The migration lives only in the write-ahead log: the main file still reads the schema-25 baseline.
+    expect(schemaVersion()).toBe(26)
+    expect(mainFileSchema()).toBe(25)
+    rmSync(backup!, { force: true })
+    leaveCrash('init', serving, null, staged, { backup })
+    const noPackage = (): never => { throw new Error('this test has no packaged runtime') }
+    const supervisor = newSupervisor({ packaged: noPackage })
+    await expect(supervisor.start()).rejects.toThrow(/no candidate runtime could be resolved/)
+    // Removing the WAL would drop the candidate's committed migration and let the next boot read schema 25 and start.
+    expect(existsSync(walPath())).toBe(true)
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry => entry.message.startsWith('update.database-restored'))).toBe(false)
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restore-skipped phase=init'))).toBe(true)
+    // A second boot has no in-memory schema to lean on: it must still see 26 and refuse, never start the baseline.
+    const second = newSupervisor({ packaged: noPackage })
+    await expect(second.start()).rejects.toThrow(/no candidate runtime could be resolved/)
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
+  })
+
+  it('restores a WAL-migrated database from the journaled backup and serves the baseline runtime', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:25:00.000Z')
+    expect(backup).toBeDefined()
+    migrateInWal(26, 'new')
+    leaveCrash('init', serving, null, staged, { backup })
+    const noPackage = (): never => { throw new Error('this test has no packaged runtime') }
+    const supervisor = newSupervisor({ packaged: noPackage })
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'journal' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+    // The restored copy replaces the database and the WAL that described the failed candidate is gone.
+    expect(existsSync(walPath())).toBe(false)
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restored phase=init schema=25'))).toBe(true)
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    await supervisor.stop()
+    const second = newSupervisor({ packaged: noPackage })
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+  })
+
+  it('finishes a restore that died after publishing the complete copy and before renaming it over the database', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:30:00.000Z')
+    expect(backup).toBeDefined()
+    migrateInWal(26, 'new')
+    // The crash state inside restoreDatabase: the whole copy is published as the complete marker, the WAL is still beside it.
+    copyFileSync(backup!, join(directory, 'orchestrator.sqlite.restoring'))
+    rmSync(backup!, { force: true })
+    leaveCrash('init', serving, null, staged, { backup })
+    const noPackage = (): never => { throw new Error('this test has no packaged runtime') }
+    const supervisor = newSupervisor({ packaged: noPackage })
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'journal' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+    expect(existsSync(walPath())).toBe(false)
+    expect(existsSync(join(directory, 'orchestrator.sqlite.restoring'))).toBe(false)
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restore-finished schema=25'))).toBe(true)
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    await supervisor.stop()
+    const second = newSupervisor({ packaged: noPackage })
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+  })
+
+  it('discards a partial restore copy and keeps the WAL database fail-closed', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:35:00.000Z')
+    expect(backup).toBeDefined()
+    migrateInWal(26, 'new')
+    rmSync(backup!, { force: true })
+    const partial = join(directory, 'orchestrator.sqlite.restoring.tmp')
+    writeFileSync(partial, 'a copy that never finished')
+    leaveCrash('init', serving, null, staged, { backup })
+    const noPackage = (): never => { throw new Error('this test has no packaged runtime') }
+    const supervisor = newSupervisor({ packaged: noPackage })
+    await expect(supervisor.start()).rejects.toThrow(/no candidate runtime could be resolved/)
+    expect(existsSync(partial)).toBe(false)
+    expect(existsSync(walPath())).toBe(true)
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restore-skipped phase=init'))).toBe(true)
+    const second = newSupervisor({ packaged: noPackage })
+    await expect(second.start()).rejects.toThrow(/no candidate runtime could be resolved/)
+    expect(existsSync(partial)).toBe(false)
+    expect(schemaVersion()).toBe(26)
+  })
+
+  it('refuses a truncated backup before removing the database or its WAL', () => {
+    database(25, 'old')
+    migrateInWal(26, 'new')
+    const truncated = join(directory, 'truncated.sqlite')
+    writeFileSync(truncated, readFileSync(join(directory, 'orchestrator.sqlite')).subarray(0, 100))
+    expect(() => restoreDatabase(directory, truncated)).toThrow(/not readable/)
+    expect(existsSync(join(directory, 'orchestrator.sqlite.restoring.tmp'))).toBe(false)
+    expect(existsSync(walPath())).toBe(true)
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
   })
 
   it('records an applied history entry when a committed update lost only its history write', async () => {

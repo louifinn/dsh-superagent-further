@@ -284,6 +284,18 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A refused database restore can no longer silently roll a WAL-mode database back to its older main file. `restoreDatabase`
+  removed `<stateDir>/orchestrator.sqlite-wal` and `-shm` before copying the backup, so when the journaled backup was
+  missing, unreadable or truncated — or the process died between the two steps — the candidate's committed migration,
+  which lived only in the write-ahead log, was gone; the next boot read the pre-migration main file, saw a schema the
+  baseline supported and started it, losing the committed frames. The restore now copies the backup to
+  `<db>.restoring.tmp`, fsyncs it, verifies it opens as SQLite, publishes it as the complete-copy marker
+  `<db>.restoring`, and only then removes the sidecars and renames it over the database; every failure before the marker
+  leaves the database and its WAL untouched, so the ordinary fail-closed skip still sees the newer schema. Boot recovery
+  finishes a complete marker before reading the schema (`update.database-restore-finished schema=…`) and discards a
+  partial `.restoring.tmp` with the database untouched. Covered by five new WAL-aware cases in `tests/update.spec.ts`
+  (missing backup with the migration only in the WAL and a second boot that must still refuse, a successful WAL restore,
+  the complete-marker finish, the partial-copy discard and a truncated backup refused before any sidecar removal).
 - A runtime update that crashed after the candidate's `init` had already committed its database migration but before
   `journal.commit` no longer leaves the host unable to start. The pipeline allows a schema-newer candidate, so the
   migrated database was newer than both the journal's baseline runtime and the packaged fallback and every start was

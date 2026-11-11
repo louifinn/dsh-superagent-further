@@ -81,11 +81,19 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    (`Journal.noteBackup`), so if the database schema is newer than the recorded baseline's — the candidate's `init`
    migration committed before the process died — the supervisor also restores that backup and re-reads the schema before
    resolving, logging `update.database-restored phase=… schema=… backup=…`. Without this, the baseline and the packaged
-   runtime would both be refused as schema downgrades and the host could not start. The restore is limited to a running
-   `update` journal at `swap`, `load`, `init` or `commit`, a recorded path inside `runtime/backups/`, and a database
-   strictly newer than the baseline schema; a committed journal, a missing or unreadable backup, a path outside that
-   directory or an unrecorded baseline schema leaves the database untouched (`update.database-restore-skipped …`) and the
-   ordinary fail-closed refusal stands. Without the pointer reconciliation, the *second* boot would have no running
+   runtime would both be refused as schema downgrades and the host could not start. The restore is WAL-safe: the backup
+   is copied to `<db>.restoring.tmp`, synced and verified as a readable SQLite database, then published as the
+   complete-copy marker `<db>.restoring`; only after the marker exists are the failed database's `-wal`/`-shm` sidecars
+   removed and the marker renamed over the database. A missing, unreadable or truncated backup, a failed copy or a crash
+   during the copy therefore leaves the database and the write-ahead log SQLite would replay untouched, so a later boot
+   still reads the candidate's committed schema and keeps failing closed instead of silently starting the baseline over
+   dropped WAL frames. A crash after the marker is published is finished on the next boot before the schema is read —
+   sidecars removed, marker renamed into place, `update.database-restore-finished schema=…` — while a partial
+   `<db>.restoring.tmp` is discarded and the database is left alone. The restore is limited to a running `update` journal
+   at `swap`, `load`, `init` or `commit`, a recorded path inside `runtime/backups/`, and a database strictly newer than
+   the baseline schema; a committed journal, a missing or unreadable backup, a path outside that directory or an
+   unrecorded baseline schema leaves the database untouched (`update.database-restore-skipped …`) and the ordinary
+   fail-closed refusal stands. The complete marker is verified again at boot before it replaces the database. Without the pointer reconciliation, the *second* boot would have no running
    journal to lean on and would silently start the uncommitted candidate from `current.json`, with no drain, backup,
    self-check, history entry or journal record. A crash inside `commit`, after the candidate began serving in memory,
    still reconciles to the baseline: serving was never durable, and the baseline is the only state the journal vouches
@@ -116,6 +124,13 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
 - **Swap without a database backup.** Migrations run inside the new runtime's `init`; without a pre-swap copy, a failed
   migration could not be undone and the previous runtime could not reopen the database. `VACUUM INTO` is consistent and
   does not require a second process.
+- **Remove the write-ahead log before copying the backup.** The first restore deleted `-wal`/`-shm` up front so SQLite
+  would not replay the failed database's frames over the restored file. Production runs in WAL mode, so if the copy then
+  failed — a missing, unreadable or truncated backup — or the process died between the two steps, the candidate's
+  committed migration survived only in that log and the next boot read the older main file and started the baseline,
+  silently dropping it. The restore now copies, syncs and verifies the backup, publishes it as a complete-copy marker,
+  and only then removes the sidecars; a crash after the marker is published is finished at boot, and a failure before it
+  leaves the database and its WAL untouched.
 - **Allow a schema downgrade so rollback always works.** It lets older code rewrite a newer database, losing columns and
   semantics. Rollback is therefore limited to a previous runtime whose schema is at least the current database's, and the
   backup is a crash-recovery artifact, not a downgrade tool: boot recovery restores it only to undo a migration an
@@ -142,9 +157,12 @@ state directory before touching production.
 `tests/update.spec.ts` covers the two-boot crash recovery at `swap` and `init` (the reconciled pointers, the recovered
 `versionStatus`, the uncommitted version never starting and `updateStatus()` reporting the recovered current/previous),
 a schema-bumping crash that restores the journaled database backup and keeps the committed case from restoring, a
-missing backup that fails closed, a committed update that lost only its history append, and the packaged runtime never
-being recorded as the previous pointer; it also backs up a database while another connection keeps WAL open, and drives a
-real `Runtime` through `drain('update')` and a replacement start on the same state directory. `scripts/drill.mjs` runs 16
+missing backup that fails closed (including a WAL-mode database whose committed migration must survive a refused restore,
+so a second boot still refuses instead of starting the baseline), the complete-marker finish and partial-copy discard of
+an interrupted restore, a truncated backup that is refused before the sidecars are touched, a committed update that lost
+only its history append, and the packaged runtime never being recorded as the previous pointer; it also backs up a
+database while another connection keeps WAL open, and drives a real `Runtime` through `drain('update')` and a
+replacement start on the same state directory. `scripts/drill.mjs` runs 16
 scenarios, including a simulated crash at each of the eight journaled apply phases followed by a second boot that must
 serve the reconciled current pointer, and a schema-bumping crash that must restore the pre-swap database and serve the
 baseline. The engine's apply loop itself is driven with interchangeable fake ESM bundles: serving the real built bundle

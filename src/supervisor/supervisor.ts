@@ -28,8 +28,8 @@ import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
 import { UpdateEngine, type UpdateEnvironment } from './update.ts'
 import {
-  readUpdateHistory, removeDescriptorFile, restoreDatabase, shortReason, UPDATE_POLL_MS, updateBackupsDirectory,
-  updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry, type UpdateSnapshot,
+  readUpdateHistory, recoverInterruptedRestore, removeDescriptorFile, restoreDatabase, shortReason, UPDATE_POLL_MS,
+  updateBackupsDirectory, updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry, type UpdateSnapshot,
 } from './update-state.ts'
 import {
   currentPointer, databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor,
@@ -215,7 +215,10 @@ export class Supervisor {
           interrupted.operation, interrupted.phase)
         this.reconcileUpdatePointers(runtimeDir, interrupted)
       }
-      let database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+      // A restore that died after it had already published the complete copied database is finished before the schema is
+      // read; only after that is the journaled backup considered, and only when the database is still ahead of the baseline.
+      const finished = this.completeInterruptedRestore(stateDir, interrupted)
+      let database = finished ?? databaseSchema(join(stateDir, 'orchestrator.sqlite'))
       database = this.recoverDatabaseBackup(stateDir, interrupted, database)
       let packaged: PackagedRuntime | undefined
       let packagedProblem: unknown
@@ -277,11 +280,43 @@ export class Supervisor {
   }
 
   /**
+   * Finish a database restore that the previous process died inside, before the schema is read. The restore publishes the
+   * complete copy as `<db>.restoring` before it removes the write-ahead log and renames it over the database, so a boot that
+   * finds the marker has a whole copy and only the replacement left: the sidecars are removed, the copy is renamed into place
+   * and the restored schema is logged. A partial `<db>.restoring.tmp` proves the live database was never touched and is
+   * discarded; a complete but unreadable marker is discarded as well. Either way the database and its WAL are left alone and
+   * the ordinary fail-closed path in `recoverDatabaseBackup` still applies.
+   */
+  private completeInterruptedRestore(stateDir: string, interrupted: JournalState | undefined): number | undefined {
+    const phase = interrupted?.operation === 'update' ? interrupted.phase : 'startup'
+    let recovery: ReturnType<typeof recoverInterruptedRestore>
+    try {
+      recovery = recoverInterruptedRestore(stateDir)
+    } catch (error) {
+      this.restoreSkipped(phase, `the interrupted restore could not be finished: ${message(error)}`)
+      return undefined
+    }
+    if (recovery.reason !== undefined) this.restoreSkipped(phase, recovery.reason)
+    if (!recovery.finished) return undefined
+    const line = `update.database-restore-finished schema=${recovery.schema ?? 'unknown'}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+    return recovery.schema
+  }
+
+  /** The one fail-closed restore line: the database and its write-ahead log were left exactly as they were. */
+  private restoreSkipped(phase: string, reason: string): void {
+    const line = `update.database-restore-skipped phase=${phase} reason=${shortReason(reason)}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+  }
+
+  /**
    * Restore the pre-swap database copy a crashed update recorded when the candidate's `init` migrated the database past the
    * schema its baseline runtime supports. Without this the journal's baseline is refused as a schema downgrade, the packaged
    * runtime is older than the database too, and the host cannot start until an operator intervenes (ADR-0007). This fails
-   * closed: no backup, no recorded baseline schema, an unreadable backup or one outside `<stateDir>/runtime/backups/` all
-   * leave the database untouched so the ordinary refusal is reported.
+   * closed: no backup, no recorded baseline schema, an unreadable or truncated backup or one outside
+   * `<stateDir>/runtime/backups/` all leave the database (and its WAL) untouched so the ordinary refusal is reported.
    */
   private recoverDatabaseBackup(stateDir: string, interrupted: JournalState | undefined,
     database: number | undefined): number | undefined {
@@ -290,9 +325,7 @@ export class Supervisor {
     }
     const baseline = interrupted.current?.schema
     const skip = (reason: string): number | undefined => {
-      const line = `update.database-restore-skipped phase=${interrupted.phase} reason=${shortReason(reason)}`
-      this.logsRing.record('warn', 'update', line)
-      this.log.warn('%s', line)
+      this.restoreSkipped(interrupted.phase, reason)
       return database
     }
     if (baseline === undefined || database === undefined) return skip('the journal does not record a comparable database schema')

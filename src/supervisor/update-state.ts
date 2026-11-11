@@ -335,18 +335,90 @@ export function backupDatabase(stateDir: string, version: string, at: string): s
   return target
 }
 
+/** The live database and the two files a restore may leave behind: a complete copy and one still being written. */
+function databasePaths(stateDir: string): { database: string; complete: string; partial: string } {
+  const database = join(stateDir, 'orchestrator.sqlite')
+  return { database, complete: `${database}.restoring`, partial: `${database}.restoring.tmp` }
+}
+/** Sync one already written file, so the rename that publishes it cannot reach the directory before its bytes. */
+function syncFile(path: string): void {
+  const descriptor = openSync(path, 'r+')
+  try { fsyncSync(descriptor) } finally { closeSync(descriptor) }
+}
 /**
- * Restore a backup over the state directory's database. The write-ahead log and shared-memory sidecars are removed first:
- * they describe the database that failed, and SQLite would otherwise replay them over the restored file.
+ * Prove a copied database is a readable SQLite file before it may replace the live one. A truncated or otherwise corrupt
+ * backup throws here, while the live database and its write-ahead log are still untouched.
+ */
+function verifyDatabaseCopy(path: string): void {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+  let connection: InstanceType<typeof DatabaseSync> | undefined
+  try {
+    connection = new DatabaseSync(path, { readOnly: true })
+    connection.prepare('SELECT count(*) FROM sqlite_master').get()
+  } catch (error) {
+    throw new Error(`the copied database is not readable: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+  } finally {
+    try { connection?.close() } catch { /* The open failed; there is nothing to close. */ }
+  }
+}
+
+/**
+ * Restore a backup over the state directory's database, never letting a bad copy damage the live file. The backup is copied,
+ * synced and verified as a readable database before anything else happens, and only then is it published as the complete-copy
+ * marker (`<db>.restoring`). The write-ahead log and shared-memory sidecars describe the database that failed and SQLite would
+ * replay them over the restored file, so they are removed after the marker exists — never before. A missing, unreadable,
+ * truncated or otherwise unusable backup, a failed copy or a crash during the copy therefore leaves the database and its WAL
+ * exactly as they were; a crash after the marker is published is finished by `recoverInterruptedRestore` on the next boot.
  */
 export function restoreDatabase(stateDir: string, backup: string): void {
-  const database = join(stateDir, 'orchestrator.sqlite')
+  const { database, complete, partial } = databasePaths(stateDir)
+  // A leftover partial copy belongs to an attempt that died before it could be published; it is never usable.
+  rmSync(partial, { force: true })
+  try {
+    copyFileSync(backup, partial)
+    syncFile(partial)
+    verifyDatabaseCopy(partial)
+    renameSync(partial, complete)
+    for (const suffix of ['-wal', '-shm']) rmSync(`${database}${suffix}`, { force: true })
+    renameSync(complete, database)
+  } catch (error) {
+    rmSync(partial, { force: true })
+    throw error
+  }
+}
+
+/** What a boot found when it looked for a restore interrupted by the previous process. */
+export interface InterruptedRestoreRecovery {
+  readonly finished: boolean
+  readonly schema?: number
+  readonly reason?: string
+}
+
+/**
+ * Finish or discard a database restore that died inside a previous process, before the schema is read. A restore publishes
+ * the whole copied database as `<db>.restoring` before it removes the write-ahead log and renames it over the database, so a
+ * crash leaves either a partial `<db>.restoring.tmp`, which proves the live database was never touched and is discarded, or a
+ * complete `<db>.restoring`, which only needs the sidecars removed and the rename finished. A complete marker is verified
+ * again here: a crash from an older writer (whose marker was not validated) or a torn copy is discarded instead of being
+ * installed, so a refuse-able marker fails closed like any unreadable backup.
+ */
+export function recoverInterruptedRestore(stateDir: string): InterruptedRestoreRecovery {
+  const { database, complete, partial } = databasePaths(stateDir)
+  try {
+    rmSync(partial, { force: true })
+  } catch (error) {
+    return { finished: false, reason: `the partial restore copy could not be discarded: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  if (!existsSync(complete)) return { finished: false }
+  try {
+    verifyDatabaseCopy(complete)
+  } catch (error) {
+    rmSync(complete, { force: true })
+    return { finished: false, reason: `the interrupted restore left an unreadable copy: ${error instanceof Error ? error.message : String(error)}` }
+  }
   for (const suffix of ['-wal', '-shm']) rmSync(`${database}${suffix}`, { force: true })
-  const temporary = `${database}.restoring`
-  copyFileSync(backup, temporary)
-  const descriptor = openSync(temporary, 'r+')
-  try { fsyncSync(descriptor) } finally { closeSync(descriptor) }
-  renameSync(temporary, database)
+  renameSync(complete, database)
+  return { finished: true, schema: databaseSchema(database) }
 }
 
 /** Fingerprint helper shared with the drill and history details (not part of the runtime contract). */

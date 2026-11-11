@@ -157,10 +157,15 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   cannot be adopted by a later boot. If the candidate's `init` had already committed its database migration, the start
   also restores the pre-swap backup recorded in the journal (`runtime/backups/<version>-<timestamp>.sqlite`), logs
   `update.database-restored phase=… schema=… backup=…`, and only then resolves versions; without that restore the
-  baseline and the packaged runtime would both be older than the migrated database. A missing or unreadable backup, a
-  backup outside `runtime/backups/`, or a journal without a comparable baseline schema leaves the database untouched and
-  logs `update.database-restore-skipped phase=… reason=…` (fail closed, the ordinary refusal is reported instead). A
-  committed journal never restores. The recovery then clears the marker, appends an `interrupted` history entry and
+  baseline and the packaged runtime would both be older than the migrated database. A missing, unreadable or truncated
+  backup, a backup outside `runtime/backups/`, or a journal without a comparable baseline schema leaves the database
+  untouched and logs `update.database-restore-skipped phase=… reason=…` (fail closed, the ordinary refusal is reported
+  instead). The database is never replaced before the backup is copied, synced and verified: the copy is published as
+  `<db>.restoring` first and only then the `-wal`/`-shm` sidecars are removed, so a refused restore keeps the WAL that
+  carries the candidate's committed migration and the next boot still refuses rather than silently starting the older
+  baseline. A start that finds the complete `<db>.restoring` finishes it before reading the schema and logs
+  `update.database-restore-finished schema=…`; a partial `<db>.restoring.tmp` is discarded with the database untouched.
+  A committed journal never restores. The recovery then clears the marker, appends an `interrupted` history entry and
   never re-runs the failed swap.
 - **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
   runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
@@ -171,11 +176,13 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   update first reconciles `current.json`/`previous.json` to the journal's recorded baseline (the candidate may have been
   written but never loaded) and, when it recorded a pre-swap database backup and the database schema is newer than the
   baseline's, restores that backup before any version is resolved; the recovery lines name the phase, both versions and
-  the restored schema. A committed journal never triggers a restore, and a missing backup fails closed. The start then
-  prefers the recorded current version when it still verifies, else the previous verified version, else the packaged
-  runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted` history entry
-  and does not re-run the swap. Do not edit the journal or the database schema by hand; a runtime whose schema is older
-  than the database is refused by design and the schema is never migrated down.
+  the restored schema. A database restore that died after it had published the complete copy is finished first
+  (`update.database-restore-finished schema=…`); only a partial copy is discarded, and neither path touches the database
+  before the copy is verified, so a missing backup fails closed with the WAL intact. A committed journal never triggers a
+  restore. The start then prefers the recorded current version when it still verifies, else the previous verified
+  version, else the packaged runtime, and records the recovery; an interrupted update also clears its claim, appends an
+  `interrupted` history entry and does not re-run the swap. Do not edit the journal or the database schema by hand; a
+  runtime whose schema is older than the database is refused by design and the schema is never migrated down.
 
 ## Runtime updates
 
@@ -197,9 +204,11 @@ running process keeps the state-directory lock.
    commits. `pnpm deploy status` prints the snapshot (current, previous, journal, pending request, rollback eligibility,
    history, deploy hints); `pnpm deploy watch` waits, bounded, for the request to resolve.
 3. Any failure after the backup or swap restores the database backup, puts both pointers back, reloads the previous
-   runtime (else the packaged one) and records the failure. A crash after the candidate migrated the schema but before
-   `commit` is restored on the next start from the backup path the journal recorded, after the pointer reconciliation. A
-   schema downgrade is refused before any drain; the schema only moves forward.
+   runtime (else the packaged one) and records the failure. The backup is copied, synced and verified before it replaces
+   the database and before the `-wal`/`-shm` sidecars are removed, so a refused copy leaves the WAL state intact. A crash
+   after the candidate migrated the schema but before `commit` is restored on the next start from the backup path the
+   journal recorded, after the pointer reconciliation, and a crash inside that restore is finished or discarded on the
+   following start as described above. A schema downgrade is refused before any drain; the schema only moves forward.
 4. `pnpm deploy rollback` (or the Updates tab's **Roll back**, which needs the literal confirmation token `ROLLBACK`)
    writes a rollback request; it is refused while a request is pending or an update is in flight, and is eligible only
    when the previous runtime still verifies and its schema is not older than the database.
