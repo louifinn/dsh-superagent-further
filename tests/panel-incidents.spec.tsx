@@ -159,5 +159,26 @@ it('dismisses a record only with a reason and leaves the status on the page', as
   expect(server.requests.some(item => item.method === 'POST' && item.path === 'incidents/inc-1/dismiss'
     && (item.body as { reason?: string }).reason === 'duplicate of a known outage')).toBe(true)
   expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent).toContain(zh['incidentStatus.dismissed'])
-  expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent).toContain('Dismissed: duplicate of a known outage')
+  // The reason comes through the localized key instead of the raw English token.
+  expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent)
+    .not.toContain('Dismissed: duplicate of a known outage')
+  expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent)
+    .toContain(zh.incidentResolutionDismissed.replace('{reason}', 'duplicate of a known outage'))
+})
+
+it('links a self-report resolution to its draft row on the Overview', async () => {
+  server.incidentRecords = [record({ status: 'diagnosed', diagnosis: diagnosis({ kind: 'self' }),
+    resolution: 'self-report:srep-9' }) as never]
+  server.selfReports = [{ id: 'srep-9', title: 'Watcher crashes after a failed poll', target_repo: 'louifinn/dsh-superagent-further',
+    evidence: 'The watcher exits with ENOENT after one failed poll.', createdAt: '2026-11-10T00:00:00.000Z' }]
+  await mount()
+  await click(tab(zh['tab.incidents']))
+  await click(document.querySelector<HTMLElement>('[data-incident="inc-1"] .dt-open')!)
+  const link = [...document.querySelectorAll<HTMLElement>('[data-incident-detail="inc-1"] button')]
+    .find(item => item.textContent?.includes('srep-9'))!
+  await click(link)
+  // The resolution is a real deep link: Overview marks the draft it names instead of opening at the top.
+  const row = document.querySelector<HTMLElement>('[data-self-report="srep-9"]')!
+  expect(row).not.toBeNull()
+  expect(row.className).toContain('dt-highlight')
 })

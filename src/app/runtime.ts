@@ -62,7 +62,7 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
-import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession } from './diagnosis.ts'
+import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -255,7 +255,7 @@ export class Runtime extends Service implements SourceHost {
       this.detachIncidentLogs = this.logs.observe((entry, at) => {
         // The diagnosis service's own lines are never detector input, so a diagnosis cannot feed itself (ADR-0005).
         if (entry.scope === DIAGNOSIS_SCOPE || isDiagnosisSession(entry.scope)) return
-        this.detect(this.detector.observeLog(entry, at))
+        this.detect(withoutDiagnosisSignals(this.detector.observeLog(entry, at)))
       })
       this.incidentsReady = true
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
@@ -270,7 +270,9 @@ export class Runtime extends Service implements SourceHost {
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           this.recordLifecycle(event)
-          this.detect(this.detector.observeEvent(event))
+          // Both detector ingestion paths drop signals scoped to a diagnosis child (ADR-0005 §10), so a diagnosis pass can
+          // never be read as a worker burst. The event payload carries no Session today; the guard is defense in depth.
+          this.detect(withoutDiagnosisSignals(this.detector.observeEvent(event)))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)

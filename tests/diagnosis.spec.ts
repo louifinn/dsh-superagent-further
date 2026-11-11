@@ -13,7 +13,7 @@ import { SettingsSchema, type Settings } from '../src/policy.ts'
 import { Store } from '../src/app/store.ts'
 import { Logs } from '../src/app/logs.ts'
 import { Incidents } from '../src/app/incidents.ts'
-import { Diagnosis, DIAGNOSIS_TIMEOUT_MS, type DiagnosisHost } from '../src/app/diagnosis.ts'
+import { Diagnosis, DIAGNOSIS_TIMEOUT_MS, withoutDiagnosisSignals, type DiagnosisHost } from '../src/app/diagnosis.ts'
 import { DIAGNOSTICIAN_PRESET } from '../src/app/sessions.ts'
 import { SELF_REPOSITORY } from '../src/core/self-reports.ts'
 import { UserError } from '../src/core/errors.ts'
@@ -41,6 +41,8 @@ function harness(options: {
   incidents?: Partial<{ enabled: boolean; autoDiagnose: boolean; minimumSeverity: IncidentSeverity; dailyBudget: number; diagnoseDailyBudget: number }>
   projects?: Project[]
   timeoutMs?: number
+  /** How long `startActivation` itself takes, to exercise the start-phase deadline. */
+  startDelayMs?: number
   startFails?: boolean
   subagents?: boolean
 } = {}) {
@@ -72,6 +74,9 @@ function harness(options: {
       const result = Promise.withResolvers<unknown>()
       const dispose = vi.fn(async () => { result.resolve(undefined) })
       starts.push({ spec, resolve: result.resolve, dispose })
+      // A slow start keeps the dispatch promise pending past the deadline, so the service must abort it and dispose the
+      // late activation itself.
+      if (options.startDelayMs !== undefined) await new Promise(resolve => { setTimeout(resolve, options.startDelayMs) })
       return { childId: spec.childId, result: result.promise, dispose }
     }),
     sendMessage: vi.fn(async () => undefined),
@@ -219,6 +224,62 @@ describe('diagnosis dispatch', () => {
     expect(await pending).toEqual({ status: 'refused', reason: 'failed' })
     expect(empty.store.incidents.get(second.id)!.status).toBe('bundled')
     expect(empty.health.value?.state).toBe('error')
+  })
+
+  it('aborts a start that outlives the deadline and disposes the activation it still returns, exactly once', async () => {
+    const h = harness({ timeoutMs: 25, startDelayMs: 80 })
+    const incident = h.incidents.record(candidate())!
+    const result = await h.diagnosis.diagnose(incident.id)
+    expect(result).toEqual({ status: 'refused', reason: 'timeout' })
+    expect(h.starts).toHaveLength(1)
+    // The start-phase deadline aborts the dispatch instead of leaving the child to appear behind a returned timeout.
+    expect(h.starts[0]!.spec.signal.aborted).toBe(true)
+    await vi.waitFor(() => expect(h.starts[0]!.dispose).toHaveBeenCalledTimes(1))
+    expect(h.store.incidents.get(incident.id)!.status).toBe('bundled')
+    expect(h.health.value?.state).toBe('error')
+  })
+
+  it('refuses a completion that finished after an operator dismissed the record and never resurrects it', async () => {
+    const h = harness()
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    h.incidents.dismiss(incident.id, 'duplicate of a known outage')
+    answer(h, 0, document({ target: { kind: 'project', project: 'Default' } }))
+    expect(await pending).toEqual({ status: 'refused', reason: 'stale' })
+    const stored = h.store.incidents.get(incident.id)!
+    expect(stored.status).toBe('dismissed')
+    expect(stored.resolution).toBe('Dismissed: duplicate of a known outage')
+    expect(stored.diagnosis).toBeUndefined()
+    expect(h.requests).toHaveLength(0)
+    expect(h.raises).toHaveLength(0)
+    // A stale completion is routine, not an incidents health failure.
+    expect(h.health.value?.state).toBe('ready')
+    expect(h.logs.list({ scope: 'diagnosis' }).some(entry => entry.level === 'warn' && entry.message.includes('diagnosis.stale'))).toBe(true)
+  })
+
+  it('refuses a completion that finished after a repeat updated the record and keeps the newer counts', async () => {
+    const h = harness()
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    h.clock.at = new Date('2026-11-11T10:20:00.000Z')
+    const repeated = h.incidents.record(candidate({ severity: 'critical' }))!
+    expect(repeated.occurrences).toBe(2)
+    answer(h, 0, document())
+    expect(await pending).toEqual({ status: 'refused', reason: 'stale' })
+    const stored = h.store.incidents.get(incident.id)!
+    expect(stored.status).toBe('bundled')
+    expect(stored.occurrences).toBe(2)
+    expect(stored.severity).toBe('critical')
+    expect(stored.diagnosis).toBeUndefined()
+  })
+
+  it('drops detector signals scoped to a diagnosis child Session, so no diagnosis run can feed detection', () => {
+    const scoped = { type: 'detect' as const, candidate: candidate({ scope: { session: 'diag-inc-1-deadbeef' } }) }
+    const normal = { type: 'detect' as const, candidate: candidate({ scope: { session: 'sess-1' } }) }
+    const recover = { type: 'recover' as const, fingerprint: 'fp-1' }
+    expect(withoutDiagnosisSignals([scoped, normal, recover])).toEqual([normal, recover])
   })
 
   it('refuses an unknown record, a closed record, a missing subagent service and a disabled feature', async () => {
@@ -439,6 +500,26 @@ describe('routing a diagnosis through the self-evolution outlets', () => {
     expect(routed.resolution).toBe('self-report:sr-1')
     expect(routed.incident.resolution).toBe('self-report:sr-1')
     expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'alreadyRouted' })
+  })
+
+  it('refuses a route for a reopened record even though it kept its old diagnosis', async () => {
+    const project: Project = { id: 'default', name: 'Default', workspace: join(tmpdir(), 'default'), repository: 'acme/widgets', branch: '' }
+    const h = harness({ projects: [project] })
+    const incident = h.incidents.record(candidate({ scope: { project: 'default' } }))!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document({ target: { kind: 'project', project: 'Default' } }))
+    expect((await pending).status).toBe('diagnosed')
+    expect(h.requests).toHaveLength(1)
+    h.incidents.dismiss(incident.id, 'not actionable now')
+    h.clock.at = new Date('2026-11-11T12:30:00.000Z')
+    const reopened = h.incidents.record(candidate({ scope: { project: 'default' } }))!
+    expect(reopened.status).toBe('bundled')
+    expect(reopened.diagnosis).toBeTypeOf('string')
+    expect(reopened.resolution).toBeUndefined()
+    // The old diagnosis is kept for a person to read, but only a diagnosed record may create work.
+    expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'notDiagnosed' })
+    expect(h.requests).toHaveLength(1)
   })
 
   it('refuses a manual route before a diagnosis and for a target that routes nowhere', async () => {

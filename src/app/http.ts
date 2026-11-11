@@ -443,7 +443,8 @@ function routes(runtime: HttpHost): Routes {
         throw new RouteError(409, `The diagnosis was refused: ${result.reason}`)
       }
       audit('incident.diagnose', { incident: incident.id, status: result.incident.status,
-        confidence: result.diagnosis.confidence, target: result.diagnosis.target.kind })
+        confidence: result.diagnosis.confidence, target: result.diagnosis.target.kind,
+        ...(result.resolution === undefined ? {} : { resolution: result.resolution }) })
       return result
     },
     'POST incidents/:id/dismiss': async ({ params, body }) => {

@@ -330,3 +330,28 @@ describe('IncidentDetector', () => {
       message: 'update.failed version=0.4.0 reason=checksum' })).toHaveLength(0)
   })
 })
+
+describe('the incident repository', () => {
+  it('swaps a record only while its status and update stamp still match, so a slow writer cannot resurrect it', () => {
+    const h = harness()
+    const incident = h.incidents.record(candidate('outbox-failures'))!
+    const newer = { ...incident, title: 'A repeat changed the title', updated_at: '2026-11-11T10:05:00.000Z' }
+    expect(h.store.incidents.swap(newer, { status: 'bundled', updated_at: incident.updated_at })).toBe(true)
+    expect(h.store.incidents.get(incident.id)?.title).toBe('A repeat changed the title')
+    // The snapshot's stamp is now stale: neither the old value nor a new status may be written through it.
+    expect(h.store.incidents.swap(incident, { status: 'bundled', updated_at: incident.updated_at })).toBe(false)
+    expect(h.store.incidents.get(incident.id)?.title).toBe('A repeat changed the title')
+    expect(h.store.incidents.swap(incident, { status: 'detected', updated_at: incident.updated_at })).toBe(false)
+    expect(h.store.incidents.get(incident.id)?.status).toBe('bundled')
+  })
+
+  it('counts the filtered rows behind a page, so a list can report its real total', () => {
+    const h = harness()
+    h.incidents.record(candidate('outbox-failures'))!
+    h.incidents.record(candidate('agent-error-rate'))!
+    expect(h.store.incidents.list({ status: 'open', limit: 1 })).toHaveLength(1)
+    expect(h.store.incidents.count({ status: 'open' })).toBe(2)
+    expect(h.incidents.total({ status: 'open', limit: 1 })).toBe(2)
+    expect(h.incidents.total({ status: 'dismissed' })).toBe(0)
+  })
+})

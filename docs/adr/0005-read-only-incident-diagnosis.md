@@ -46,9 +46,10 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
 
 3. **Auto-diagnosis is narrow; manual diagnosis is deliberate.** `consider` starts a run only when incidents are
    enabled, `autoDiagnose` is on, the severity is `high` or `critical` and at or above `minimumSeverity`, the record is
-   `detected` or `bundled`, and no run is active. A person may diagnose any open record from the panel or the
-   `orchestrator_incident` tool; that action is audited. A run counts as an attempt even when it times out, fails or
-   yields an unparseable answer, and the counter is not refunded.
+   `detected` or `bundled`, and no run is active. A person may diagnose a `detected` or `bundled` record from the panel
+   or the `orchestrator_incident` tool; that action is audited. A `diagnosed` record has no diagnosis action left: it
+   can only be routed, dismissed or resolved. A run counts as an attempt even when it times out, fails or yields an
+   unparseable answer, and the counter is not refunded.
 
 4. **The budget and the single-flight are durable where they must be.** The attempt counter lives in the Store's kv area
    under a UTC day key (`incident-diagnoses:<YYYY-MM-DD>`) and is read and incremented inside one `Store.atomic`, so it
@@ -57,11 +58,18 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
    call while a run is active is refused with `concurrent` and does not spend budget. No `diagnosing` status is
    persisted, so a crash cannot strand a record.
 
-5. **The wait is bounded and failure is local.** Starting the activation and awaiting its result are each bounded to
-   10 minutes (`DIAGNOSIS_TIMEOUT_MS`) through `host.lifetime`; a timeout disposes the activation, records one `warn`
-   line in scope `diagnosis`, sets the `incidents` health entry to `error` and leaves the record `bundled` with no
-   diagnosis. The same holds for a refused start, an empty answer or an exception. Nothing escapes into the detector
-   pass, and the record remains diagnosable and dismissable.
+5. **The wait is bounded, failure is local, and a stale completion is refused.** Starting the activation and awaiting
+   its result together are bounded to 10 minutes (`DIAGNOSIS_TIMEOUT_MS`) through `host.lifetime`. If
+   `startActivation` itself outlives the deadline the abort signal is fired, and an activation that resolves after the
+   deadline is disposed once and never observed; a result-phase timeout disposes the activation it already has. A
+   timeout records one `warn` line in scope `diagnosis`, sets the `incidents` health entry to `error` and leaves the
+   record as it was, with no diagnosis. The same holds for a refused start, an empty answer or an exception: nothing
+   escapes into the detector pass, and the record remains diagnosable and dismissable. Before saving a result the
+   service re-reads the record and merges only the diagnosis through a compare-and-swap update
+   (`IncidentRecords.swap`, matching both the expected status and the `updated_at` stamp). If the record was
+   dismissed, resolved, reopened or counted again while the run was in flight, the save is refused as `stale`, one
+   `warn` line is logged in scope `diagnosis`, no health error is set and the newer record wins; a slow diagnosis can
+   never resurrect a closed record or erase a repeat count.
 
 6. **The diagnosis is embedded in the existing record; schema 25 stays.** On success the service transitions
    `bundled → diagnosed` with `transitionIncident` and stores one JSON document in the existing `incident.diagnosis`
@@ -71,7 +79,9 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
    the run is not a failure. Parsing and validation never create a second model call.
 
 7. **Routing reuses the two outlets and runs once per incident.** After a successful diagnosis the service routes by
-   target, guarded by a non-empty `incident.resolution` so a record cannot be routed twice:
+   target only when the *current* record is still `diagnosed` and carries a non-empty parsed diagnosis, and it is
+   further guarded by a non-empty `incident.resolution` so a record cannot be routed twice. Reopening a record keeps
+   the old diagnosis text but clears the resolution, so the status check refuses to create work from that stale text:
    - `project` (or a diagnosis naming a registered project by id, name or repository) →
      `engine.raiseDiscoveryRequest({title, instruction, units:[{project}]})` with the discovery Mandate basis and
      reason `discoveryFinding`; the Lead turns it into Tickets and the normal PR and human-merge flow applies. The
@@ -93,13 +103,19 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
    stay read-only and typed; this release adds same-origin `POST incidents/:id/diagnose`, `POST incidents/:id/dismiss`
    (reason required) and `POST incidents/:id/route` (`confirm: true`), with 400 for a bad body, 404 for an unknown record
    and 409 for a wrong status or a refusal. The same actions are exposed as `orchestrator_incident`
-   (`list|get|diagnose|dismiss|route`) on the main Session. Every human-triggered action writes the existing audit entry
-   (`incident.diagnose`, `incident.dismiss`, `incident.route`) carrying metadata only: action, incident id, status,
-   confidence, target and the resulting request/self-report ids. Never the diagnosis prose, the evidence or a log line.
+   (`list|get|diagnose|dismiss|route`) on the main Session; list reports the filtered total, not the page length. Every
+   human-triggered action writes the existing audit entry (`incident.diagnose`, `incident.dismiss`, `incident.route`)
+   carrying metadata only: action, incident id, status, confidence, target and the resulting `resolution` token
+   (`request:<id>`, `self-report:<id>`, `self-report:off` or `operational`). The diagnose HTTP response carries the same
+   `resolution`, so a caller the auto-route already created work for learns the id from the response and the audit.
+   Never the diagnosis prose, the evidence or a log line.
 
 10. **Diagnosis output cannot feed detection.** The incident detectors ignore log entries whose scope is `diagnosis` or a
-    `diag-*` session, and `detect` ignores signals whose `scope.session` is a diagnosis child id. The `incidents` health
-    entry is shared with detection and cannot itself be detected again (`healthChanged` already skips that name).
+    `diag-*` session, and `Runtime` drops every diagnosis signal at *both* ingestion paths — the log observer and the
+    engine event observer — through `withoutDiagnosisSignals` before `detect` sees it; `detect` additionally ignores
+    signals whose `scope.session` is a diagnosis child id, so a future detector cannot reintroduce the path. The
+    `incidents` health entry is shared with detection and cannot itself be detected again (`healthChanged` already skips
+    that name).
 
 ## Rejected alternatives
 
@@ -129,18 +145,24 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
 - Auto-diagnosis is off only when the operator turns `autoDiagnose` off or the budget is spent; a manual diagnosis still
   works while the budget allows, and a spent budget surfaces as a refusal rather than an error.
 - A timed-out or failed run is visible on the `incidents` health entry and in the log; the record remains `bundled` and
-  can be diagnosed again after the budget resets or the fault is fixed.
+  can be diagnosed again after the budget resets or the fault is fixed. A run that finishes after the operator acted on
+  the record is refused as `stale` with a `warn` line and no health error, so dismissal, resolution and repeat counts
+  always survive a slow diagnosis.
 - A routed record stays `diagnosed`; the resolution token is the only pointer to the Request or self-report, so the
   panel and the tool must resolve it rather than copy the URL. A `self-report:off` resolution means the outlet is off,
   not that routing failed.
 - Operational conclusions never create outward work, so an operator who wants a product change from an operational
   incident must say so explicitly; the diagnosis and its evidence are one panel click away.
 - Tests: `tests/diagnosis.spec.ts` pins dispatch (preset, parent, cwd, prompt, call), the timeout and failure
-  degradations, the gates, the durable budget and restart, single-flight, parsing, routing (Request, self-report,
-  operational, dedupe) and dismissal; `tests/diagnosis-runtime.spec.ts` pins the runtime wiring, that detection starts no
-  model call, the HTTP actions and audit metadata, and the `orchestrator_incident` tool; `tests/bundle-patch.spec.ts`
-  pins the preset inventory; `tests/panel-incidents.spec.tsx` and `tests/views.spec.ts` pin the panel actions and both
-  locales.
+  degradations including a start-phase timeout that aborts and disposes the late activation, the stale-completion
+  refusal for a dismissal and for a repeat detection, the gates, the durable budget and restart, single-flight,
+  parsing, routing (Request, self-report, operational, dedupe, reopened record refused) and dismissal;
+  `tests/diagnosis-runtime.spec.ts` pins the runtime wiring, that detection starts no model call and that the event path
+  drops diagnosis signals, the HTTP actions and audit metadata including the created resolution, the reopen route
+  refusal and the filtered list total, and the `orchestrator_incident` tool; `tests/incidents.spec.ts` pins the
+  compare-and-swap store and the filtered count; `tests/bundle-patch.spec.ts` pins the preset inventory;
+  `tests/panel-incidents.spec.tsx` and `tests/views.spec.ts` pin the panel actions, the localized dismissal reason, the
+  Overview self-report deep link and both locales.
 
 ## References
 

@@ -89,8 +89,11 @@ function Resolution({ resolution }: { resolution: string }) {
   }
   if (resolution.startsWith('self-report:')) {
     const id = resolution.slice('self-report:'.length)
-    return <button type="button" className="dt-open" onClick={() => navigate({ page: 'overview' })}>
+    return <button type="button" className="dt-open" onClick={() => navigate({ page: 'overview', query: { report: id } })}>
       {t('incidentResolutionSelfReport', { id })}</button>
+  }
+  if (resolution.startsWith('Dismissed: ')) {
+    return <span>{t('incidentResolutionDismissed', { reason: resolution.slice('Dismissed: '.length) })}</span>
   }
   if (resolution === 'operational') return <span>{t('incidentResolutionOperational')}</span>
   return <span className="dt-mono">{resolution}</span>

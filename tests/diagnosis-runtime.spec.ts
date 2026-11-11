@@ -104,12 +104,15 @@ it('diagnoses, routes and audits through the same-origin HTTP routes', async () 
     const diagnosed = body.incident as Incident
     expect(diagnosed.status).toBe('diagnosed')
     expect(diagnosed.resolution).toMatch(/^request:/)
+    // The diagnose response and its audit both carry the work id the automatic route created.
+    expect(body.resolution).toMatch(/^request:/)
     expect(h.runtime.store.requests.list()).toHaveLength(1)
     expect(h.runtime.store.requests.list()[0]!.title).toContain(incident.id)
     // The audit trail carries the action and ids, never the diagnosis text.
     const audit = h.runtime.logs.list({ scope: 'audit' })
     const entry = audit.find(item => item.data?.action === 'incident.diagnose')!
-    expect(entry.data).toMatchObject({ incident: incident.id, status: 'diagnosed', confidence: 'high', target: 'project' })
+    expect(entry.data).toMatchObject({ incident: incident.id, status: 'diagnosed', confidence: 'high', target: 'project',
+      resolution: body.resolution })
     expect(JSON.stringify(entry.data)).not.toContain('outbox retries without a bound')
     // The detail view carries the parsed diagnosis.
     const detail = await h.api('GET', `incidents/${incident.id}`)
@@ -178,6 +181,16 @@ it('exposes list, get, diagnose, dismiss and route as orchestrator_incident with
     expect((diagnosed.incident as Incident).status).toBe('diagnosed')
     expect(await h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'route', id: incident.id, confirm: true }))
       .toMatchObject({ status: 'refused', reason: 'alreadyRouted' })
+    // A reopened record keeps its old diagnosis but is bundled again, so neither path may route that stale text.
+    const stale = h.runtime.incidents.record(candidate('a different reply delivery failure'))!
+    h.runtime.store.incidents.save({ ...stale, diagnosis: JSON.stringify(document()) })
+    expect((await h.api('POST', `incidents/${stale.id}/route`, { confirm: true })).status).toBe(409)
+    expect(await h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'route', id: stale.id, confirm: true }))
+      .toMatchObject({ status: 'refused', reason: 'notDiagnosed' })
+    // A list's total is the filtered row count, not the page length.
+    const page = await h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'list', status: 'open', limit: 1 })
+    expect((page.incidents as Incident[]).length).toBe(1)
+    expect(page.total).toBe(2)
     const dismissed = await h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'dismiss', id: incident.id, reason: 'duplicate' })
     expect((dismissed.incident as Incident).status).toBe('dismissed')
     await expect(h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'get', id: 'nope' }))

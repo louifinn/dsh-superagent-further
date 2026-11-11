@@ -465,9 +465,9 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
       ]),
       execute: async args => {
         if (args.action === 'list') {
-          const incidents = host.incidents.list({ ...args.status ? { status: args.status } : {},
-            ...args.severity ? { severity: args.severity } : {}, ...args.limit ? { limit: args.limit } : {} })
-          return { incidents, total: incidents.length }
+          const filter = { ...args.status ? { status: args.status } : {}, ...args.severity ? { severity: args.severity } : {} }
+          return { incidents: host.incidents.list({ ...filter, ...args.limit ? { limit: args.limit } : {} }),
+            total: host.incidents.total(filter) }
         }
         const incident = requireIncident(host.store.incidents, args.id)
         if (args.action === 'get') return host.incidents.detail(incident.id)!

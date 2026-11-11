@@ -358,7 +358,7 @@ const TEXT = {
   incidentResolutionRequest: ['已创建 Request {id}', 'Created Request {id}'],
   incidentResolutionSelfReport: ['已进入自进化出口 {id}', 'Entered the self-evolution outlet {id}'],
   incidentResolutionOperational: ['运行问题，仅保留诊断', 'Operational: the diagnosis alone is kept'],
-  incidentResolutionDismissed: ['已忽略', 'Dismissed'],
+  incidentResolutionDismissed: ['已忽略：{reason}', 'Dismissed: {reason}'],
   automationAttentionTitle: ['自动化需要关注', 'Automations needing attention'],
   logsTitle: ['运行日志', 'Host log'],
   logsHint: ['Host 最近写入的运行日志（最多 2000 条），可按关键字、级别与范围过滤，并复制或导出当前视图。',

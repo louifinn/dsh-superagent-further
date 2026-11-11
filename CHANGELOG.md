@@ -15,33 +15,46 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   web, todo, question or present tool is installed, and `src/app/diagnosis.ts` also puts the started child Session on
   the `read-only` permission preset where the host exposes one. After a new incident is bundled, `Diagnosis.consider`
   gates auto-diagnosis on `autoDiagnose`, a `high`/`critical` severity at or above `minimumSeverity` and an open
-  status; a person may diagnose any open record from the panel, `orchestrator_incident` or
-  `POST incidents/<id>/diagnose`, and that action is audited. Dispatch goes through the host `subagents` service
+  status; a person may diagnose a `detected` or `bundled` record from the panel, `orchestrator_incident` or
+  `POST incidents/<id>/diagnose`, and that action is audited (a `diagnosed` record can only be routed, dismissed or
+  resolved). Dispatch goes through the host `subagents` service
   (`spawn`, delivery `caller`, `maxDepth` 1, the main Session parent, the selected Orchestrator workspace as cwd,
   `diag-<incidentId>-<suffix>`), with the incident JSON, evidence directory and workspace in the prompt and a strict
   JSON answer contract (`rootCause`, `evidence[]`, `hypotheses[]`, `fixPlan`, `confidence`, `target`). Start and result
-  are bounded to 10 minutes, dispose on timeout, log one `diagnosis` warning, set the `incidents` health error and
-  leave the record `bundled`; detection starts no model call. The new tier-C `executor.incidents.diagnoseDailyBudget`
+  together are bounded to 10 minutes: a start that overruns aborts the signal and an activation that resolves after the
+  deadline is disposed once, while a result-phase timeout disposes the activation it holds; both log one `diagnosis`
+  warning, set the `incidents` health error and leave the record `bundled`, and detection starts no model call. A
+  completion that finds the record changed (dismissed, resolved, reopened or counted again) is refused as `stale`
+  through a compare-and-swap save that merges only the diagnosis, so a slow writer never resurrects a closed record or
+  erases a repeat count. The new tier-C `executor.incidents.diagnoseDailyBudget`
   (0–24, default 2) is a durable per-UTC-day attempt counter in the Store's kv area that survives a restart, and runs
   are single-flight. A parsed diagnosis is stored as JSON in the existing `incident.diagnosis` column and shown on
   `GET incidents/<id>`; an unparseable answer is kept as a low-confidence diagnosis with target `none` instead of
-  failing the run. Routing runs once per record through `incident.resolution`: a registered project becomes a
+  failing the run. Routing runs once per record and requires the current record to still be `diagnosed` with a
+  non-empty parsed diagnosis, then a non-empty `incident.resolution`: a registered project becomes a
   discovery Request (`engine.raiseDiscoveryRequest`, discovery Mandate, units naming the project) that the Lead turns
   into Tickets under the normal PR and human-merge flow (`request:<id>`); a `self` finding or an unregistered
   repository goes through `SelfReports.raise` with its three-state `eval.selfReport` gate, dedupe, cap and
   jurisdiction refusal (`self-report:<id>` or `self-report:off`; a registered self repository falls back to a Request);
-  an operational or none conclusion creates no Request and no Issue (`operational`). A failed automatic route leaves
-  the resolution empty so the operator can retry with `confirm: true`. `POST incidents/<id>/dismiss` requires a reason
-  and records `Dismissed: <reason>`; the panel's Incidents detail gains Diagnose, Create fix (confirmed) and Dismiss
-  actions with pending and error states and links to the created Request or self-report, Overview keeps its "needs you"
-  row, Execution settings gain the diagnosis budget, and both locales are updated. `orchestrator_incident`
-  (`list|get|diagnose|dismiss|route`) exposes the same services to the main Session with typed refusals. Covered by
-  `tests/diagnosis.spec.ts` (dispatch, gates, durable budget and restart, single-flight, parse fallback, routing and
-  dismissal), `tests/diagnosis-runtime.spec.ts` (no model call in detection, preset delivery and read-only permission,
-  same-origin routes with metadata-only audit, code 400/404/409, manual route retry, the tool), `tests/bundle-patch.spec.ts`
-  (the preset inventory), `tests/panel-incidents.spec.tsx` (the actions) and the extended HTTP, tool, view, locale and
-  settings specs, with docs 005, 006, 007, 009, 011, 013 and 014 and ADR-0005 synchronized and the generated reference
-  pages refreshed.
+  an operational or none conclusion creates no Request and no Issue (`operational`). Reopening a record keeps the old
+  diagnosis text but clears the resolution, and the status check refuses to route that stale text. A failed automatic
+  route leaves the resolution empty so the operator can retry with `confirm: true`. `POST incidents/<id>/dismiss`
+  requires a reason and records `Dismissed: <reason>`, rendered through the localized dismissal key; the diagnose
+  response and its audit carry the auto-created `resolution` token. The panel's Incidents detail gains Diagnose,
+  Create fix (confirmed) and Dismiss actions with pending and error states and links to the created Request or
+  self-report, a self-report resolution deep-links to the named draft row highlighted on the Overview, Overview keeps
+  its "needs you" row, Execution settings gain the diagnosis budget, and both locales are updated.
+  `orchestrator_incident` (`list|get|diagnose|dismiss|route`) exposes the same services to the main Session with typed
+  refusals and a filtered list total. Covered by
+  `tests/diagnosis.spec.ts` (dispatch, gates, durable budget and restart, single-flight, parse fallback, start-overrun
+  abort and late disposal, stale dismissals and repeat counts, routing and dismissal),
+  `tests/diagnosis-runtime.spec.ts` (no model call in detection, event-path scope exclusion, preset delivery and
+  read-only permission, same-origin routes with metadata-only audit including the created resolution, code 400/404/409,
+  reopened-record route refusal, filtered list total, manual route retry, the tool),
+  `tests/incidents.spec.ts` (the compare-and-swap store and filtered count), `tests/bundle-patch.spec.ts`
+  (the preset inventory), `tests/panel-incidents.spec.tsx` (the actions, the localized dismissal and the Overview deep
+  link) and the extended HTTP, tool, view, locale and settings specs, with docs 005, 006, 007, 009, 011, 013 and 014
+  and ADR-0005 synchronized and the generated reference pages refreshed.
 - Deterministic operational incidents with durable records, fingerprint dedupe and content-addressed evidence bundles
   (schema 25, ADR-0004). The Store-owned `incident` table keeps `{ id, fingerprint UNIQUE, rule, scope { project?,
   ticket?, request?, session? }, severity: 'low' | 'medium' | 'high' | 'critical', status: 'detected' | 'bundled' |

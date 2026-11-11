@@ -16,7 +16,7 @@ import {
   checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, isOpenIncident, parseIncidentDiagnosis,
   transitionIncident, INCIDENT_COOLDOWN_MS, INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT,
   INCIDENT_LOG_WINDOW_MS, INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentDiagnosis,
-  type IncidentFilter, type IncidentRepository, type IncidentScope, type IncidentSeverity,
+  type IncidentFilter, type IncidentRepository, type IncidentScope, type IncidentSeverity, type IncidentStatus,
 } from '../core/incidents.ts'
 import { UserError } from '../core/errors.ts'
 import { key } from '../core/ids.ts'
@@ -79,7 +79,24 @@ export class IncidentRecords implements IncidentRepository {
       incident.updated_at, JSON.stringify(incident))
   }
 
-  list(filter: IncidentFilter = {}): Incident[] {
+  /**
+   * The compare-and-swap save ADR-0005 §5 relies on: a diagnosis completion merges only its diagnosis into the record it
+   * re-read, and only while the stored row is still the row it started from. A dismissal, resolution or repeat that landed
+   * meanwhile changes `status` or `updated_at`, so the update matches no row and the newer state survives.
+   */
+  swap(incident: Incident, expected: { status: IncidentStatus; updated_at: string }): boolean {
+    const result = this.db.prepare(`UPDATE incident SET fingerprint=?, rule=?, project=?, ticket=?, request=?, session=?, severity=?,
+      status=?, first_at=?, last_at=?, occurrences=?, title=?, detail=?, evidence_dir=?, diagnosis=?, resolution=?, updated_at=?, value=?
+      WHERE id=? AND status=? AND updated_at=?`).run(incident.fingerprint, incident.rule, incident.scope.project ?? '',
+      incident.scope.ticket ?? '', incident.scope.request ?? '', incident.scope.session ?? '', incident.severity, incident.status,
+      incident.first_at, incident.last_at, incident.occurrences, incident.title, incident.detail, incident.evidence_dir,
+      incident.diagnosis ?? null, incident.resolution ?? null, incident.updated_at, JSON.stringify(incident), incident.id,
+      expected.status, expected.updated_at)
+    return Number(result.changes) > 0
+  }
+
+  /** The WHERE clause the list and the count share; filter values are bound, never interpolated. */
+  private where(filter: IncidentFilter): { sql: string; values: (string | number)[] } {
     const where: string[] = []
     const values: (string | number)[] = []
     if (filter.status !== undefined && filter.status !== 'all') {
@@ -91,11 +108,21 @@ export class IncidentRecords implements IncidentRepository {
       const value = filter.scope?.[name]
       if (value !== undefined && value !== '') { where.push(`${name} = ?`); values.push(value) }
     }
+    return { sql: where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`, values }
+  }
+
+  list(filter: IncidentFilter = {}): Incident[] {
+    const { sql, values } = this.where(filter)
     const limit = filter.limit ?? -1
     const offset = Math.max(0, filter.offset ?? 0)
-    const sql = `SELECT value FROM incident${where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`} ORDER BY last_at DESC, rowid DESC LIMIT ? OFFSET ?`
-    const rows = this.db.prepare(sql).all(...values, limit, offset)
+    const rows = this.db.prepare(`SELECT value FROM incident${sql} ORDER BY last_at DESC, rowid DESC LIMIT ? OFFSET ?`).all(...values, limit, offset)
     return rows.map(row => JSON.parse(String(row.value)) as Incident)
+  }
+
+  count(filter: IncidentFilter = {}): number {
+    const { sql, values } = this.where(filter)
+    const row = this.db.prepare(`SELECT count(*) AS count FROM incident${sql}`).get(...values)
+    return Number(row?.count ?? 0)
   }
 
   openCount(project?: string): number {
@@ -269,7 +296,7 @@ export class Incidents {
   list(filter: IncidentFilter = {}): Incident[] { return this.host.store.incidents.list(filter) }
 
   /** How many records match, before paging. */
-  total(filter: IncidentFilter = {}): number { return this.host.store.incidents.list({ ...filter, offset: 0, limit: undefined }).length }
+  total(filter: IncidentFilter = {}): number { return this.host.store.incidents.count(filter) }
 
   detail(id: string): IncidentDetailView | undefined {
     const incident = this.host.store.incidents.get(id)

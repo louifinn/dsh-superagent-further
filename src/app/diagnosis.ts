@@ -23,6 +23,7 @@ import { sameName } from '../infra/text.ts'
 import { KV } from '../kv.ts'
 import type { Settings } from '../policy.ts'
 import type { Health } from '../sources/host.ts'
+import type { IncidentSignal } from './incident-detectors.ts'
 import { DIAGNOSTICIAN_PRESET } from './sessions.ts'
 import type { Logs } from './logs.ts'
 import type { SelfReports } from './self-reports.ts'
@@ -37,9 +38,12 @@ export const DIAGNOSIS_SESSION_PREFIX = 'diag-'
 
 /** The diagnosis document the model was asked for; a parse failure keeps the raw text at low confidence instead. */
 export interface DiagnoseRefused { status: 'refused'
-  reason: 'unknown' | 'status' | 'budget' | 'concurrent' | 'timeout' | 'failed' }
+  /** `stale` means the record changed while the run was in flight; the newer state was kept, never overwritten. */
+  reason: 'unknown' | 'status' | 'budget' | 'concurrent' | 'timeout' | 'failed' | 'stale' }
 export type DiagnoseResult =
-  | { status: 'diagnosed'; incident: Incident; diagnosis: IncidentDiagnosis }
+  | { status: 'diagnosed'; incident: Incident; diagnosis: IncidentDiagnosis
+    /** The routing outcome of this run (`request:<id>`, `self-report:<id>`, `operational`), when it created one. */
+    resolution?: string }
   | DiagnoseRefused
 export type RouteRefusal = 'unknown' | 'notDiagnosed' | 'notRoutable' | 'alreadyRouted' | 'failed'
 export type RouteResult =
@@ -220,8 +224,15 @@ export class Diagnosis {
       signal: controller.signal, delivery: 'caller' }
     let activation: Activation | undefined
     try {
-      const started = await bounded(service.startActivation(spec), controller.signal, deadline - Date.now())
-      if (started === TIMED_OUT) return this.timeout(incident.id)
+      const start = service.startActivation(spec)
+      const started = await bounded(start, controller.signal, deadline - Date.now())
+      if (started === TIMED_OUT) {
+        // The start itself outlived the budget: abort it, and dispose the activation if it still arrives later so the
+        // child Session is never left unobserved (ADR-0005 §5).
+        controller.abort()
+        void start.then(late => { void late.dispose().catch(() => undefined) }, () => undefined)
+        return this.timeout(incident.id)
+      }
       activation = started
       const child = this.host.child(childId)
       if (child !== undefined) this.host.readOnly(child)
@@ -235,14 +246,29 @@ export class Diagnosis {
       if (text === undefined || text.trim() === '') { void activation.dispose().catch(() => undefined)
         return this.failed(incident.id, 'the diagnosis returned no text') }
       const diagnosis = readDiagnosis(text)
-      const updated = transitionIncident(incident, 'diagnosed', this.now().toISOString(), { diagnosis: JSON.stringify(diagnosis) })
-      this.host.store.incidents.save(updated)
+      // Compare-and-swap (ADR-0005 §5): reread the live record, merge only the diagnosis, and refuse if a dismissal,
+      // resolution or repeat changed the row while the child ran. The newer state always wins.
+      const current = this.host.store.incidents.get(incident.id)
+      if (current === undefined) {
+        void activation.dispose().catch(() => undefined)
+        return this.stale(incident.id, 'the record no longer exists')
+      }
+      if ((current.status !== 'bundled' && current.status !== 'detected') || current.updated_at !== incident.updated_at) {
+        void activation.dispose().catch(() => undefined)
+        return this.stale(incident.id, `status=${current.status} updated_at=${current.updated_at}`)
+      }
+      const updated = transitionIncident(current, 'diagnosed', this.now().toISOString(), { diagnosis: JSON.stringify(diagnosis) })
+      if (!this.host.store.incidents.swap(updated, { status: incident.status, updated_at: incident.updated_at })) {
+        void activation.dispose().catch(() => undefined)
+        return this.stale(incident.id, 'the record changed during the write')
+      }
       this.host.health?.set({ state: 'ready', detail: 'Incident diagnosis is ready', at: this.now().toISOString() })
       this.host.logs.record('info', DIAGNOSIS_SCOPE, `diagnosis.diagnosed id=${incident.id} confidence=${diagnosis.confidence} target=${diagnosis.target.kind}`)
       const routed = await this.route(incident.id)
       const stored = this.host.store.incidents.get(incident.id) ?? updated
       void activation.dispose().catch(() => undefined)
-      return { status: 'diagnosed', incident: routed.status === 'routed' ? routed.incident : stored, diagnosis }
+      return { status: 'diagnosed', incident: routed.status === 'routed' ? routed.incident : stored, diagnosis,
+        ...(routed.status === 'routed' ? { resolution: routed.resolution } : {}) }
     } catch (error) {
       void activation?.dispose().catch(() => undefined)
       return this.failed(incident.id, error)
@@ -283,6 +309,9 @@ export class Diagnosis {
   async route(id: string, options: { manual?: boolean } = {}): Promise<RouteResult> {
     const incident = this.host.store.incidents.get(id)
     if (incident === undefined) return { status: 'refused', reason: 'unknown' }
+    // Only a diagnosed record may create work (ADR-0005 §7). Reopening a dismissed record keeps its old diagnosis for a
+    // person to read but clears the resolution, so the status guard is what stops that stale text from routing again.
+    if (incident.status !== 'diagnosed') return { status: 'refused', reason: 'notDiagnosed' }
     const diagnosis = parseIncidentDiagnosis(incident.diagnosis)
     // An unreadable answer names no target: the automatic route records that as operational, while a person asking to
     // create work explicitly is told there is nowhere to route it.
@@ -373,6 +402,12 @@ export class Diagnosis {
       [project.id, project.name, project.repository ?? ''].some(value => value !== '' && text.includes(value.toLowerCase())))
   }
 
+  /** A run that finished after the record moved on: the newer state wins, and health is not turned into an error. */
+  private stale(id: string, why: string): DiagnoseRefused {
+    this.host.logs.record('warn', DIAGNOSIS_SCOPE, `diagnosis.stale id=${id} reason=${short(why)}`)
+    return { status: 'refused', reason: 'stale' }
+  }
+
   private timeout(id: string): DiagnoseRefused {
     const seconds = Math.round(this.timeoutMs / 1000)
     this.host.health?.set({ state: 'error', detail: `The diagnosis of incident ${id} timed out after ${seconds} seconds`,
@@ -391,3 +426,11 @@ export class Diagnosis {
 
 /** True for a diagnosis child Session, which no incident detector may read as a worker. */
 export function isDiagnosisSession(id: string): boolean { return id.startsWith(DIAGNOSIS_SESSION_PREFIX) }
+
+/**
+ * The ingestion guard both detector paths share (ADR-0005 §10): a candidate scoped to a diagnosis child Session is never
+ * detector input. The event path carries no Session today, so this is defense in depth there rather than a live filter.
+ */
+export function withoutDiagnosisSignals(signals: readonly IncidentSignal[]): IncidentSignal[] {
+  return signals.filter(signal => signal.type !== 'detect' || !isDiagnosisSession(signal.candidate.scope?.session ?? ''))
+}

@@ -155,7 +155,14 @@ export interface IncidentRepository {
   get(id: string): Incident | undefined
   byFingerprint(fingerprint: string): Incident | undefined
   save(incident: Incident): void
+  /**
+   * Replaces a record only when the stored row still carries the expected status and update stamp (ADR-0005 §5), so a
+   * slow diagnosis cannot resurrect a record a person dismissed or resolved while it ran. Returns whether the row matched.
+   */
+  swap(incident: Incident, expected: { status: IncidentStatus; updated_at: string }): boolean
   list(filter?: IncidentFilter): Incident[]
+  /** How many records match the filter, before paging. */
+  count(filter?: IncidentFilter): number
   /** How many open incidents exist, optionally for one project. */
   openCount(project?: string): number
 }
