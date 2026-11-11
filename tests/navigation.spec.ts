@@ -58,6 +58,10 @@ it('reads each page a tab remembered with the parameters it takes, and leaves ou
   expect(parseRoute({ page: 'execution', id: 5, query: { filter: 'idle' } })).toEqual({ page: 'execution', query: { filter: 'idle' } })
   expect(parseRoute({ page: 'settings', query: { group: 'policy', source: 'feishu' } }))
     .toEqual({ page: 'settings', query: { group: 'source', source: 'feishu' } })
+  // A Logs deep link keeps its keyword, while an unknown extra parameter is dropped.
+  expect(parseRoute({ page: 'logs', query: { q: 'ticket=t1', scope: 'github' } }))
+    .toEqual({ page: 'logs', query: { q: 'ticket=t1' } })
+  expect(parseRoute({ page: 'logs', query: { q: '' } })).toEqual({ page: 'logs' })
   expect([parseRoute('overview'), parseRoute(null)]).toEqual([undefined, undefined])
 })
 it('opens the settings that fix each setup problem: the Deployment group, or the card of the Source it names', () => {

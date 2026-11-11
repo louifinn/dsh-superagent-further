@@ -1,7 +1,7 @@
 /** Shared list rows for Tickets, Threads, and Decisions, plus Source fact chips and automated-message run folding. */
 import { useState } from 'react'
 import type { DecisionRow, ThreadFacts, ThreadRow, TicketRow } from './api.ts'
-import { Icon, Tag } from './controls.tsx'
+import { Button, Icon, Tag } from './controls.tsx'
 import { decisionMark, threadMark, ticketMark } from './marks.ts'
 import { usePanel } from './provider.tsx'
 import { actorName, localized, readableMarkers, reasonLabel, valueLabel, waitingDays } from './text.ts'
@@ -35,17 +35,21 @@ export function TicketLine({ ticket, question, onChanged, context }: {
           : <When at={ticket.updatedAt} />}
       </div>
       {/* Always render the actions container so every Ticket row keeps a uniform three-line height. */}
-      <div className="dt-ticket-actions">{onChanged && <>
-        {answer && <ActionLink href={answer.url} icon="message">{t('answerIn', { source: valueLabel(t, 'source',
-          answer.source) })}</ActionLink>}
-        {ticket.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
-          message={t('retryConfirm', { title: ticket.title })}
-          onConfirm={() => after(call('POST tickets/:id/retry', { id: ticket.id }))} />}
-        {ticket.actions.retry && ticket.sessionId && <SessionButton variant="outline" sessionId={ticket.sessionId} />}
-        {ticket.actions.stop && <ConfirmButton variant="outline" icon="stop" label={t('stop')} title={t('stopConfirmTitle')}
-          message={t('stopConfirm', { title: ticket.title })}
-          onConfirm={() => after(call('POST tickets/:id/stop', { id: ticket.id }))} />}
-      </>}</div>
+      <div className="dt-ticket-actions">
+        <Button variant="ghost" size="sm" icon={<Icon name="history" size={14} />} data-ticket-logs={ticket.id}
+          onClick={() => navigate({ page: 'logs', query: { q: `ticket=${ticket.id}` } })}>{t('logsForTicket')}</Button>
+        {onChanged && <>
+          {answer && <ActionLink href={answer.url} icon="message">{t('answerIn', { source: valueLabel(t, 'source',
+            answer.source) })}</ActionLink>}
+          {ticket.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
+            message={t('retryConfirm', { title: ticket.title })}
+            onConfirm={() => after(call('POST tickets/:id/retry', { id: ticket.id }))} />}
+          {ticket.actions.retry && ticket.sessionId && <SessionButton variant="outline" sessionId={ticket.sessionId} />}
+          {ticket.actions.stop && <ConfirmButton variant="outline" icon="stop" label={t('stop')} title={t('stopConfirmTitle')}
+            message={t('stopConfirm', { title: ticket.title })}
+            onConfirm={() => after(call('POST tickets/:id/stop', { id: ticket.id }))} />}
+        </>}
+      </div>
     </div>
   </li>
 }

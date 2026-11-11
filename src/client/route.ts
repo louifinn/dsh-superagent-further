@@ -8,7 +8,8 @@ export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'memo
 export type Tab = typeof TABS[number]
 export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'language', 'prompts', 'deployment'] as const
 export type SettingsGroup = typeof SETTINGS_GROUPS[number]
-export type Route = { page: 'overview' | 'source' | 'memory' | 'tasks' | 'logs'; id?: undefined; query?: undefined }
+export type Route = { page: 'overview' | 'source' | 'memory' | 'tasks'; id?: undefined; query?: undefined }
+  | { page: 'logs'; id?: undefined; query?: { q?: string } }
   | { page: 'trigger'; id?: undefined; query?: { filter?: ThreadFilter } }
   | { page: 'trigger'; id: string; query?: { trigger?: string } }
   | { page: 'eval'; id?: undefined; query?: { filter?: DecisionFilter; window?: '24h' } }
@@ -34,7 +35,9 @@ export function parseRoute(value: unknown): Route | undefined {
   const text = (name: string) => typeof query?.[name] === 'string' ? query[name] as string : undefined
   const record = typeof id === 'string' && id ? id : undefined
   switch (page) {
-    case 'overview': case 'source': case 'memory': case 'tasks': case 'logs': return { page }
+    case 'overview': case 'source': case 'memory': case 'tasks': return { page }
+    // A Logs deep link carries the keyword to prefill: ticket=<id>, assignment=<id>, request=<id>, or free text.
+    case 'logs': { const q = text('q'); return q ? { page, query: { q } } : { page } }
     case 'trigger': return record ? { page, id: record, query: compact({ trigger: text('trigger') }) }
       : { page, query: compact({ filter: pick(THREAD_FILTERS, query?.filter) }) }
     case 'eval': return { page, query: compact({ filter: pick(DECISION_FILTERS, query?.filter),

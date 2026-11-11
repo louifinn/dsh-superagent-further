@@ -47,6 +47,26 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   both in a Logs group. `GET logs` accepts the keyword search as `q` beside its level and scope filters. `tests/log-files.spec.ts` and `tests/operational-log.spec.ts` cover the sink, redaction, folding,
   level gating and every new scope; nothing records a message body, tool argument or result, report summary, setting
   value, or model content.
+- The Logs page completes the operator surface: a keyword search (`q`, matching message, scope and data), **Copy**
+  of the current filtered view as JSONL, a client-side **Download JSONL** Blob with one object per line in the file's
+  fields, **Load more** in pages of 200 up to the 2000-entry ring with the loaded count, and a deep link from Ticket,
+  Request and Assignment views that prefills `q=ticket=<id>`, `q=request=<id>` or `q=assignment=<id>` through the
+  typed client route (no new HTTP route, no file route).
+- Human-triggered domain actions now leave an `audit` scope entry beside the automatic lifecycle records: settings
+  save and restore (block, revision, restored-from), Ticket retry and stop, escalation decisions (request, decision and
+  unit count) and automation create/edit/run/delete (automation id). Every entry is level `info`, carries
+  `actor=operator`, and records no setting value, reply or reason text, automation instruction, message body, tool
+  argument or result; failed actions and automatic events create none. `tests/http.spec.ts` pins both directions.
+- `scripts/archive-state.mjs` now archives the real database, `<stateDir>/orchestrator.sqlite`, by default and accepts
+  `--database <path>`; its usage text, SECURITY.md, CONTRIBUTING.md and docs/013 say `orchestrator.sqlite`.
+  docs/013 also documents that `<stateDir>/logs` is not part of an archive-state snapshot, its day/`.N` rotation and
+  1–30 day retention, and copying it by hand; `tests/archive-state.spec.ts` covers the default, the override and the
+  refusals.
+- `docs/adr/0002-operational-log-files.md` records the operational-log decision: one durable JSONL sink beside the
+  memory ring, single writer, UTC day files, 20 MiB rotation, 1–30 day pruning, metadata-only with an operator audit
+  allowlist, the crash window of the last queued batch, and why logs stay outside archive-state; it also records the
+  rejected memory-only, database-table and full-body alternatives. docs/005, docs/006, docs/007, docs/009,
+  docs/011 Part H, docs/013, README and README.zh-CN are synchronized.
 
 ### Changed
 

@@ -909,8 +909,12 @@ keyword search, structured `data`, credential redaction, 60-second folding of re
 adds `logLevel` and `logRetentionDays`, which apply without a restart. The Executor, Sources and Runtime now record
 launch/retire/preempt, turn start/end, background-job settlement, report state/outcome, agent errors, per-poll source
 results and policy/decision changes as metadata only. `tests/log-files.spec.ts` covers the sink and
-`tests/operational-log.spec.ts` the ring, redaction, folding, level gating and the new scopes. Rotation/export, panel
-search/copy/deep links and an audit scope remain M30.
+`tests/operational-log.spec.ts` the ring, redaction, folding, level gating and the new scopes. M30 completed the
+operator-facing side: the Logs page searches with `q`, copies and downloads the filtered view as JSONL in the browser,
+loads more rows up to the 2000-entry ring, and Ticket, Request and Assignment views deep-link into it prefilled. A new
+`audit` scope records human-triggered domain actions (settings saves, Ticket retry/stop, escalation decisions and
+automation create/edit/run/delete) with `actor=operator` and ids only; it never records values, replies or content.
+The log files remain outside archive-state snapshots. See [ADR-0002](adr/0002-operational-log-files.md).
 
 ## Part I — One "needs you" view (approved 2026-11-10, Sprint 29)
 

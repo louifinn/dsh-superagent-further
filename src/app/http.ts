@@ -41,8 +41,8 @@ export interface HttpHost {
   readonly store: Store
   /** Feishu message links resolved since startup, used by search to match AppLink URLs. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
-  /** Bounded in-memory log of the plugin host's own messages. */
-  readonly logs: Pick<Logs, 'list'>
+  /** Bounded in-memory log of the plugin host's own messages, plus the audit trail of human-triggered actions. */
+  readonly logs: Pick<Logs, 'list' | 'record'>
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
@@ -222,6 +222,14 @@ function routes(runtime: HttpHost): Routes {
   const { store } = runtime
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
+  /**
+   * Record one human-triggered domain action for the operator audit trail. Only the action name and identifiers are
+   * logged: setting values, replies, reasons, instructions and any other payload text stay out of the log by design.
+   */
+  const audit = (action: string, fields: Record<string, string | number | boolean> = {}): void => {
+    const facts = Object.entries(fields).map(([name, value]) => `${name}=${value}`).join(' ')
+    runtime.logs.record('info', 'audit', `${action}${facts ? ` ${facts}` : ''} actor=operator`, { actor: 'operator', action, ...fields })
+  }
   return {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
@@ -273,23 +281,36 @@ function routes(runtime: HttpHost): Routes {
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'GET workers': () => workersPage(runtime),
-    'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
-    'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
+    'POST tickets/:id/retry': ({ params }) => {
+      const id = ticket(params.id)
+      runtime.engine.retryTicket(id)
+      audit('ticket.retry', { ticket: id })
+      return { retried: true }
+    },
+    'POST tickets/:id/stop': ({ params }) => {
+      const id = ticket(params.id)
+      runtime.engine.stopTicket(id)
+      audit('ticket.stop', { ticket: id })
+      return { stopped: true }
+    },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)
       const known = !block.startsWith('source:') || runtime.sources.instances().some(instance => `source:${instance.id}` === block)
       if (!known) throw new RouteError(404, 'Source not found')
       const request = SaveRequest.parse(await body())
-      return runtime.settings.save(block, request.value, request.revision, 'panel')
+      const saved = await runtime.settings.save(block, request.value, request.revision, 'panel')
+      audit('settings.save', { block, revision: saved.revision })
+      return saved
     },
-    // Restore one block from a saved revision through the ordinary panel save path (docs/011 A5.3); the history is the audit.
+    // Restore one block from a saved revision through the ordinary panel save path (docs/011 A5.3); the history records the values.
     'POST settings/:block/restore': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)
       const known = !block.startsWith('source:') || runtime.sources.instances().some(instance => `source:${instance.id}` === block)
       if (!known) throw new RouteError(404, 'Source not found')
       const request = RestoreRequest.parse(await body())
       const saved = await runtime.settings.restore(block, request.revision, request.reason ? { reason: request.reason } : {})
+      audit('settings.restore', { block, revision: saved.revision, restoredFrom: saved.restoredFrom })
       return { revision: saved.revision, restarting: saved.restarting, restoredFrom: saved.restoredFrom }
     },
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
@@ -321,7 +342,9 @@ function routes(runtime: HttpHost): Routes {
       for (const [index, unit] of (input.units ?? []).entries()) {
         if (!projects.some(item => item.id === unit.project)) throw new RouteError(400, `Deliverable ${index}: project ${unit.project} is not registered`)
       }
-      return runtime.decideEscalation({ ...input, id: params.id })
+      const result = await runtime.decideEscalation({ ...input, id: params.id })
+      audit('escalation.decide', { request: params.id, decision: input.decision, units: input.units?.length ?? 0 })
+      return result
     },
     'POST memory/forget': async ({ body }) => {
       const { id } = z.object({ id: z.string().min(1) }).parse(await body())
@@ -348,23 +371,30 @@ function routes(runtime: HttpHost): Routes {
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')
+      const created = await runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')
+      audit('automation.create', { automation: created.id })
+      return created
     },
     'PUT automations/:id': async ({ params, body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
       const update = AutomationUpdateSchema.parse(await body())
       const result = await runtime.automations.edit({ id: params.id, action: 'update', ...update }, 'panel')
       if ('conflict' in result) throw new RouteError(409, result.warning)
+      audit('automation.edit', { automation: result.id })
       return result
     },
     // A manual run never re-targets or edits a task; the Host either admits one delivery or refuses it.
     'POST automations/:id/run': async ({ params }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return { ran: true, automation: await runtime.automations.run(params.id, 'panel') }
+      const automation = await runtime.automations.run(params.id, 'panel')
+      audit('automation.run', { automation: automation.id })
+      return { ran: true, automation }
     },
     'DELETE automations/:id': async ({ params }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return runtime.automations.remove(params.id, 'panel')
+      const result = await runtime.automations.remove(params.id, 'panel')
+      audit('automation.delete', { automation: result.id })
+      return result
     },
   }
 }

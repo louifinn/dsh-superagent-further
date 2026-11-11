@@ -18,18 +18,27 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
    first observed failure. `session`, `setup` and `automation` carry the plugin's own warnings. A single failed
    GitHub poll is not an error entry, and a failed reply logs one `warn` `reply delivery failed` for its first
    failure only — later retries of the same reply stay silent.
-3. Read the artifact log from the current start when a panel entry is not enough:
-   `.artifacts/dsh-superagent-further-<profile>-<time>.log` under the workspace that started the Host.
+3. Read the artifact log from the current start when a panel entry is not enough, on a service-script host:
+   `.artifacts/dsh-superagent-further-<profile>-<time>.log` under the workspace that started the Host. A desktop
+   Host writes no artifact log; use the Logs tab and the JSONL files below instead.
 4. Run `node scripts/verify-install --state-dir <dir>`; it prints the schema version, the enabled blocks and the
    Source setup problems, and exits non-zero while setup is incomplete.
 
 ## State and backups
 
-- The state database is `state.sqlite` in the profile's state directory (the panel's setup page prints the path). It
-  runs in WAL mode; never copy it by hand while the Host is writing.
-- Take a consistent archive with `node scripts/archive-state.mjs --state-dir <dir> [--keep 5] [--out <dir>]`. It uses
-  SQLite's `VACUUM INTO` under the database's own lock, writes `state-<UTC timestamp>.sqlite` into `<stateDir>/archive`
-  and prunes the oldest archives beyond `--keep`. Run it before an upgrade or a manual repair.
+- The state database is `orchestrator.sqlite` in the profile's state directory (the panel's setup page prints the
+  path). It runs in WAL mode; never copy it by hand while the Host is writing.
+- Take a consistent archive with `node scripts/archive-state.mjs --state-dir <dir> [--database <path>] [--keep 5]
+  [--out <dir>]`. `--database` overrides the default `<stateDir>/orchestrator.sqlite`. It uses SQLite's `VACUUM INTO`
+  under the database's own lock, writes `state-<UTC timestamp>.sqlite` into `<stateDir>/archive` and prunes the oldest
+  archives beyond `--keep`. Run it before an upgrade or a manual repair.
+- The operational log files under `<stateDir>/logs` are **not** part of an archive-state snapshot. Keep them for
+  troubleshooting in their retention window: one JSONL file per UTC day (`YYYY-MM-DD.jsonl`); at 20 MiB that file is
+  closed and the next flush opens `YYYY-MM-DD.1.jsonl`, then `.2`, and so on, so the base day file keeps the day's
+  oldest records. Older files are pruned after the configured 1–30 days. Copy them by hand when a backup must include
+  them, and stop the Host for a quiescent copy: pausing is not enough, because the pause holds evaluation, dispatch
+  and outbound delivery while Sources and health transitions still log. A copy taken while the Host runs (paused or
+  not) may gain lines, so treat it as a best-effort backup rather than a consistent snapshot.
 - Worktrees live under `<stateDir>/work`; `scripts/clean-worktrees` prunes finished ones by age. Do not delete a
   worktree of an open Ticket; its assignment is the only record of the checkout.
 
@@ -51,5 +60,5 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
 
 ## Upgrade
 
-1. `node scripts/archive-state.mjs`; 2. pull the release tarball; 3. `pnpm install --frozen-lockfile && pnpm build`;
+1. `node scripts/archive-state.mjs --state-dir <dir>`; 2. pull the release tarball; 3. `pnpm install --frozen-lockfile && pnpm build`;
 4. `node scripts/verify-install`; 5. reload the plugin; 6. confirm Overview and Logs are clean.

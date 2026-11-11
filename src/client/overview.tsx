@@ -71,6 +71,8 @@ function RequestEntry({ request }: { request: ApiResponse<'GET overview'>['reque
         onClick={() => setOpen(!open)}>{request.title}</button></div>
       <div className="dt-row-meta">
         <LabelValue label={t('requestTicketsLabel')} value={String(request.tickets.length)} />
+        <Button variant="ghost" size="sm" icon={<Icon name="history" size={14} />} data-request-logs={request.id}
+          onClick={() => navigate({ page: 'logs', query: { q: `request=${request.id}` } })}>{t('logsForRequest')}</Button>
       </div>
       {open && <div className="dt-request-tickets">
         {request.tickets.map(ticket => <Button key={ticket.id} size="sm" variant="outline"

@@ -162,7 +162,7 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
       case 'execution': return route.id !== undefined ? <TicketPage key={route.id} id={route.id} />
         : state ? <ExecutionStatus filter={route.query?.filter ?? 'open'} state={state} reload={reload} /> : waiting
       case 'memory': return <MemoryPage />
-    case 'logs': return <LogsPage />
+      case 'logs': return <LogsPage query={route.query} />
       case 'tasks': return <TasksPage />
       case 'settings': return state ? <SettingsPage key={state.masterId} group={route.query.group} query={route.query} state={state}
         deploymentForm={deploymentForm} /> : waiting

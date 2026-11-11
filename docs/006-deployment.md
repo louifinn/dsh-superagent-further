@@ -234,7 +234,7 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `stateDir` | yes | Absolute path: the database, the lock, the command shims in `worker-bin`, the agent's git configuration and, by default, the Ticket directories in `work`. Back it up before upgrades |
+| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, and, by default, the Ticket directories in `work`. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
@@ -267,7 +267,7 @@ A Source that is still starting counts as normal operation. So does a Feishu bot
 
 `status` returns failed parts and their details under `errors`, and setup requirements under `setup`. `start` and `restart` print those problems as lines; they exit 1 if the service never comes up. Only an intentional `stop` pauses automatic recovery.
 
-Each profile stores logs and control files under `.artifacts/`:
+Each profile started through these control scripts stores logs and control files under `.artifacts/`: a desktop Host starts without them and writes its operational log to the Logs tab and `<stateDir>/logs` instead.
 
 - Startup logs: `dsh-superagent-further-<profile>-<date>-<time>-<pid>.log`, where the pid belongs to the script. The newest 20 are kept.
 - Control files: `control/profiles/<profile>/`, containing the stop marker, lock and process id.
