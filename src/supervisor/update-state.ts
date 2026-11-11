@@ -179,11 +179,31 @@ export function readUpdateRequest(path: string): { present: boolean; request?: U
   return parsed.request === undefined ? { present: true, reason: parsed.reason } : { present: true, request: parsed.request }
 }
 
-/** Write a request atomically as 0600 under the 0700 updates directory. */
+/**
+ * Write one new request exclusively: `wx` refuses to replace a request that is already waiting, so the CLI and the panel
+ * cannot overwrite each other's identifier between a check and a write. A crash during the write can leave a torn file,
+ * which the claimant quarantines as `malformed` instead of acting on it; the file is never a partially applied update.
+ */
 export function writeUpdateRequest(stateDir: string, request: UpdateRequest): void {
   const checked = parseUpdateRequest(request)
   if (checked.request === undefined) throw new Error(`The update request is not valid: ${checked.reason ?? 'unknown reason'}`)
-  atomicWrite(updateRequestPath(stateDir), `${JSON.stringify(checked.request, null, 2)}\n`)
+  const path = updateRequestPath(stateDir)
+  ownerDirectory(dirname(path))
+  const descriptor = openSync(path, 'wx', 0o600)
+  let complete = false
+  try {
+    writeSync(descriptor, `${JSON.stringify(checked.request, null, 2)}\n`)
+    fsyncSync(descriptor)
+    complete = true
+  } finally {
+    closeSync(descriptor)
+    if (!complete) rmSync(path, { force: true })
+  }
+}
+
+/** Whether a refused write lost the race for the request file to another writer. */
+export function isUpdateRequestConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'EEXIST'
 }
 
 /**

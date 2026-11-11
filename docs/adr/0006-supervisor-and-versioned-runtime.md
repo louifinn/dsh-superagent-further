@@ -101,8 +101,10 @@ leave a supervisor that can decide what to start, without ever handing a newer d
    best-effort directory fsync, so a torn write is never read as a complete record. Phases are `prepare`, `stage`,
    `backup`, `drain`, `swap`, `load`, `init`, `commit`, `rollback`. The update pipeline writes `previous.json` and
    `current.json` around its `swap` phase; `previous.json` therefore names the version a rollback returns to, and the
-   supervisor's startup fallback reads it. On startup, an interrupted record makes its recorded current the
-   first candidate; if it does not verify, `current.json` and then `previous.json` do; if none verify, the packaged
+   supervisor's startup fallback reads it. An interrupted `update` is repaired as a whole before any version is resolved:
+   the supervisor rewrites both pointers from the record's baseline (ADR-0007 decision 6), so a candidate the swap wrote
+   but never loaded, initialized or committed cannot start. On startup, an interrupted record makes its recorded current
+   the first candidate; if it does not verify, `current.json` and then `previous.json` do; if none verify, the packaged
    runtime does. The recovery note is written to the journal and the log. No recovery path downgrades the SQLite schema:
    the supervisor reads the schema version from the database before choosing a runtime, a descriptor whose schema is
    older is rejected, and the loader refuses a module whose `SCHEMA_VERSION` is below the database. The schema is never

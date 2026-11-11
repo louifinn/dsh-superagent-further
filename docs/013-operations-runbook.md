@@ -89,7 +89,8 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   The diagnose response carries the same token so a caller learns the work id the automatic route created.
 - **What this does not do**: detection and diagnosis make no code change, retry no Ticket and merge nothing, and an
   operational conclusion never becomes an Issue. The `update-failures` rule reads the supervisor's
-  `update.failed phase=…` lines — one record per phase — and a later `update.applied` recovers every phase.
+  `update.failed phase=…` lines — one record per phase — and a later success line (`update.applied`, or
+  `update.rolledback` when a failed candidate was healed by the previous runtime) recovers every phase.
 - **Schema**: records live in the `incident` table of schema 25. A schema 24 database migrates on start with the
   table created empty; no backfill invents historical incidents. The table is not part of `archive-state` beyond the
   database copy, and the evidence bundles live outside the database, so copy `<workspace>/artifacts/incidents`
@@ -149,16 +150,22 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   `runtime/backups/`, put both pointers back and reloaded the previous (else packaged) runtime; do not re-run the same
   request. `journal.json` records the failed `rollback` phase, `history.jsonl` the `rolledback` or `failed` outcome.
   Inspect `<stateDir>/logs`, fix the bundle, stage a new verified version, and apply again. A crash during an update
-  leaves a running `update` journal and `request.processing.json`; the next start clears the marker, appends an
-  `interrupted` history entry and never re-runs the failed swap.
+  leaves a running `update` journal and `request.processing.json`. At `swap`, `load`, `init` or `commit` the crash can
+  happen after `previous.json` and `current.json` were rewritten but before the candidate was loaded or committed, so the
+  next start first reconciles both pointers to the journal's baseline (the record of what was serving and what preceded
+  it), logs `update.pointers-reconciled phase=… current=… previous=…`, then resolves versions — the uncommitted candidate
+  cannot be adopted by a later boot. It clears the marker, appends an `interrupted` history entry and never re-runs the
+  failed swap.
 - **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
   runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
   records the expiry, the journal is still committed, and the Store is closed and the lock released whenever the drain
   reached those phases. A maintenance phase is never skipped by an abort signal; only intake, cancel and in-flight may
   be. If `journal.json` still says `running`, the next start recovers it.
-- **The journal says `running`**: the previous process stopped during `startup`, `drain` or an `update`. The next start
-  recovers by preferring the recorded current version when it still verifies, then the previous verified version, then
-  the packaged runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted`
+- **The journal says `running`**: the previous process stopped during `startup`, `drain` or an `update`. An interrupted
+  update first reconciles `current.json`/`previous.json` to the journal's recorded baseline (the candidate may have been
+  written but never loaded) before any version is resolved; the recovery line names the phase and both versions. The
+  start then prefers the recorded current version when it still verifies, else the previous verified version, else the
+  packaged runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted`
   history entry and does not re-run the swap. Do not edit the journal or the database schema by hand; a runtime whose
   schema is older than the database is refused by design and the schema is never migrated down.
 
@@ -173,7 +180,8 @@ running process keeps the state-directory lock.
    directory and one rename, verifies the hash, host API, schema and entry path, and prints the staged descriptor
    (version, hostApi, schema, sha256, builtAt, node). Staging the same bundle twice is idempotent; a different bundle
    under the same version is refused.
-2. `pnpm deploy apply [--version <v>]` writes one atomic `{api:1,id,action:'apply',version,at,by:'operator'}` request.
+2. `pnpm deploy apply [--version <v>]` writes one `{api:1,id,action:'apply',version,at,by:'operator'}` request, created
+   exclusively (`wx` + fsync, so a concurrent writer is refused rather than replacing the waiting id).
    The supervisor's 2 s poll claims it by rename, journals
    `prepare → stage → backup → drain → swap → load → init → commit`, backs the database up with `VACUUM INTO`
    (`runtime/backups/<version>-<timestamp>.sqlite`) while the old runtime still serves, drains with reason `update`,
@@ -187,10 +195,11 @@ running process keeps the state-directory lock.
    writes a rollback request; it is refused while a request is pending or an update is in flight, and is eligible only
    when the previous runtime still verifies and its schema is not older than the database.
 
-Fault-injection and smoke checks: `pnpm drill` runs 13 scenarios against a throwaway state directory (a real
-stage/apply, a rollback round-trip, crash recovery at every phase, a corrupt staged entry, a pending-request storm, a
-schema downgrade and a failed-init rollback) and writes `.artifacts/drills/<timestamp>.json` with pass/fail per
-scenario; it exits non-zero on failure.
+Fault-injection and smoke checks: `pnpm drill` runs 15 scenarios against a throwaway state directory (a real
+stage/apply, a rollback round-trip, a simulated crash at each of the eight journaled apply phases — prepare, stage,
+backup, drain, swap, load, init and commit — each followed by a second boot that serves the reconciled pointer, a
+corrupt staged entry, a pending-request storm, a schema downgrade and a failed-init rollback) and writes
+`.artifacts/drills/<timestamp>.json` with pass/fail per scenario; it exits non-zero on failure.
 
 Live HMR is for development only: the `dsh-tower enable-dev-hmr` command and the profile's `cordis.patch.yml` entry
 (`id: hmr`, `root: [<repo>]`) reload client bundles without a page refresh only in a dev setup. Production updates use

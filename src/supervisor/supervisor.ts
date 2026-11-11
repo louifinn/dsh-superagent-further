@@ -27,10 +27,13 @@ import { buildRuntimeHost, type BuiltHost } from './host.ts'
 import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
 import { UpdateEngine, type UpdateEnvironment } from './update.ts'
-import { readUpdateHistory, UPDATE_POLL_MS, updateSnapshot, type UpdateHistoryEntry, type UpdateSnapshot } from './update-state.ts'
 import {
-  databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor, type RuntimeCandidate,
-  type RuntimeSource,
+  readUpdateHistory, removeDescriptorFile, UPDATE_POLL_MS, updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry,
+  type UpdateSnapshot,
+} from './update-state.ts'
+import {
+  currentPointer, databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor,
+  type RuntimeCandidate, type RuntimeSource,
 } from './versions.ts'
 
 /** How long the supervisor waits for a runtime's `ready` before disposing it and trying the next candidate. */
@@ -41,6 +44,8 @@ export const FLUSH_LOGS_MS = 10_000
 export const LOCK_RELEASE_MS = 10_000
 /** How long the supervisor waits for a failed candidate's `dispose` before warning and trying the next candidate. */
 export const DISPOSE_MS = 10_000
+/** Journal phases in which the swap may already have written `current.json`; a crash there needs the baseline pointers back. */
+const SWAPPED_PHASES: readonly JournalState['phase'][] = ['swap', 'load', 'init', 'commit']
 
 /** The resolved runtime and where it came from; the read-only version surface M36 exposes to the panel. */
 export interface SupervisorStatus {
@@ -208,6 +213,7 @@ export class Supervisor {
       if (interrupted !== undefined) {
         this.log.warn('dsh-superagent-further found an interrupted %s at %s; recovery will prefer the recorded runtime only if it verifies',
           interrupted.operation, interrupted.phase)
+        this.reconcileUpdatePointers(runtimeDir, interrupted)
       }
       const database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
       let packaged: PackagedRuntime | undefined
@@ -247,6 +253,26 @@ export class Supervisor {
       await this.releaseLock()
       throw error
     }
+  }
+
+  /**
+   * Put both version pointers back to the journal's pre-update baseline after a crash in or after the swap. The journal is
+   * the only record of what was serving before the update; without this, the next boot would start the uncommitted candidate
+   * that `current.json` names with no drain, backup, self-check, history entry or journal record (ADR-0007). A crash in the
+   * `commit` phase also reconciles: serving the candidate was in-memory only and was never committed.
+   */
+  private reconcileUpdatePointers(runtimeDir: string, interrupted: JournalState): void {
+    if (interrupted.operation !== 'update' || !SWAPPED_PHASES.includes(interrupted.phase)) return
+    const current = interrupted.current
+    if (current === undefined) removeDescriptorFile(currentPointer(runtimeDir))
+    else writeDescriptorFile(currentPointer(runtimeDir), current)
+    let previous: string
+    if (interrupted.previous === undefined) previous = 'unrecorded'
+    else if (interrupted.previous === null) { removeDescriptorFile(previousPointer(runtimeDir)); previous = 'none' }
+    else { writeDescriptorFile(previousPointer(runtimeDir), interrupted.previous); previous = interrupted.previous.version }
+    const line = `update.pointers-reconciled phase=${interrupted.phase} current=${current?.version ?? 'none'} previous=${previous}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
   }
 
   /** Load and initialize one verified candidate. A failure disposes what it created and leaves the lock for the next try. */

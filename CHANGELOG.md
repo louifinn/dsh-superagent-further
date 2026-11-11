@@ -12,8 +12,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   unchanged). `scripts/stage-runtime.mjs` validates a built `lib/runtime-entry.js` + `lib/runtime-manifest.json` (shape,
   version, host API, integer schema, entry name, SHA-256) and copies them into `<stateDir>/runtime/<version>/` through a
   temporary directory and one rename, adding `builtAt` and `node`; `scripts/deploy-runtime.mjs` wraps it as
-  `stage|apply|status|watch|rollback` behind `pnpm deploy`, requires `--state-dir`, writes one atomic
-  `{api:1,id,action:'apply'|'rollback',version?,at,by:'operator'}` request under `<stateDir>/updates/`, and refuses a
+  `stage|apply|status|watch|rollback` behind `pnpm deploy`, requires `--state-dir`, creates one
+  `{api:1,id,action:'apply'|'rollback',version?,at,by:'operator'}` request under `<stateDir>/updates/` exclusively
+  (`wx` + fsync, so a racing writer is refused instead of replacing the waiting id), and refuses a
   downgrade, a missing or unverified version, a second request or an already-running version. `src/supervisor/update.ts`
   polls with an unref'd 2 s timer, validates and claims the request by rename to `request.processing.json`, single-flights
   one update, and journals `prepare → stage → backup → drain → swap → load → init → commit`: `VACUUM INTO
@@ -23,17 +24,22 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   failure after the backup or swap disposes the candidate with a bound, restores the database backup, restores both
   pointers byte-for-byte, reloads the previous (else packaged) runtime, journals `fail('rollback')`, appends the failed
   history and logs `update.failed phase=… reason=…`; the schema never moves down and no exception escapes into the DSH
-  fiber. A crash leaves the running journal and claim, and the next start clears the claim, appends an `interrupted`
-  history entry and never re-runs the swap. `src/supervisor/update-state.ts` owns the request/claim files, the
+  fiber. A crash leaves the running journal and claim; the next start reconciles `current.json`/`previous.json` to the
+  journal's recorded baseline before resolving any version (so a candidate that was written but never loaded, checked or
+  committed cannot be adopted by the next boot), clears the claim, appends an `interrupted` history entry and never
+  re-runs the swap. `src/supervisor/update-state.ts` owns the request/claim files, the
   append-only bounded `runtime/history.jsonl`, descriptor and pointer writers, the database backup/restore and
   `updateSnapshot`; `Supervisor.updateStatus()`/`history()` expose the current and previous descriptors, journal, pending
   request, rollback eligibility, deploy hints and recent history. The runtime adds read-only same-origin `GET updates` and
-  `POST updates/rollback` (literal `confirm:'ROLLBACK'`, audited, one atomic request, 409 while a request is pending or an
+  `POST updates/rollback` (literal `confirm:'ROLLBACK'`, audited, one exclusively created request, 409 while a request is
+  pending or an
   update runs; no upload, download or code-body route), the Updates tab with the confirm-token rollback and history, the
   Overview's pending/failed update link, both locales, and the live `update-failures` incident rule (one record per
-  phase, recovered by a later `update.applied`). `scripts/drill.mjs` (`pnpm drill`) runs 13 fault-injection scenarios
-  against a throwaway state directory (stage+apply, rollback round-trip, crash recovery at every phase, a corrupt staged
-  entry, a pending-request storm, a schema downgrade, a failed-init rollback) and writes
+  phase, recovered by a later success line, `update.applied` or a healed `update.rolledback`). `scripts/drill.mjs`
+  (`pnpm drill`) runs 15 fault-injection scenarios against a throwaway state directory (stage+apply, rollback round-trip, a
+  simulated crash at each of the eight journaled apply phases — prepare, stage, backup, drain, swap, load, init and commit
+  — each followed by a second boot that must serve the reconciled pointer, a corrupt staged entry, a pending-request
+  storm, a schema downgrade, a failed-init rollback) and writes
   `.artifacts/drills/<timestamp>.json`; ADR-0007, docs/003, 005, 006, 007, 009, 011 and 013, README, README.zh-CN and the
   pack/docs gates are updated. Live HMR stays development-only.
 - A stable supervisor and a versioned domain runtime (ADR-0006, schema 25 unchanged). `src/index.ts` now starts
@@ -278,7 +284,21 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
-- Selecting a previously used workspace after switching away no longer leaves the Orchestrator silently disabled. Switching
+- A runtime update that crashes after the swap wrote `current.json` no longer comes back as the candidate on the next
+  boot. The swap writes `previous.json` and `current.json` before the candidate is loaded, initialized or committed; a
+  process death in between left a running journal but a pointer naming the uncommitted version, and the boot after the
+  recovery (which had no interrupted journal left) would silently start it with no drain, backup, self-check or history
+  entry. Recovery now reconciles both pointers to the journal's recorded baseline before resolving any version — writing
+  or removing `current.json` and `previous.json` according to the record, leaving `previous.json` untouched when the
+  journal predates the field — and logs `update.pointers-reconciled phase=… current=… previous=…`. A crash in `commit`
+  after the candidate began serving in memory also returns to the baseline, because serving was never durable. Covered by
+  the two-boot crash tests at `swap` and `init` in `tests/update.spec.ts` and by every crash scenario in `pnpm drill`.
+- Two concurrent rollback confirmations can no longer replace each other's request: the request file is created
+  exclusively (`wx` + fsync), so the loser gets a busy refusal (409 from the panel, an error from `pnpm deploy`) instead
+  of overwriting the waiting identifier, and `writeUpdateRequest` is the same path for the CLI and the panel.
+- A healed rollback now recovers its `update-failures` incident. The detector recovered every phase only on
+  `update.applied`; the engine's successful `update.rolledback` line (the previous runtime served again) left a
+  high-severity record open while Overview showed no attention. Both terminal success lines now recover all phases. Switching
   away archived that workspace's deterministic master Session, and DSH's archived-session gate then rejected every step
   while startup still reported `ready`. Startup now unarchives the desired workspace-derived master before resolving it, so
   the workspace resumes its own identity and conversation instead of resuming a dead Session; the legacy `stateDir`-derived

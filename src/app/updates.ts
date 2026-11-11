@@ -6,7 +6,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { UpdateRequest, UpdateSnapshot } from '../supervisor/update-state.ts'
-import { updateSnapshot, writeUpdateRequest } from '../supervisor/update-state.ts'
+import { isUpdateRequestConflict, updateSnapshot, writeUpdateRequest } from '../supervisor/update-state.ts'
 import type { Logs } from './logs.ts'
 
 /** What Overview needs to raise the update pipeline to the operator's attention. */
@@ -68,7 +68,15 @@ export class Updates {
     if (status.pending !== null) return { ok: false, reason: 'An update request is already pending; wait for it to be claimed before rolling back.' }
     if (!status.rollback.eligible) return { ok: false, reason: status.rollback.reason ?? 'There is no previous runtime to roll back to.' }
     const request: UpdateRequest = { api: 1, id: randomUUID(), action: 'rollback', at: new Date().toISOString(), by: 'operator' }
-    writeUpdateRequest(this.host.stateDir, request)
+    try {
+      writeUpdateRequest(this.host.stateDir, request)
+    } catch (error) {
+      // The check above is a courtesy to the operator; the exclusive create is the real guard against a concurrent writer.
+      if (isUpdateRequestConflict(error)) {
+        return { ok: false, reason: 'An update request is already pending; wait for it to be claimed or removed before rolling back.' }
+      }
+      throw error
+    }
     this.host.logs.record('info', 'update', `update.requested action=rollback id=${request.id} actor=operator`)
     return { ok: true, request, status: this.status() }
   }

@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Logs } from '../src/app/logs.ts'
 import { Updates } from '../src/app/updates.ts'
 import type { UpdateHistoryEntry } from '../src/supervisor/update-state.ts'
-import { appendUpdateHistory, updateProcessingPath, updateRequestPath, writeDescriptorFile, writeUpdateRequest }
-  from '../src/supervisor/update-state.ts'
+import { appendUpdateHistory, isUpdateRequestConflict, updateProcessingPath, updateRequestPath, writeDescriptorFile,
+  writeUpdateRequest } from '../src/supervisor/update-state.ts'
 import { currentPointer, previousPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
 import type { RuntimeDescriptor } from '../src/runtime-host.ts'
 
@@ -98,5 +98,31 @@ describe('the runtime update surface', () => {
     const updates = new Updates({ stateDir: directory, logs: new Logs() })
     expect(updates.rollback()).toMatchObject({ ok: false, reason: expect.stringContaining('has hash') })
     expect(updates.attention()).toMatchObject({ failed: false })
+  })
+
+  it('creates a request exclusively, so a second writer cannot replace the waiting identifier', () => {
+    const request = { api: 1 as const, id: 'first', action: 'apply' as const, version: '0.5.0',
+      at: '2026-11-11T10:05:00.000Z', by: 'operator' as const }
+    writeUpdateRequest(directory, request)
+    let conflict: unknown
+    try {
+      writeUpdateRequest(directory, { ...request, id: 'second' })
+    } catch (error) { conflict = error }
+    expect(isUpdateRequestConflict(conflict)).toBe(true)
+    expect(JSON.parse(readFileSync(updateRequestPath(directory), 'utf8'))).toMatchObject({ id: 'first' })
+  })
+
+  it('maps a lost request race to a refusal instead of throwing out of the rollback action', () => {
+    const current = staged('0.4.0'), previous = staged('0.3.0')
+    writeDescriptorFile(currentPointer(runtimeDirectory(directory)), current)
+    writeDescriptorFile(previousPointer(runtimeDirectory(directory)), previous)
+    // A malformed file is not a pending request, so the eligibility check passes and only the exclusive create can refuse.
+    mkdirSync(join(directory, 'updates'), { recursive: true })
+    writeFileSync(updateRequestPath(directory), '{not json')
+    const logs = new Logs()
+    const updates = new Updates({ stateDir: directory, logs })
+    expect(updates.rollback()).toMatchObject({ ok: false, reason: expect.stringContaining('already pending') })
+    expect(readFileSync(updateRequestPath(directory), 'utf8')).toBe('{not json')
+    expect(logs.list({ scope: 'update' })).toEqual([])
   })
 })

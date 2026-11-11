@@ -11,11 +11,14 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Journal } from '../src/supervisor/journal.ts'
 import { Supervisor, type SupervisorOptions } from '../src/supervisor/supervisor.ts'
-import { claimUpdateRequest, readUpdateHistory, updateProcessingPath, updateRequestPath } from '../src/supervisor/update-state.ts'
+import {
+  backupDatabase, claimUpdateRequest, readUpdateHistory, updateBackupsDirectory, updateProcessingPath, updateRequestPath,
+} from '../src/supervisor/update-state.ts'
 import { currentPointer, previousPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
 import { HOST_API, type RuntimeDescriptor } from '../src/runtime-host.ts'
+import { startRuntime, type FakeAgent } from './fixtures/host.ts'
+import { fakeWorkspaces } from './fixtures/workspaces.ts'
 import { testMachine } from './fixtures/deployment.ts'
-import { appendUpdateHistory } from '../src/supervisor/update-state.ts'
 
 let directory: string
 const running: Supervisor[] = []
@@ -140,6 +143,24 @@ async function until(check: () => boolean, timeout = 10_000): Promise<void> {
   }
   throw new Error('the condition did not become true in time')
 }
+/**
+ * Leave the journal and both pointers exactly as a death in `phase` would after the swap wrote them: the journal still runs
+ * at that phase with the serving version and the pre-update previous recorded, while `current.json` names the candidate.
+ */
+function leaveCrash(phase: 'swap' | 'init' | 'commit', serving: RuntimeDescriptor, previous: RuntimeDescriptor | null,
+  target: RuntimeDescriptor): void {
+  const crashJournal = new Journal(join(runtimeDirectory(directory), 'journal.json'))
+  crashJournal.begin('update', serving, previous)
+  for (const name of ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit'] as const) {
+    if (name === phase) { crashJournal.mark(name, 'started'); break }
+    crashJournal.mark(name, 'done')
+  }
+  writeFileSync(previousPointer(runtimeDirectory(directory)), JSON.stringify(serving))
+  writeFileSync(currentPointer(runtimeDirectory(directory)), JSON.stringify(target))
+  mkdirSync(join(directory, 'updates'), { recursive: true })
+  writeFileSync(updateProcessingPath(directory), JSON.stringify({ api: 1, id: `crash-${phase}`, action: 'apply',
+    version: target.version, at: new Date().toISOString(), by: 'operator' }))
+}
 
 describe('update engine', () => {
   it('applies a staged runtime through every journal phase and updates both pointers and history', async () => {
@@ -221,28 +242,59 @@ describe('update engine', () => {
     expect(supervisor.logs.list({ limit: 200 }).some(entry => entry.message.includes('downgrade is never attempted'))).toBe(true)
   })
 
-  it('recovers a crash that left a running update journal and a claimed request', async () => {
+  it('reconciles the pointers after a crash in the swap phase and starts the recorded version on the next boot', async () => {
     database()
     const first = deploy('1.0.0')
     const staged = stage('2.0.0')
-    const crashJournal = new Journal(join(runtimeDirectory(directory), 'journal.json'))
-    crashJournal.begin('update', first, null)
-    crashJournal.mark('stage', 'done', 'version 2.0.0 verified')
-    crashJournal.mark('drain', 'done', 'drained')
-    crashJournal.mark('swap', 'started', 'writing the version pointers')
-    writeFileSync(currentPointer(runtimeDirectory(directory)), JSON.stringify(staged))
-    mkdirSync(join(directory, 'updates'), { recursive: true })
-    const crashRequest = { api: 1 as const, id: 'crash-request', action: 'apply' as const, version: '2.0.0',
-      at: new Date().toISOString(), by: 'operator' as const }
-    writeFileSync(updateProcessingPath(directory), JSON.stringify(crashRequest))
+    leaveCrash('swap', first, null, staged)
     const supervisor = newSupervisor()
     await supervisor.start()
     expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'journal' })
     await until(() => !existsSync(updateProcessingPath(directory)))
-    const last = readUpdateHistory(directory, 5).at(-1)!
-    expect(last).toMatchObject({ id: 'crash-request', outcome: 'interrupted', phase: 'swap' })
+    expect(readUpdateHistory(directory, 5).at(-1)).toMatchObject({ id: 'crash-swap', outcome: 'interrupted', phase: 'swap' })
+    // The swap had written both pointers to the candidate; recovery restores the journal's baseline before starting anything.
+    expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('1.0.0')
+    expect(existsSync(previousPointer(runtimeDirectory(directory)))).toBe(false)
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message === 'update.pointers-reconciled phase=swap current=1.0.0 previous=none')).toBe(true)
     expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
-    expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('2.0.0')
+    expect(supervisor.updateStatus()).toMatchObject({ current: { version: '1.0.0' }, previous: null })
+    // A second boot has no interrupted journal to lean on: without the reconciled pointer it would silently start the candidate.
+    await supervisor.stop()
+    const second = newSupervisor()
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('1.0.0')
+    expect(existsSync(previousPointer(runtimeDirectory(directory)))).toBe(false)
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    expect(second.updateStatus()).toMatchObject({ current: { version: '1.0.0' }, previous: null })
+  })
+
+  it('restores the recorded previous pointer after a crash in init and serves the restored current on the next boot', async () => {
+    database()
+    const older = deploy('0.9.0')
+    const first = deploy('1.0.0')
+    const staged = stage('2.0.0')
+    leaveCrash('init', first, older, staged)
+    const supervisor = newSupervisor()
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'journal' })
+    await until(() => !existsSync(updateProcessingPath(directory)))
+    expect(readUpdateHistory(directory, 5).at(-1)).toMatchObject({ id: 'crash-init', outcome: 'interrupted', phase: 'init' })
+    // current.json is the pre-update version again and previous.json is the journal's baseline, not the old current the swap wrote.
+    expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('1.0.0')
+    expect(pointer(previousPointer(runtimeDirectory(directory)))?.version).toBe('0.9.0')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message === 'update.pointers-reconciled phase=init current=1.0.0 previous=0.9.0')).toBe(true)
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    expect(supervisor.updateStatus()).toMatchObject({ current: { version: '1.0.0' }, previous: { version: '0.9.0' } })
+    await supervisor.stop()
+    const second = newSupervisor()
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(pointer(previousPointer(runtimeDirectory(directory)))?.version).toBe('0.9.0')
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    expect(second.updateStatus()).toMatchObject({ current: { version: '1.0.0' }, previous: { version: '0.9.0' } })
   })
 
   it('refuses a malformed request without touching the serving runtime', async () => {
@@ -273,6 +325,47 @@ describe('update engine', () => {
     expect(journal()?.status).toBe('committed')
     expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('2.0.0')
   })
+
+  it('backs up a database a serving WAL writer still has open', () => {
+    database(25, 'old')
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+    const writer = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
+    try {
+      writer.exec('PRAGMA journal_mode = WAL')
+      writer.prepare('INSERT INTO kv VALUES (?, ?)').run('unflushed', 'written')
+      const backup = backupDatabase(directory, '1.0.0', '2026-11-11T10:00:00.000Z')
+      expect(backup).toBeDefined()
+      expect(backup!.startsWith(updateBackupsDirectory(directory))).toBe(true)
+      expect(existsSync(backup!)).toBe(true)
+      const copy = new DatabaseSync(backup!, { readOnly: true })
+      try {
+        expect(copy.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+        expect((copy.prepare("SELECT value FROM kv WHERE key = 'unflushed'").get() as { value?: string }).value).toBe('written')
+        expect((copy.prepare("SELECT value FROM kv WHERE key = 'marker'").get() as { value?: string }).value).toBe('old')
+      } finally { copy.close() }
+    } finally { writer.close() }
+  })
+
+  it('drains a real runtime with the update reason and starts its replacement on the same state directory', async () => {
+    const state = join(directory, 'real-state')
+    const workspace = join(directory, 'real-workspace')
+    mkdirSync(state, { recursive: true })
+    mkdirSync(workspace, { recursive: true })
+    const options = { directory: state, workspace, workspaces: fakeWorkspaces(state), agents: new Map<string, FakeAgent>(), keep: true }
+    const first = await startRuntime(undefined, options)
+    try {
+      expect(((await first.api('GET', 'state')).body as { health: { runtime: { state: string } } }).health.runtime.state).toBe('ready')
+      const report = await first.runtime.drain('update')
+      expect(report).toMatchObject({ reason: 'update', completed: true })
+      expect(report.phases.every(phase => phase.status === 'done')).toBe(true)
+      // The drain released the database and the state-directory lock, so the runtime the engine would load starts on the same state.
+      const second = await startRuntime(undefined, options)
+      try {
+        expect(second.runtime.masterId).toBe(first.runtime.masterId)
+        expect(((await second.api('GET', 'state')).body as { health: { runtime: { state: string } } }).health.runtime.state).toBe('ready')
+      } finally { await second.stop() }
+    } finally { await first.stop() }
+  })
 })
 
 /** A non-destructive probe: does a claim exist while the engine is busy? */
@@ -286,4 +379,3 @@ function claimProbe(): boolean {
   }
   return false
 }
-void appendUpdateHistory

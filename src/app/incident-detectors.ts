@@ -92,7 +92,9 @@ export class IncidentDetector {
       const phase = /(?:^|\s)phase=([^\s]+)/.exec(entry.message)?.[1] ?? 'unknown'
       return [this.detect(updateFailure(phase))]
     }
-    if (entry.message.startsWith('update.applied')) {
+    // A finished attempt recovers the failure record either way: an applied update supersedes the failed one, and a healed
+    // rollback (the previous runtime serves again) is just as complete an outcome as an apply.
+    if (entry.message.startsWith('update.applied') || entry.message.startsWith('update.rolledback')) {
       return UPDATE_PHASES.map(phase => ({ type: 'recover' as const, fingerprint: incidentFingerprint(updateFailure(phase)) }))
     }
     if (entry.message.includes('agent.error') || (entry.scope === 'executor' && entry.message.startsWith('agent.error'))) {

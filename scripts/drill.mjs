@@ -23,13 +23,16 @@ import {
   claimUpdateRequest, readUpdateHistory, readUpdateRequest, updateProcessingPath, updateRequestPath, writeUpdateRequest,
   writeDescriptorFile,
 } from '../src/supervisor/update-state.ts'
-import { currentPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
+import { currentPointer, previousPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
 import { applyCommand } from './deploy-runtime.mjs'
 import { stageRuntime } from './stage-runtime.mjs'
 
 const message = (problem) => problem instanceof Error ? problem.message : String(problem)
 const sha256 = (text) => createHash('sha256').update(text).digest('hex')
-const PHASES = ['prepare', 'stage', 'drain', 'swap', 'load', 'init']
+/** Every phase of a normal update; a crash is simulated at each one. */
+const PHASES = ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit']
+/** From these phases on, the engine's swap may already have written `current.json`; recovery must reconcile the pointers. */
+const SWAPPED = new Set(['swap', 'load', 'init', 'commit'])
 
 const wait = (ms) => new Promise(done => setTimeout(done, ms))
 async function until(check, timeout = 15_000, label = 'the drill condition') {
@@ -250,6 +253,7 @@ async function rollbackScenario(base) {
 async function crashScenario(base, phase) {
   const dir = join(base, `crash-${phase}`)
   let supervisor
+  let second
   try {
     return await record(`crash-recovery-${phase}`, async step => {
       await step('leave the previous runtime deployed and the new one staged', () => {
@@ -261,12 +265,13 @@ async function crashScenario(base, phase) {
         const previous = JSON.parse(readFileSync(join(runtimeDirectory(dir), '1.0.0', 'runtime-manifest.json'), 'utf8'))
         const journal = journalOf(dir)
         journal.begin('update', previous, null)
-        const done = ['prepare', 'stage', 'drain', 'swap', 'load']
         const index = PHASES.indexOf(phase)
-        for (const name of done.slice(0, index)) journal.mark(name, 'done')
+        for (const name of PHASES.slice(0, index)) journal.mark(name, 'done')
         if (index > 0) journal.mark(phase, 'started')
-        if (index >= PHASES.indexOf('swap')) {
+        if (SWAPPED.has(phase)) {
+          // The engine writes the baseline previous descriptor and then the candidate; leave both behind as a death there would.
           const next = JSON.parse(readFileSync(join(runtimeDirectory(dir), '2.0.0', 'runtime-manifest.json'), 'utf8'))
+          writeDescriptorFile(previousPointer(runtimeDirectory(dir)), previous)
           writeDescriptorFile(currentPointer(runtimeDirectory(dir)), next)
         }
         const claimed = request(dir, 'apply', '2.0.0')
@@ -285,11 +290,36 @@ async function crashScenario(base, phase) {
           return history?.outcome === 'interrupted' && history.phase === phase
         }, 10_000, 'the interrupted history entry').then(() => latest(dir)?.id)
       })
+      await step(SWAPPED.has(phase) ? 'both pointers are reconciled to the journal baseline' : 'the pre-swap pointers are untouched', () => {
+        const status = supervisor.updateStatus()
+        if (status.current?.version !== '1.0.0') throw new Error(`current.json is ${String(status.current?.version)}`)
+        if (status.previous !== null) throw new Error(`previous.json is ${String(status.previous?.version)} after a baseline with none`)
+        const warnings = supervisor.logs.list({ limit: 200 }).map(entry => entry.message)
+        if (SWAPPED.has(phase)) {
+          if (!warnings.some(entry => entry.startsWith(`update.pointers-reconciled phase=${phase}`))) {
+            throw new Error('the ring has no pointer reconciliation line')
+          }
+        } else if (warnings.some(entry => entry.startsWith('update.pointers-reconciled'))) {
+          throw new Error('the pointers were reconciled although the swap never ran')
+        }
+        return SWAPPED.has(phase) ? 'reconciled' : 'untouched'
+      })
       await step('the failed swap is not re-run', () => {
         if (lines(join(runtimeDirectory(dir), '2.0.0', 'started.txt')).length > 0) throw new Error('the new runtime started after the crash')
       })
+      await step('a second boot serves the reconciled version from the current pointer', async () => {
+        await supervisor.stop()
+        second = await serving(dir)
+        const status = second.versionStatus()
+        if (status?.version !== '1.0.0' || status.source !== 'current') throw new Error(`second boot started ${status?.version} from ${status?.source}`)
+        const snapshot = second.updateStatus()
+        if (snapshot.current?.version !== '1.0.0' || snapshot.previous !== null) throw new Error('the reconciled pointers did not persist')
+        if (lines(join(runtimeDirectory(dir), '2.0.0', 'started.txt')).length > 0) throw new Error('the uncommitted candidate started on the second boot')
+        return 'source=current version=1.0.0'
+      })
     })
   } finally {
+    await second?.stop().catch(() => {})
     await supervisor?.stop().catch(() => {})
   }
 }

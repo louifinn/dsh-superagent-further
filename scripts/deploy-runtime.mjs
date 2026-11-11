@@ -17,7 +17,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { databaseSchema, readDescriptorFile, runtimeDirectory, verifyDescriptor } from '../src/supervisor/versions.ts'
 import {
-  deployCommands, updateProcessingPath, updateRequestPath, updateSnapshot, writeUpdateRequest,
+  deployCommands, isUpdateRequestConflict, updateProcessingPath, updateRequestPath, updateSnapshot, writeUpdateRequest,
 } from '../src/supervisor/update-state.ts'
 import { stageRuntime } from './stage-runtime.mjs'
 
@@ -56,6 +56,17 @@ function idle(stateDir) {
   if (snapshot.pending !== null) throw new Error(`an update request is already pending (${snapshot.pending.id}); wait for the supervisor to claim it`)
   if (snapshot.busy || existsSync(updateProcessingPath(stateDir))) throw new Error('an update is already in progress; wait for the supervisor to finish before requesting another one')
   return snapshot
+}
+
+/** Write a request exclusively: another writer may have won the race between `idle()` and the create. */
+function submit(stateDir, request) {
+  try {
+    writeUpdateRequest(stateDir, request)
+  } catch (problem) {
+    if (isUpdateRequestConflict(problem)) throw new Error('an update request is already pending; wait for the supervisor to claim it')
+    throw problem
+  }
+  return request
 }
 
 /** The newest staged version by manifest modification time; an operator may still name one explicitly. */
@@ -99,7 +110,7 @@ export function applyCommand(flags) {
   const descriptor = staged(stateDir, version)
   if (snapshot.current?.version === descriptor.version) throw new Error(`version ${descriptor.version} is already running`)
   const request = { api: 1, id: randomUUID(), action: 'apply', version: descriptor.version, at: new Date().toISOString(), by: 'operator' }
-  writeUpdateRequest(stateDir, request)
+  submit(stateDir, request)
   return { requested: true, request, path: updateRequestPath(stateDir), deploy: deployCommands(stateDir) }
 }
 
@@ -108,7 +119,7 @@ export function rollbackCommand(flags) {
   const snapshot = idle(stateDir)
   if (!snapshot.rollback.eligible) throw new Error(snapshot.rollback.reason || 'there is no previous runtime to roll back to')
   const request = { api: 1, id: randomUUID(), action: 'rollback', at: new Date().toISOString(), by: 'operator' }
-  writeUpdateRequest(stateDir, request)
+  submit(stateDir, request)
   return { requested: true, request, path: updateRequestPath(stateDir), deploy: deployCommands(stateDir) }
 }
 

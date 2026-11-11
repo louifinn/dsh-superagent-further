@@ -28,12 +28,14 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    idempotent; a different bundle under an already-staged version is refused. The build's own `lib/runtime-manifest.json`
    is never rewritten.
 
-2. **The supervisor owns the swap; the operator only writes a request.** `apply` and `rollback` write one atomic
-   `{api:1, id, action:'apply'|'rollback', version?, at, by:'operator'}` file under `<stateDir>/updates/`. The
-   `UpdateEngine` polls with an unref'd 2 s timer while the supervisor runs, validates the request strictly, claims it by
-   renaming `request.json` to `request.processing.json`, and processes one request at a time. Status, watch and the
-   panel's rollback action read the same files; there is no request in memory that a crash would lose. The supervisor
-   keeps the state-directory lock for the whole update.
+2. **The supervisor owns the swap; the operator only writes a request.** `apply` and `rollback` create one
+   `{api:1, id, action:'apply'|'rollback', version?, at, by:'operator'}` file under `<stateDir>/updates/`
+   exclusively (`wx` + fsync), so a second writer that races the status check loses with `EEXIST` and is refused
+   instead of replacing the identifier that is already waiting; a torn file from a crash is quarantined as malformed,
+   never acted on. The `UpdateEngine` polls with an unref'd 2 s timer while the supervisor runs, validates the request
+   strictly, claims it by renaming `request.json` to `request.processing.json`, and processes one request at a time.
+   Status, watch and the panel's rollback action read the same files; there is no request in memory that a crash would
+   lose. The supervisor keeps the state-directory lock for the whole update.
 
 3. **The apply is a journaled, bounded state machine.** `prepare → stage → backup → drain → swap → load → init →
    commit`:
@@ -63,12 +65,21 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    downgrade, and `rollback` is offered only when the previous descriptor verifies and its schema is not older than the
    database. A database backup exists for crash recovery, not for resurrecting an older schema.
 
-6. **Crash semantics are split between the journal and the history.** `journal.json` remains the single source of truth
-   for what the supervisor was doing; `history.jsonl` is an append-only, bounded operator trail of completed or
-   interrupted outcomes (`applied`, `rolledback`, `failed`, `interrupted`, `rejected`). After a crash mid-update the next
-   start reads the running journal, prefers its recorded current when it still verifies, and the engine clears the stale
-   processing claim and appends an `interrupted` entry. It never re-runs the failed swap: the journal's `current` and the
-   pointers written before the crash already decide what starts.
+6. **Crash semantics are split between the journal and the history, and recovery reconciles the pointers.**
+   `journal.json` remains the single source of truth for what the supervisor was doing; `history.jsonl` is an
+   append-only, bounded operator trail of completed or interrupted outcomes (`applied`, `rolledback`, `failed`,
+   `interrupted`, `rejected`). After a crash mid-update the next start reads the running journal. A crash at `swap`,
+   `load`, `init` or `commit` is special: the swap writes both pointer files before the candidate is loaded, so
+   `current.json` may name a version that was never loaded, self-checked, drained-in or committed. Before resolving any
+   version the supervisor therefore reconciles both pointers from the journal's baseline — `current.json` from the
+   recorded current (removed when the journal records no current), `previous.json` from the recorded previous
+   (removed when it recorded `null`, left untouched when the record predates the field) — and logs
+   `update.pointers-reconciled phase=… current=… previous=…`. Only then does it resolve, preferring the journal's
+   recorded current when it still verifies. Without this, the *second* boot would have no running journal to lean on and
+   would silently start the uncommitted candidate from `current.json`, with no drain, backup, self-check, history entry
+   or journal record. A crash inside `commit`, after the candidate began serving in memory, still reconciles to the
+   baseline: serving was never durable, and the baseline is the only state the journal vouches for. The engine then
+   clears the stale processing claim and appends an `interrupted` entry; it never re-runs the failed swap.
 
 7. **The panel surface is read-only plus one confirmed write.** The runtime exposes `GET updates` (same-origin, reads the
    files) and `POST updates/rollback`, which requires the literal `confirm:'ROLLBACK'`, audits `updates.rollback`, and
@@ -114,3 +125,14 @@ added. An update is visible in the journal, the append-only history, the log rin
 rollback is one more request and swaps the same way. The operator can always fall back to the packaged runtime by
 stopping the host and removing `current.json`, and can exercise the whole path with `pnpm drill` against a throwaway
 state directory before touching production.
+
+`tests/update.spec.ts` covers the two-boot crash recovery at `swap` and `init` (the reconciled pointers, the recovered
+`versionStatus`, the uncommitted version never starting and `updateStatus()` reporting the recovered current/previous),
+backs up a database while another connection keeps WAL open, and drives a real `Runtime` through `drain('update')` and a
+replacement start on the same state directory. `scripts/drill.mjs` runs 15 scenarios, including a simulated crash at each
+of the eight journaled apply phases followed by a second boot that must serve the reconciled current pointer. The engine's
+apply loop itself is driven with interchangeable fake ESM bundles: serving the real built bundle through the engine
+in-process needs the built package and the live DSH host, so that one composition is exercised by the drill and by
+inspection of the shared `loadRuntime`/`DrainController` paths rather than by a unit test. That is the residual risk: a
+defect confined to the composition inside `UpdateEngine.run` that neither the fake bundles nor the real-runtime restart
+test would show.
