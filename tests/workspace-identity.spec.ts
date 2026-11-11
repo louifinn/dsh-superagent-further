@@ -1,5 +1,5 @@
 /**
- * The Orchestrator workspace is a first-class, mandatory identity (`docs/adr/0003-orchestrator-workspace.md`): the setup wizard
+ * The Orchestrator workspace is a first-class, mandatory identity (`docs/adr/0003-workspace-identity.md`): the setup wizard
  * cannot finish without one, startup is fail-closed until one is selected, and a workspace is never the plugin's state directory,
  * the DSH home or profile, the source checkout, or a project checkout. These tests pin the validation rules, the registration
  * protocol (explicit DSH title, canonical path), the legacy-session retirement order, and the fail-closed startup sequence.
@@ -11,16 +11,24 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { key } from '../src/core/ids.ts'
 import { packageRoot } from '../src/infra/paths.ts'
 import { KV } from '../src/kv.ts'
-import { startRuntime } from './fixtures/host.ts'
+import { startRuntime, type FakeAgent, type Host } from './fixtures/host.ts'
+import { fakeWorkspaces } from './fixtures/workspaces.ts'
 
-const cleanups: (() => void)[] = []
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
+const cleanups: (() => void | Promise<void>)[] = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
 /** A fresh temporary directory removed after the test. */
 function temporary(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix))
+  cleanups.push(() => rmSync(path, { recursive: true, force: true }))
+  return path
+}
+
+/** A workspace directory with the canonical spelling DSH stores, removed after the test. */
+function canonicalDirectory(prefix: string): string {
+  const path = realpathSync.native(temporary(prefix))
   cleanups.push(() => rmSync(path, { recursive: true, force: true }))
   return path
 }
@@ -184,6 +192,23 @@ describe('workspace registration and legacy retirement', () => {
       workspaceId: 'workspace', registry: registry as never, hasSession: async id => id === 'orchestrator-new' })).resolves.toEqual({ archived: [] })
     expect(registry.archiveSession).not.toHaveBeenCalled()
   })
+
+  test('resumes a workspace master only when it is archived and fails closed when DSH cannot unarchive it', async () => {
+    const { resumeWorkspaceMaster } = await workspaceRoot()
+    const calls: string[] = []
+    const registry = (archived: string[], fail = false) => ({
+      archivedSessionIds: archived,
+      unarchiveSession: vi.fn(async (id: string) => { calls.push(`unarchive:${id}`); if (fail) throw new Error('archive store unavailable') }),
+    })
+
+    await expect(resumeWorkspaceMaster({ desired: 'orchestrator-a', path: '/srv/agent-home', registry: registry([]) as never })).resolves.toBe(false)
+    await expect(resumeWorkspaceMaster({ desired: 'orchestrator-a', path: '/srv/agent-home', registry: registry(['orchestrator-a']) as never })).resolves.toBe(true)
+    expect(calls).toEqual(['unarchive:orchestrator-a'])
+
+    const problem = await rejection(async () => await resumeWorkspaceMaster({ desired: 'orchestrator-a', path: '/srv/agent-home',
+      registry: registry(['orchestrator-a'], true) as never }), 'workspaceUnsafe')
+    expect(problem.detail).toContain('could not be unarchived')
+  })
 })
 
 describe('fail-closed startup', () => {
@@ -193,7 +218,7 @@ describe('fail-closed startup', () => {
       const current = store.settings()
       store.saveSettings({ ...current, workspace: { path: '' } })
     })
-    cleanups.push(() => void host.stop())
+    cleanups.push(() => host.stop())
     return host
   }
 
@@ -205,7 +230,10 @@ describe('fail-closed startup', () => {
     expect(state.setup.problem.code).toBe('workspaceRequired')
     expect(state.setup.workspace).toBeNull()
     expect(state.health.runtime).toMatchObject({ state: 'paused', code: 'setupPending' })
-    expect(host.runtime.masterId).not.toBe('')
+    // The placeholder identity is derived from the state directory only to have something to show while paused: it is never
+    // published, registered with DSH, or turned into a Session, so it cannot become an agent cwd by accident.
+    expect(host.runtime.masterId).toBe(`orchestrator-${key(host.directory)}`)
+    expect(host.runtime.store.get(KV.runtime.masterId)).toBeUndefined()
     expect(host.registry.create).not.toHaveBeenCalled()
     expect(host.controller.create).not.toHaveBeenCalled()
   })
@@ -223,7 +251,7 @@ describe('fail-closed startup', () => {
         const current = store.settings()
         store.saveSettings({ ...current, workspace: { path } })
       })
-      cleanups.push(() => void host.stop())
+      cleanups.push(() => host.stop())
       const state = (await host.api('GET', 'state')).body as { setup: { problem: { code: string }; workspace: unknown }
         health: { runtime: Record<string, unknown> } }
       expect(state.setup.problem.code).toBe(code)
@@ -246,7 +274,7 @@ describe('fail-closed startup', () => {
 describe('workspace identity in a running host', () => {
   test('the master session lives in the user workspace, registered under its explicit DSH title', async () => {
     const host = await startRuntime()
-    cleanups.push(() => void host.stop())
+    cleanups.push(() => host.stop())
     const settings = host.runtime.store.settings()
 
     expect(settings.workspace.path).not.toBe('')
@@ -255,21 +283,26 @@ describe('workspace identity in a running host', () => {
     expect(host.controller.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: host.runtime.masterId, workspaceId: settings.workspace.path }))
   })
 
-  test('a stored legacy master id is replaced by the workspace-derived id without deleting the old session', async () => {
-    const host = await startRuntime(store => { store.set(KV.runtime.masterId, 'orchestrator-legacy') })
-    cleanups.push(() => void host.stop())
+  test('a stored legacy master id is replaced by the workspace-derived id without deleting or resuming the old session', async () => {
+    const host = await startRuntime(store => { store.set(KV.runtime.masterId, 'orchestrator-legacy') },
+      { existingSessions: ['orchestrator-legacy'] })
+    cleanups.push(() => host.stop())
     const settings = host.runtime.store.settings()
 
     expect(host.runtime.masterId).toBe(`orchestrator-${key(settings.workspace.path)}`)
     expect(host.runtime.store.get(KV.runtime.masterId)).toBe(host.runtime.masterId)
-    // The legacy registration of the state directory is retired, but no session is deleted: retirement only archives.
+    // The legacy master is retired only by archiving it, so it stays readable history and is never resumed.
+    expect(host.registry.archiveSession).toHaveBeenCalledWith('orchestrator-legacy', { stopActivity: true })
+    expect(host.workspaces.archived.has('orchestrator-legacy')).toBe(true)
+    expect(host.registry.unarchiveSession).not.toHaveBeenCalled()
+    // The only registration deleted is the state directory's legacy workspace; no Session is ever removed.
     expect(host.registry.delete).toHaveBeenCalled()
-    expect(host.registry.archiveSession.mock.calls.every(([, options]) => options === undefined || options.stopActivity === true)).toBe(true)
+    expect(host.registry.delete.mock.calls.every((call: unknown[]) => call[0] === host.directory)).toBe(true)
   })
 
   test('the panel exposes the workspace title in state and the workspace block in settings', async () => {
     const host = await startRuntime()
-    cleanups.push(() => void host.stop())
+    cleanups.push(() => host.stop())
     const settings = host.runtime.store.settings()
 
     const state = (await host.api('GET', 'state')).body as { setup: { workspace: unknown } }
@@ -281,7 +314,7 @@ describe('workspace identity in a running host', () => {
 
   test('the workspace settings block validates through the same rules and persists the canonical path', async () => {
     const host = await startRuntime()
-    cleanups.push(() => void host.stop())
+    cleanups.push(() => host.stop())
     const view = (await host.api('GET', 'settings')).body as { blocks: Record<string, { revision: number }> }
     const revision = view.blocks.workspace!.revision
 
@@ -295,6 +328,59 @@ describe('workspace identity in a running host', () => {
     expect(accepted.body).toMatchObject({ restarting: true })
     const saved = (await host.api('GET', 'settings')).body as { blocks: Record<string, { value: { path: string } }> }
     expect(saved.blocks.workspace!.value.path).toBe(join(realpathSync.native(root), 'agent-home'))
+  })
+})
+
+describe('workspace switch-back', () => {
+  test('switching A → B → A unarchives the workspace master before ensure and resumes it', async () => {
+    const directory = temporary('workspace-switch-state-')
+    const a = canonicalDirectory('workspace-switch-a-'), b = canonicalDirectory('workspace-switch-b-')
+    const workspaces = fakeWorkspaces(directory)
+    const agents = new Map<string, FakeAgent>()
+    const options = { directory, workspaces, agents, keep: true }
+    const hosts: Host[] = []
+    cleanups.push(async () => { for (const host of hosts.splice(0).reverse()) await host.stop() })
+
+    // First start: A becomes the workspace and its deterministic master id is created and published.
+    const first = await startRuntime(undefined, { ...options, workspace: a })
+    hosts.push(first)
+    const idA = first.runtime.masterId
+    expect(idA).toBe(`orchestrator-${key(a)}`)
+    expect(first.controller.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: idA, workspaceId: a }))
+    expect(first.runtime.store.get(KV.runtime.masterId)).toBe(idA)
+    await first.stop()
+
+    // Switching to B archives A's master with stopActivity, then creates and publishes B's own identity.
+    const second = await startRuntime(undefined, { ...options, workspace: b })
+    hosts.push(second)
+    const idB = second.runtime.masterId
+    expect(idB).toBe(`orchestrator-${key(b)}`)
+    expect(second.workspaces.calls).toContain(`archive:${idA}:true`)
+    expect([...second.workspaces.archived]).toEqual([idA])
+    expect(second.controller.create).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: idA }))
+    expect(second.runtime.store.get(KV.runtime.masterId)).toBe(idB)
+    expect(((await second.api('GET', 'state')).body as { health: { runtime: { state: string } } }).health.runtime.state).toBe('ready')
+    await second.stop()
+
+    // Switching back must unarchive A's master before resolving it; ensure then reuses it instead of creating one, and the
+    // archived Session no longer blocks every step, so startup is really ready.
+    const third = await startRuntime(undefined, { ...options, workspace: a })
+    hosts.push(third)
+    expect(third.runtime.masterId).toBe(idA)
+    expect(third.controller.create).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: idA }))
+    expect(third.workspaces.registry.unarchiveSession).toHaveBeenCalledWith(idA)
+    expect(third.workspaces.archived.has(idA)).toBe(false)
+    expect([...third.workspaces.archived]).toEqual([idB])
+    const unarchivedAt = third.workspaces.registry.unarchiveSession.mock.invocationCallOrder.at(-1)!
+    const ensured = third.controller.resolveAgent.mock.calls.findIndex(([id]) => id === idA)
+    expect(ensured).toBeGreaterThan(-1)
+    expect(third.controller.resolveAgent.mock.invocationCallOrder[ensured]!).toBeGreaterThan(unarchivedAt)
+    expect(third.runtime.store.get(KV.runtime.masterId)).toBe(idA)
+    expect(((await third.api('GET', 'state')).body as { health: { runtime: { state: string } } }).health.runtime.state).toBe('ready')
+    // No session is deleted: the one registration removed is the legacy state-directory workspace, and both workspaces remain.
+    expect(third.workspaces.calls.filter(call => call.startsWith('delete:'))).toEqual([`delete:${directory}`])
+    expect(third.workspaces.registered.has(a)).toBe(true)
+    expect(third.workspaces.registered.has(b)).toBe(true)
   })
 })
 
@@ -326,5 +412,8 @@ describe('startup-order guard', () => {
     expect(initialize.indexOf('this.setup.run(')).toBeLessThan(initialize.indexOf('this.sessions.ensure('))
     expect(initialize.indexOf('registerWorkspace(')).toBeGreaterThan(-1)
     expect(initialize.indexOf('registerWorkspace(')).toBeLessThan(initialize.indexOf('this.sessions.ensure('))
+    // A workspace selected again after a switch away must leave the archive before its Session is resolved.
+    expect(initialize.indexOf('resumeWorkspaceMaster(')).toBeGreaterThan(initialize.indexOf('this.setup.run('))
+    expect(initialize.indexOf('resumeWorkspaceMaster(')).toBeLessThan(initialize.indexOf('this.sessions.ensure('))
   })
 })

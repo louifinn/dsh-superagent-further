@@ -116,6 +116,16 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   (schema 23 is the cause backfill), the roadmap carries the current counts and a Sprint 36 checklist, and numbered docs
   may link to `docs/adr/*.md`.
 
+### Fixed
+
+- Selecting a previously used workspace after switching away no longer leaves the Orchestrator silently disabled. Switching
+  away archived that workspace's deterministic master Session, and DSH's archived-session gate then rejected every step
+  while startup still reported `ready`. Startup now unarchives the desired workspace-derived master before resolving it, so
+  the workspace resumes its own identity and conversation instead of resuming a dead Session; the legacy `stateDir`-derived
+  master stays archived and is never resumed, and an unarchive failure fails closed with `workspaceUnsafe` rather than
+  starting an orchestrator that cannot take a step. Covered by the A → B → A restart test in
+  `tests/workspace-identity.spec.ts`.
+
 ## [0.4.0] - 2026-11-10
 
 ### Added

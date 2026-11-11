@@ -369,7 +369,9 @@ export class Settings {
     const parsed = rules.parse(value, sources, id)
     const current = store.settings()
     // A workspace save is validated and canonicalized by the same rules startup enforces, so a stored path is always the
-    // canonical directory DSH registers and the master session derives its identity from.
+    // canonical directory DSH registers and the master session derives its identity from. Validation is a side effect:
+    // it may create and mark the directory before the no-op and final stale checks below, so an unchanged or rejected save
+    // can leave a prepared empty directory behind. That directory is harmless (nothing is registered or started from it).
     if (kind === 'workspace') (parsed as SettingsValue['workspace']).path = await this.host.setup.verifyWorkspace((parsed as SettingsValue['workspace']).path, current)
     const candidate = rules.merge(current, parsed, id)
     if (origin === 'tool') refuseToolFields(block, id, current, candidate, sources)

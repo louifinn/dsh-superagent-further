@@ -30,7 +30,7 @@ const WORKSPACE_PROBLEMS = {
   workspaceNotEmpty: ['execution',
     'The orchestrator workspace "{path}" is not empty and carries no dsh-superagent-further workspace marker. Choose an empty directory.'],
   workspaceUnsafe: ['execution',
-    'The orchestrator workspace "{path}" cannot be protected for its owner ({reason}).'],
+    'The orchestrator workspace "{path}" cannot be used safely ({reason}).'],
 } as const satisfies Record<WorkspaceCode, readonly [SetupPlace, string]>
 
 /**
@@ -191,6 +191,9 @@ export interface WorkspaceRegistryLike {
   resolveByPath(path: string): Promise<WorkspaceView | undefined>
   delete(id: string): Promise<boolean>
   archiveSession(sessionId: string, options?: { stopActivity?: boolean }): Promise<void>
+  /** The registry-global ids whose conversation is archived; DSH rejects every step of such a Session. */
+  readonly archivedSessionIds: readonly string[]
+  unarchiveSession(sessionId: string): Promise<void>
 }
 
 /**
@@ -231,6 +234,34 @@ export async function retireMaster(input: RetireInput): Promise<{ archived: stri
   const legacy = await input.registry.resolveByPath(input.stateDir)
   if (legacy !== undefined && legacy.id !== input.workspaceId) await input.registry.delete(legacy.id)
   return { archived }
+}
+
+export interface ResumeInput {
+  /** The workspace-derived master id this install must use (`orchestrator-<hash(workspaceDir)>`). */
+  desired: string
+  /** The prepared workspace path, for the problem the panel and startup report. */
+  path: string
+  registry: WorkspaceRegistryLike
+}
+/**
+ * Resume the master Session of a workspace that was used before and selected again. Switching away archives the previous
+ * workspace's master (`retireMaster`); DSH keeps an archived Session resolvable but its `ArchivedSessionGate` rejects every
+ * agent step, so the workspace-derived id must leave the archive before `Sessions.ensure` resolves it. Only the desired,
+ * workspace-derived id is resumed: an upgrade's legacy `stateDir`-derived master is never the desired id, stays archived
+ * and readable, and is never resumed. A failed unarchive fails closed with a workspace problem instead of starting an
+ * orchestrator that cannot take a step.
+ * @returns whether the desired Session was archived and is now resumed.
+ * @throws WorkspaceSetupError(`workspaceUnsafe`) when DSH cannot unarchive the Session.
+ */
+export async function resumeWorkspaceMaster(input: ResumeInput): Promise<boolean> {
+  if (!input.registry.archivedSessionIds.includes(input.desired)) return false
+  try {
+    await input.registry.unarchiveSession(input.desired)
+  } catch (error) {
+    throw new WorkspaceSetupError('workspaceUnsafe', { path: input.path,
+      reason: `its master Session ${input.desired} could not be unarchived: ${message(error)}` })
+  }
+  return true
 }
 
 function message(error: unknown): string {

@@ -53,7 +53,7 @@ import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
 import { SOURCE as SESSION_SOURCE, sessionDecisionText, sessionKind, sessionSubmitTool } from '../sources/session.ts'
 import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
-import { registerWorkspace, retireMaster, type WorkspaceRegistryLike } from './workspace-root.ts'
+import { registerWorkspace, resumeWorkspaceMaster, retireMaster, type WorkspaceRegistryLike } from './workspace-root.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
@@ -160,9 +160,11 @@ export class Runtime extends Service implements SourceHost {
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
-      // The master Session's identity is derived from the operator's workspace, never from the state directory. A stored id
-      // is used only while no workspace is selected yet (the host pauses in that state) or when a previous master exists;
-      // it is never published here, because startup publishes only after the workspace-derived session exists.
+      // The master Session's identity is derived from the operator's workspace, never from the state directory. When no
+      // workspace is selected the host pauses in that state, so the state-directory placeholder below is only a display
+      // value: it is never published to the database, registered with DSH, or turned into a Session. A stored id is used
+      // only while no workspace is selected yet or when a previous master exists; startup publishes only after the
+      // workspace-derived session exists.
       const storedMaster = store.get(KV.runtime.masterId)
       const workspacePath = store.settings().workspace.path
       const masterId = this.masterId = workspacePath === ''
@@ -480,6 +482,12 @@ export class Runtime extends Service implements SourceHost {
       hasSession: async id => !('error' in await this.ctx.sessionController.resolveAgent(id as SessionId)) })
       .catch((error: unknown) => { this.log.warn('dsh-superagent-further could not retire the previous master session: %s', String(error)); return { archived: [] } })
     if (retired.archived.length) this.log.warn('dsh-superagent-further archived the previous master Session: %s', retired.archived.join(', '))
+    // Selecting a workspace that was used before must resume its own master: switching away archived it, and DSH rejects
+    // every step of an archived Session. This happens before Sessions.ensure resolves the id, and only for the desired
+    // workspace-derived id — a legacy stateDir-derived master stays archived as history and is never resumed.
+    if (await resumeWorkspaceMaster({ desired: this.masterId, path: prepared.path, registry })) {
+      this.log.warn('dsh-superagent-further resumed the archived master Session of its workspace: %s', this.masterId)
+    }
     this.sessions.install()
     this.executor.install()
     try {
