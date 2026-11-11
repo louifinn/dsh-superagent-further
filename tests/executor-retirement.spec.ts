@@ -52,3 +52,17 @@ it('cancels a worker turn that outlives the retirement grace', async () => {
   await retired(h, ticket.id)
   expect(h.subagents.live(sessionId)).toBe(false)
 })
+
+it('retires under a host whose activation dispose() returns undefined instead of a Promise', async () => {
+  h = await startRuntime(undefined, { disposeReturnsVoid: true })
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
+  const agent = h.agents.get(sessionId)!
+  expect(await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'the answer' }))
+    .toMatchObject({ reported: true })
+  // The report call and the retirement both complete: the release of the activation resolves undefined
+  // without turning the stop into a TypeError.
+  agent.status = 'idle'
+  await retired(h, ticket.id)
+  expect(h.subagents.live(sessionId)).toBe(false)
+  expect(h.runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ by: 'executor', outcome: 'completed', cause: 'report' })
+})

@@ -134,6 +134,8 @@ export function jobRegistry(owner: (sessionId: string) => FakeAgent | undefined 
 export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   open?: (id: string, parent: string) => Promise<void>
   deliver?: (id: string, content: unknown) => void
+  /** DSH's own subagent service resolves dispose() to undefined instead of a Promise; mimic that host seam. */
+  disposeReturnsVoid?: boolean
 } = {}) {
   const children = new Map<string, { parent: string; delivery: 'parent' | 'caller'; preset: string; live: boolean; settled: PromiseWithResolvers<unknown> }>()
   const closed = new Set<string>()
@@ -178,13 +180,15 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
       // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
       // has no turn to cancel, which is what the Executor's graceful retirement relies on. The child's inbox is the Session's,
       // so an in-process restart keeps it for the next Assignment.
-      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => {
+      const release = async () => {
         const child = children.get(id)
         if (!child?.live) return
         const agent = agents.get(id)
         if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: true })
         child.live = false
-      } }
+      }
+      return { childId: id, result: children.get(id)!.settled.promise,
+        dispose: options.disposeReturnsVoid === true ? () => { void release() } : release }
     }),
     // The Lead's message reaches the child, which this fake records as a follow-up step.
     sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, content: unknown[]) => {
@@ -227,6 +231,8 @@ export interface HostOptions {
   existingSessions?: readonly string[]
   /** Keep the state and workspace directories on `stop()`, so a test can start again on the same state. */
   keep?: boolean
+  /** DSH's own subagent service resolves activation dispose() to undefined instead of a Promise; run under that host seam. */
+  disposeReturnsVoid?: boolean
 }
 
 /** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored. */
@@ -364,6 +370,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     },
     deliver: (id, content) => (agents.get(id) as unknown as { followup(message: unknown): void } | undefined)
       ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }),
+    ...(options.disposeReturnsVoid === true ? { disposeReturnsVoid: true } : {}),
   })
   // DSH's permission presets, spied so a test can observe a Session put under read-only (ADR-0005).
   const permissionPresets = { set: vi.fn((_session: unknown, _preset: string) => {}) }

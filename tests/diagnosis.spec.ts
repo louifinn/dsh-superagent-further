@@ -45,6 +45,8 @@ function harness(options: {
   startDelayMs?: number
   startFails?: boolean
   subagents?: boolean
+  /** The host's activation dispose() resolves undefined instead of a Promise, as DSH's own subagent service does. */
+  disposeReturnsVoid?: boolean
   /** Hold every `SelfReports.raise` until `releaseRaise()`, so a test can overlap a route with an operator action. */
   slowRaise?: boolean
 } = {}) {
@@ -74,7 +76,9 @@ function harness(options: {
     startActivation: vi.fn(async (spec: ActivationSpec): Promise<Activation> => {
       if (failed.start) throw new Error('the host refused the child')
       const result = Promise.withResolvers<unknown>()
-      const dispose = vi.fn(async () => { result.resolve(undefined) })
+      const settle = () => { result.resolve(undefined) }
+      const settleDispose = options.disposeReturnsVoid === true ? vi.fn(() => { settle() }) : vi.fn(async () => { settle() })
+      const dispose = settleDispose as unknown as Activation['dispose'] & Mock
       starts.push({ spec, resolve: result.resolve, dispose })
       // A slow start keeps the dispatch promise pending past the deadline, so the service must abort it and dispose the
       // late activation itself.
@@ -179,6 +183,20 @@ describe('diagnosis dispatch', () => {
     expect(JSON.parse(result.incident.diagnosis!)).toMatchObject({ rootCause: document().rootCause, confidence: 'high', parsed: true })
     expect(h.health.value?.state).toBe('ready')
     expect(h.logs.list({ scope: 'diagnosis' }).some(entry => entry.message.includes(incident.id))).toBe(true)
+  })
+
+  it('still finishes the diagnosis when the host activation dispose() returns undefined instead of a Promise', async () => {
+    const h = harness({ disposeReturnsVoid: true })
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document())
+    const result = await pending
+    // Releasing the activation must not turn a finished diagnosis into a TypeError failure.
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    expect(result.incident.status).toBe('diagnosed')
+    expect(h.starts[0]!.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('keeps an unparseable answer as the record\'s low-confidence diagnosis instead of failing the run', async () => {

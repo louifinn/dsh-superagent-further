@@ -1,4 +1,4 @@
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Fiber } from '@deepseek-ai/cordis'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -2437,4 +2437,46 @@ it('reports the drain phases in contract order and returns the first report on a
   expect(first.phases.every(phase => phase.status === 'done')).toBe(true)
   expect(first.completed).toBe(true)
   expect(await runtime.stop()).toBe(first)
+})
+
+it('completes every drain phase when the host dispose() resolves undefined instead of a Promise', async () => {
+  // The DSH host's injected scopes resolve dispose() to undefined while this fixture's cordis returns a Promise, so
+  // wrap every effect disposer the way that host does before the Runtime is built: the session tool scope and every
+  // decorated agent's skill scope then release without a Promise to catch.
+  const effect = Fiber.prototype.effect as unknown as (this: Fiber, execute: () => unknown, label?: string) => () => unknown
+  const hostDispose = vi.spyOn(Fiber.prototype, 'effect').mockImplementation(function (this: Fiber, execute: () => unknown, label?: string) {
+    const disposer = effect.call(this, execute, label)
+    return () => { void disposer() }
+  } as never)
+  await restart()
+  await runtime.ready
+  const report = await runtime.stop()
+  expect(hostDispose).toHaveBeenCalled()
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'done'], ['dispose', 'done'],
+    ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
+  ])
+  expect(report.completed).toBe(true)
+  expect(runtime.logs.list({ level: 'warn' }).filter(entry =>
+    entry.message.includes('drain disposer') || entry.message.includes('could not release'))).toEqual([])
+})
+
+it('isolates one failing disposer during drain, still unproviding and flushing, and names it in the warning', async () => {
+  const flushed = vi.mocked((services.sessionPersistence as { flush: () => Promise<void> }).flush)
+  const disposers = (runtime as unknown as { disposers: { name: string; dispose: () => void }[] }).disposers
+  // The disposers run newest first, so the broken one throws before the later registration still runs.
+  let ranAfter = false
+  disposers.push({ name: 'a later registration', dispose: () => { ranAfter = true } })
+  disposers.push({ name: 'the broken registration', dispose: () => { throw new Error('the registration broke') } })
+  const report = await runtime.stop()
+  expect(ranAfter).toBe(true)
+  expect(flushed).toHaveBeenCalledTimes(1)
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'done'], ['dispose', 'done'],
+    ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
+  ])
+  expect(report.completed).toBe(true)
+  const warning = runtime.logs.list({ level: 'warn' }).find(entry => entry.message.includes('drain disposer'))
+  expect(warning?.message).toContain('the broken registration')
+  expect(warning?.message).toContain('the registration broke')
 })

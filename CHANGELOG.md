@@ -8,6 +8,19 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The context-surface design document `docs/015-context-surfaces.md` (Issue #6, roadmap Sprint 45).
+  It records the structural fix for the three context-management defects that share one root cause —
+  a role's model-facing surface is modeled four times (prompt assembly, resource visibility, surface
+  inventory, budget) in incompatible shapes that nothing forces to agree: one declarative
+  `Record<RoleId, Surface>` contract (`sections`, `tools`, `reads`, `runtimes`, `projection`,
+  `budget`), projection as one pure function behind four property-tested invariants (completeness,
+  readable closure, boundedness, determinism), budgets as generated artefacts behind the `docs:check`
+  drift gate with structured reasons, one paged read path whose visibility lattice
+  (`reviewer ⊑ worker ⊑ lead ⊑ orchestrator`, scopes `ticket ⊑ project ⊑ installation`) replaces the
+  two-level `executor` flag, and the six-step behaviour-preserving migration whose golden snapshots
+  at zero diff are the rollback guarantee. Design only; implementation follows as the Sprint 45
+  ordinary tickets.
+
 - Staged runtime updates with a supervisor-owned swap and safe rollback (ADR-0007, schema 25 unchanged, RuntimeHost API 1
   unchanged). `scripts/stage-runtime.mjs` validates a built `lib/runtime-entry.js` + `lib/runtime-manifest.json` (shape,
   version, host API, integer schema, entry name, SHA-256) and copies them into `<stateDir>/runtime/<version>/` through a
@@ -372,6 +385,18 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   agent cwd and DSH workspace. Only the `..` parent entry itself or a path beginning with `..` plus the separator is now
   treated as outside, so every descendant of the state directory, the DSH home/profile/session store, the checkout and
   the project checkouts is rejected. Covered by `tests/workspace-identity.spec.ts`.
+- Drain no longer warns on every stop that `dispose` failed with `Cannot read properties of undefined (reading 'catch')`.
+  The DSH host's own scopes and activations may resolve `dispose()` to `undefined` instead of a Promise, and every
+  `.dispose().catch(...)` call site read `.catch` off that `undefined` — the session submission tool's scope and each
+  Session's skill scope failed the drain `dispose` phase (`drain phase dispose failed`) and the Session release warned
+  `could not release what it registered for a Session`, five times in the 2026-11-11 host log. Every site
+  (`src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/diagnosis.ts`, `src/executor/dsh.ts`,
+  `src/executor/lead-dispatch.ts`) now wraps the call in `Promise.resolve(...)`, so drain reports `completed=true` again.
+  The drain disposer loop also isolates each registration behind its own `try`/`catch` with a warning that names the
+  registration, so one failing disposer can no longer skip the later disposers, the `orchestrator` unprovide or the
+  session-persistence flush. Covered by `tests/runtime.spec.ts` (a host whose scopes resolve `dispose()` to `undefined`
+  still finishes every drain phase, and a broken registration is isolated and named), `tests/lead-dispatch.spec.ts`,
+  `tests/diagnosis.spec.ts` and `tests/executor-retirement.spec.ts`.
 
 ## [0.4.0] - 2026-11-10
 

@@ -510,7 +510,7 @@ export class DshExecutor implements Executor {
       const idle = await until(agent.whenIdle(), this.host.lifetime, RETIRE_GRACE_MS)
       if (idle === false) { agent.cancel({ kind: 'user' }, { keepInbox: false }); cancelled = true }
     }
-    if (activation) await activation.dispose().catch(() => {})
+    if (activation) await Promise.resolve(activation.dispose()).catch(() => {})
     await stopBackground(this.host.context, sessionId, reason).catch(() => {})
     this.host.log.info('assignment.retired ticket=%s cancelled=%s', ticketId, String(cancelled))
   }
@@ -518,7 +518,7 @@ export class DshExecutor implements Executor {
   private stopWork(ticketId: string, reason: string, keepInbox = false): void {
     // A Lead-hosted executor is stopped by disposing its activation, which ends the child and its descendants.
     const activation = this.leads.take(workerSessionId(ticketId))
-    if (activation) this.track(ticketId, activation.dispose().catch(() => {}))
+    if (activation) this.track(ticketId, Promise.resolve(activation.dispose()).catch(() => {}))
     this.track(ticketId, stopBackground(this.host.context, workerSessionId(ticketId), reason, keepInbox))
   }
   /** A stop of a ticket's background work, which a launch or a delivery of the ticket waits for while it runs. */
@@ -797,7 +797,7 @@ export class DshExecutor implements Executor {
       // the rest of the Executor (prompt, tools, panel links) finds the child by the same id.
       const activation = await this.leads.start(executorActivation({ childId: sessionId, title: ticket.title, cwd: workspace,
         text, lead, signal: this.host.lifetime, preset: WORKER_PRESET }))
-      if (!current()) { void activation.dispose().catch(() => {}); return }
+      if (!current()) { void Promise.resolve(activation.dispose()).catch(() => {}); return }
       // The dispatch is recorded against the Lead and marked delivered once its child runs, so the panel's waiting count and
       // the Lead's message history describe the same dispatch.
       const dispatch = this.host.store.leads.send({ project: project.id, kind: 'assignment', from: 'orchestrator',

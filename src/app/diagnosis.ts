@@ -235,7 +235,7 @@ export class Diagnosis {
         // The start itself outlived the budget: abort it, and dispose the activation if it still arrives later so the
         // child Session is never left unobserved (ADR-0005 §5).
         controller.abort()
-        void start.then(late => { void late.dispose().catch(() => undefined) }, () => undefined)
+        void start.then(late => { void Promise.resolve(late.dispose()).catch(() => undefined) }, () => undefined)
         return this.timeout(incident.id)
       }
       activation = started
@@ -243,39 +243,39 @@ export class Diagnosis {
       if (child !== undefined) this.host.readOnly(child)
       let answer: unknown
       try { answer = await bounded(activation.result, controller.signal, deadline - Date.now()) } catch (error) {
-        void activation.dispose().catch(() => undefined)
+        void Promise.resolve(activation.dispose()).catch(() => undefined)
         return this.failed(incident.id, error)
       }
-      if (answer === TIMED_OUT) { void activation.dispose().catch(() => undefined); return this.timeout(incident.id) }
+      if (answer === TIMED_OUT) { void Promise.resolve(activation.dispose()).catch(() => undefined); return this.timeout(incident.id) }
       const text = answerText(answer)
-      if (text === undefined || text.trim() === '') { void activation.dispose().catch(() => undefined)
+      if (text === undefined || text.trim() === '') { void Promise.resolve(activation.dispose()).catch(() => undefined)
         return this.failed(incident.id, 'the diagnosis returned no text') }
       const diagnosis = readDiagnosis(text)
       // Compare-and-swap (ADR-0005 §5): reread the live record, merge only the diagnosis, and refuse if a dismissal,
       // resolution or repeat changed the row while the child ran. The newer state always wins.
       const current = this.host.store.incidents.get(incident.id)
       if (current === undefined) {
-        void activation.dispose().catch(() => undefined)
+        void Promise.resolve(activation.dispose()).catch(() => undefined)
         return this.stale(incident.id, 'the record no longer exists')
       }
       if ((current.status !== 'bundled' && current.status !== 'detected') || current.updated_at !== incident.updated_at) {
-        void activation.dispose().catch(() => undefined)
+        void Promise.resolve(activation.dispose()).catch(() => undefined)
         return this.stale(incident.id, `status=${current.status} updated_at=${current.updated_at}`)
       }
       const updated = transitionIncident(current, 'diagnosed', this.now().toISOString(), { diagnosis: JSON.stringify(diagnosis) })
       if (!this.host.store.incidents.swap(updated, { status: incident.status, updated_at: incident.updated_at })) {
-        void activation.dispose().catch(() => undefined)
+        void Promise.resolve(activation.dispose()).catch(() => undefined)
         return this.stale(incident.id, 'the record changed during the write')
       }
       this.host.health?.set({ state: 'ready', detail: 'Incident diagnosis is ready', at: this.now().toISOString() })
       this.host.logs.record('info', DIAGNOSIS_SCOPE, `diagnosis.diagnosed id=${incident.id} confidence=${diagnosis.confidence} target=${diagnosis.target.kind}`)
       const routed = await this.route(incident.id)
       const stored = this.host.store.incidents.get(incident.id) ?? updated
-      void activation.dispose().catch(() => undefined)
+      void Promise.resolve(activation.dispose()).catch(() => undefined)
       return { status: 'diagnosed', incident: routed.status === 'routed' ? routed.incident : stored, diagnosis,
         ...(routed.status === 'routed' ? { resolution: routed.resolution } : {}) }
     } catch (error) {
-      void activation?.dispose().catch(() => undefined)
+      void Promise.resolve(activation?.dispose()).catch(() => undefined)
       return this.failed(incident.id, error)
     } finally {
       this.host.lifetime.removeEventListener('abort', lifetime)
