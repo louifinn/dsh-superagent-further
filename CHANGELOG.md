@@ -34,11 +34,18 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   non-empty parsed diagnosis, then a non-empty `incident.resolution`: a registered project becomes a
   discovery Request (`engine.raiseDiscoveryRequest`, discovery Mandate, units naming the project) that the Lead turns
   into Tickets under the normal PR and human-merge flow (`request:<id>`); a `self` finding or an unregistered
-  repository goes through `SelfReports.raise` with its three-state `eval.selfReport` gate, dedupe, cap and
-  jurisdiction refusal (`self-report:<id>` or `self-report:off`; a registered self repository falls back to a Request);
-  an operational or none conclusion creates no Request and no Issue (`operational`). Reopening a record keeps the old
-  diagnosis text but clears the resolution, and the status check refuses to route that stale text. A failed automatic
-  route leaves the resolution empty so the operator can retry with `confirm: true`. `POST incidents/<id>/dismiss`
+  repository becomes a Request under the registered self project when there is one (`request:<id>`), and otherwise
+  goes through `SelfReports.raise` with its three-state `eval.selfReport` gate, dedupe, cap and jurisdiction refusal
+  (`self-report:<id>` or `self-report:off`) — the Issue outlet refuses jurisdiction while the self repository is
+  registered, so that case must take the Request path; an operational or none conclusion creates no Request and no
+  Issue (`operational`). A route is single-flight per record while it awaits the work item, so an overlapping
+  automatic, panel, HTTP or tool call is refused as `concurrent` (HTTP 409) and creates nothing; settlement is a
+  compare-and-swap on the status and `updated_at` captured at route start, so a dismissal, recovery or repeat that
+  lands during the await is refused as `conflict` (HTTP 409), the newer record and its reason survive, and work
+  already created is named in one `diagnosis.route-conflict` warning but is neither recorded as the resolution nor
+  deleted. Reopening a record keeps the old diagnosis text but clears the resolution, and the status check refuses to
+  route that stale text. A failed automatic route leaves the resolution empty so the operator can retry with
+  `confirm: true`. `POST incidents/<id>/dismiss`
   requires a reason and records `Dismissed: <reason>`, rendered through the localized dismissal key; the diagnose
   response and its audit carry the auto-created `resolution` token. The panel's Incidents detail gains Diagnose,
   Create fix (confirmed) and Dismiss actions with pending and error states and links to the created Request or
@@ -47,10 +54,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   `orchestrator_incident` (`list|get|diagnose|dismiss|route`) exposes the same services to the main Session with typed
   refusals and a filtered list total. Covered by
   `tests/diagnosis.spec.ts` (dispatch, gates, durable budget and restart, single-flight, parse fallback, start-overrun
-  abort and late disposal, stale dismissals and repeat counts, routing and dismissal),
+  abort and late disposal, stale dismissals and repeat counts, routing including the registered-self-project fallback,
+  route single-flight and settle conflict, dismissal),
   `tests/diagnosis-runtime.spec.ts` (no model call in detection, event-path scope exclusion, preset delivery and
-  read-only permission, same-origin routes with metadata-only audit including the created resolution, code 400/404/409,
-  reopened-record route refusal, filtered list total, manual route retry, the tool),
+  read-only permission, same-origin routes with metadata-only audit including the created resolution, 400/404/409
+  including the `concurrent`/`conflict` route refusals, reopened-record route refusal, filtered list total, manual
+  route retry, the tool),
   `tests/incidents.spec.ts` (the compare-and-swap store and filtered count), `tests/bundle-patch.spec.ts`
   (the preset inventory), `tests/panel-incidents.spec.tsx` (the actions, the localized dismissal and the Overview deep
   link) and the extended HTTP, tool, view, locale and settings specs, with docs 005, 006, 007, 009, 011, 013 and 014

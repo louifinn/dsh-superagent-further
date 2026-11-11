@@ -45,6 +45,8 @@ function harness(options: {
   startDelayMs?: number
   startFails?: boolean
   subagents?: boolean
+  /** Hold every `SelfReports.raise` until `releaseRaise()`, so a test can overlap a route with an operator action. */
+  slowRaise?: boolean
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'diagnosis-'))
   const workspace = join(directory, 'workspace')
@@ -90,11 +92,14 @@ function harness(options: {
   const raises: { title: string; evidence: string; reproduction: string; session: string }[] = []
   let nextReport = 0
   let raisesFail = 0
+  const raiseWaiters: (() => void)[] = []
   const selfReports = { raise: vi.fn(async (input: { title: string; evidence: string; reproduction: string; session: string }) => {
     raises.push(input)
+    if (options.slowRaise === true) await new Promise<void>(resolve => { raiseWaiters.push(resolve) })
     if (raisesFail > 0) { raisesFail--; throw new UserError('selfReportJurisdiction', { repository: SELF_REPOSITORY }) }
     return { status: 'draft', report: { id: `sr-${++nextReport}` }, reason: 'observe' } as never
   }) } as unknown as DiagnosisHost['selfReports']
+  const releaseRaise = (): void => { for (const resolve of raiseWaiters.splice(0)) resolve() }
   const readOnly = vi.fn((_agent: Agent) => {})
   const parent = { id: 'master-1' } as unknown as Agent
   const health: { value: Health | undefined } = { value: { state: 'ready', detail: 'Incident detection is ready', at: '' } }
@@ -118,7 +123,7 @@ function harness(options: {
   const diagnosis = new Diagnosis(host)
   const restart = () => new Diagnosis(host)
   return { store, incidents, diagnosis, restart, logs, clock, workspace, directory, service, starts, requests, raises, readOnly, health,
-    parent, save, failure: (times = 1) => { raisesFail = times } }
+    parent, save, releaseRaise, failure: (times = 1) => { raisesFail = times } }
 }
 
 const candidate = (overrides: Partial<IncidentCandidate> = {}): IncidentCandidate => ({ rule: 'outbox-failures', severity: 'high',
@@ -466,6 +471,23 @@ describe('routing a diagnosis through the self-evolution outlets', () => {
     expect(result.incident.resolution).toBe('self-report:sr-1')
   })
 
+  it('routes an unregistered project target to the registered self project instead of a jurisdiction-refused self report', async () => {
+    const project: Project = { id: 'self', name: 'Self', workspace: join(tmpdir(), 'self'), repository: SELF_REPOSITORY, branch: '' }
+    const h = harness({ projects: [project] })
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document({ target: { kind: 'project', project: 'acme/not-registered' } }))
+    const result = await pending
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    // A self-report would refuse jurisdiction here; the registered self project carries the discovery Request instead.
+    expect(h.raises).toHaveLength(0)
+    expect(h.requests).toHaveLength(1)
+    expect(h.requests[0]!.units[0]!.project).toBe('self')
+    expect(result.incident.resolution).toBe('request:req-1')
+  })
+
   it('keeps an operational diagnosis on the record and creates neither a Request nor an Issue', async () => {
     const h = harness()
     const incident = h.incidents.record(candidate())!
@@ -532,6 +554,76 @@ describe('routing a diagnosis through the self-evolution outlets', () => {
     await pending
     expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'notRoutable' })
     expect(await h.diagnosis.route('nope', { manual: true })).toEqual({ status: 'refused', reason: 'unknown' })
+  })
+})
+
+describe('route concurrency and settlement', () => {
+  it('refuses a second overlapping route as concurrent and creates at most one work item', async () => {
+    const h = harness({ slowRaise: true })
+    // The automatic route fails once, leaving a diagnosed record with no resolution to retry by hand.
+    h.failure(1)
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document({ target: { kind: 'self' } }))
+    await vi.waitFor(() => expect(h.raises).toHaveLength(1))
+    h.releaseRaise()
+    const result = await pending
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    expect(result.incident.resolution).toBeUndefined()
+
+    // The manual route blocks inside SelfReports.raise; a second call for the same record is refused and creates nothing.
+    const first = h.diagnosis.route(incident.id, { manual: true })
+    await vi.waitFor(() => expect(h.raises).toHaveLength(2))
+    expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'concurrent' })
+    h.releaseRaise()
+    expect(await first).toMatchObject({ status: 'routed', resolution: 'self-report:sr-1' })
+    expect(h.raises).toHaveLength(2)
+    expect(h.store.incidents.get(incident.id)!.resolution).toBe('self-report:sr-1')
+  })
+
+  it('lets a dismissal during a slow resolve win: the route is refused as conflict and the reason survives', async () => {
+    const h = harness({ slowRaise: true })
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document({ target: { kind: 'self' } }))
+    await vi.waitFor(() => expect(h.raises).toHaveLength(1))
+    h.incidents.dismiss(incident.id, 'duplicate of a known outage')
+    h.releaseRaise()
+    const result = await pending
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    expect(result.incident.status).toBe('dismissed')
+    expect(result.incident.resolution).toBe('Dismissed: duplicate of a known outage')
+    const stored = h.store.incidents.get(incident.id)!
+    expect(stored.status).toBe('dismissed')
+    expect(stored.resolution).toBe('Dismissed: duplicate of a known outage')
+    // The draft was already created before the compare-and-swap failed; it is logged, never recorded as the resolution.
+    expect(h.raises).toHaveLength(1)
+    const conflict = h.logs.list({ scope: 'diagnosis' }).find(entry => entry.message.includes('diagnosis.route-conflict'))
+    expect(conflict?.level).toBe('warn')
+    expect(conflict?.message).toContain('created=self-report:sr-1')
+  })
+
+  it('releases the route reservation after a refusal, a failure and a success', async () => {
+    const h = harness()
+    const incident = h.incidents.record(candidate())!
+    // A refusal on an undiagnosed record releases the reservation before the diagnosis starts.
+    expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'notDiagnosed' })
+    h.failure(1)
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    answer(h, 0, document({ target: { kind: 'self' } }))
+    const result = await pending
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    expect(result.incident.resolution).toBeUndefined()
+    // The failed automatic route (a thrown resolve) released the reservation, so a manual retry succeeds.
+    expect(await h.diagnosis.route(incident.id, { manual: true })).toMatchObject({ status: 'routed', resolution: 'self-report:sr-1' })
+    // A success releases it too: the next call is the idempotence refusal, not stuck behind a stale reservation.
+    expect(await h.diagnosis.route(incident.id, { manual: true })).toEqual({ status: 'refused', reason: 'alreadyRouted' })
   })
 })
 

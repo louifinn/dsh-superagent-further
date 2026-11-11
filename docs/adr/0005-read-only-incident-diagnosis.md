@@ -86,12 +86,25 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
      `engine.raiseDiscoveryRequest({title, instruction, units:[{project}]})` with the discovery Mandate basis and
      reason `discoveryFinding`; the Lead turns it into Tickets and the normal PR and human-merge flow applies. The
      resolution is `request:<id>`.
-   - `self`, or a `project` target that is not registered → `SelfReports.raise`, which keeps its own three-state
-     `eval.selfReport` gate (`off` drafts nothing, `observe` keeps a draft, `auto` files within its dedupe and daily
-     cap) and its jurisdiction refusal. When the fixed self repository *is* a registered project, the route falls back
-     to a discovery Request under that project. The resolution is `self-report:<id>` or `self-report:off`.
+   - `project` that is not registered → a discovery Request under the fixed self repository when that repository is a
+     registered project (`request:<id>`); otherwise `SelfReports.raise`.
+   - `self` → a discovery Request under the registered self project when there is one (`request:<id>`); otherwise
+     `SelfReports.raise`, which keeps its own three-state `eval.selfReport` gate (`off` drafts nothing, `observe`
+     keeps a draft, `auto` files within its dedupe and daily cap) and its jurisdiction refusal. The resolution is
+     `self-report:<id>` or `self-report:off`. The fallback matters: `SelfReports` refuses jurisdiction while the self
+     repository is registered, so calling it there would leave the record unrouted forever.
    - `operational` or `none` → **no Request and no Issue**: the diagnosis stays on the record and is surfaced in the
      panel and the Overview "needs you" row. The resolution is `operational`.
+   Routing is single-flight per incident: `Diagnosis` holds an in-memory reservation across the whole await that
+   creates the work item, so an automatic route, an HTTP `POST incidents/:id/route` or an `orchestrator_incident`
+   route that overlaps the first one is refused as `concurrent` (HTTP 409) and creates nothing. Settlement is a
+   compare-and-swap on the status and `updated_at` captured when the route started, requiring the record to still be
+   `diagnosed`, carry the same stamp and have no resolution: if a dismissal, recovery or repeat detection lands
+   during the await, the save is refused as `conflict` (HTTP 409), one `diagnosis.route-conflict` warn line names the
+   work id already created when there is one, and the newer record — including its dismissal or recovery reason —
+   survives. Created work is never recorded as the resolution of a record that changed, and it is never deleted. The
+   reservation is released on every path (unknown, wrong status, unroutable target, already routed, failure, success),
+   so a later manual retry of a failed route still succeeds.
    A failed automatic route leaves the resolution empty, logs one `warn` line in scope `diagnosis`, and lets a person
    retry it from the panel or the tool. A person-triggered route requires `confirm: true`.
 

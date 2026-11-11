@@ -163,6 +163,20 @@ it('retries a failed automatic route from the confirmation route, audited with t
   } finally { await h.stop() }
 })
 
+it('maps a concurrent or conflicted route refusal to 409 and hands the typed result to the tool', async () => {
+  const h = await startRuntime(incidents())
+  try {
+    const incident = h.runtime.incidents.record(candidate())!
+    const route = vi.spyOn(h.runtime.diagnosis, 'route')
+    route.mockResolvedValue({ status: 'refused', reason: 'concurrent' })
+    expect((await h.api('POST', `incidents/${incident.id}/route`, { confirm: true })).status).toBe(409)
+    expect(await h.runTool(h.runtime.masterId, 'orchestrator_incident', { action: 'route', id: incident.id, confirm: true }))
+      .toEqual({ status: 'refused', reason: 'concurrent' })
+    route.mockResolvedValue({ status: 'refused', reason: 'conflict' })
+    expect((await h.api('POST', `incidents/${incident.id}/route`, { confirm: true })).status).toBe(409)
+  } finally { await h.stop() }
+})
+
 it('exposes list, get, diagnose, dismiss and route as orchestrator_incident with typed refusals', async () => {
   const h = await startRuntime(incidents())
   try {

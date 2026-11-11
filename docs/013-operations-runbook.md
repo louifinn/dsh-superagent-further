@@ -68,11 +68,19 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   `{"confirm": true}`) routes a current diagnosed record with a parsed diagnosis once; reopening a record keeps the
   old diagnosis text but clears the token, so routing it is refused until it is diagnosed again. A registered project
   becomes a discovery Request — the Lead turns it into Tickets and the normal PR and human-merge flow applies — and the
-  detail links to it (`request:<id>`). A finding about this installation goes to the self-evolution outlet as a draft
-  or an Issue depending on the `eval.selfReport` gate (`self-report:<id>`, or `self-report:off` when the gate is off).
-  An operational conclusion creates no Request and no Issue; it stays on the record (`operational`). If an automatic
-  route failed the resolution is empty and the button retries it. A failed route logs one warning in the `diagnosis`
-  scope and never creates a second route for the same record.
+  detail links to it (`request:<id>`). A `self` finding, or a `project` that is not registered, becomes a discovery
+  Request under the registered self project when there is one (`request:<id>`); otherwise it goes to the
+  self-evolution outlet as a draft or an Issue depending on the `eval.selfReport` gate (`self-report:<id>`, or
+  `self-report:off` when the gate is off). The Issue outlet refuses jurisdiction while the self repository is
+  registered, which is exactly why that case takes the Request path instead. An operational conclusion creates no
+  Request and no Issue; it stays on the record (`operational`). One route runs at a time per record: an overlapping
+  automatic, panel, HTTP or tool call is refused as `concurrent` (HTTP 409) and creates nothing. If the record is
+  dismissed, resolved or counted again while the route awaits the work item, settlement is refused as `conflict`
+  (HTTP 409): the newer record and its dismissal or recovery reason survive, and any work already created is named in
+  one `diagnosis.route-conflict` warning, never recorded as the resolution and never deleted. If an automatic route
+  failed the resolution is empty and the button retries it; the reservation is released afterwards, so the retry is
+  never blocked. A failed route logs one warning in the `diagnosis` scope and never creates a second route for the
+  same record.
 - **Dismiss and audit**: **Dismiss** requires a reason and records `Dismissed: <reason>` on the record; the detail
   shows the reason through the localized dismissal key, and a second dismissal is refused. Diagnose, Create fix and
   Dismiss are audited in the Logs tab under `audit` with the action (`incident.diagnose`, `incident.route`,

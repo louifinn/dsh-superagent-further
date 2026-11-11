@@ -45,7 +45,8 @@ export type DiagnoseResult =
     /** The routing outcome of this run (`request:<id>`, `self-report:<id>`, `operational`), when it created one. */
     resolution?: string }
   | DiagnoseRefused
-export type RouteRefusal = 'unknown' | 'notDiagnosed' | 'notRoutable' | 'alreadyRouted' | 'failed'
+/** `concurrent` means another route already holds this record; `conflict` means an operator action won the settle. */
+export type RouteRefusal = 'unknown' | 'notDiagnosed' | 'notRoutable' | 'alreadyRouted' | 'concurrent' | 'conflict' | 'failed'
 export type RouteResult =
   | { status: 'routed'; incident: Incident; resolution: string }
   | { status: 'refused'; reason: RouteRefusal }
@@ -137,7 +138,9 @@ function dayKey(at: Date): string { return at.toISOString().slice(0, 10) }
 
 /**
  * The bounded diagnosis dispatcher (ADR-0005). `consider` is the detector's entry point and never throws; `diagnose`
- * is the operator's and returns a value; `route` is idempotent per incident through `incident.resolution`.
+ * is the operator's and returns a value. `route` is idempotent per incident through `incident.resolution`, single-flight
+ * per incident while it awaits a work item, and settle compares-and-swaps so a dismissal or recovery that lands during
+ * that await is never overwritten (ADR-0005 §7).
  */
 export class Diagnosis {
   private readonly now: () => Date
@@ -145,6 +148,8 @@ export class Diagnosis {
   /** The incident whose diagnosis is running; DSH's subagent dispatch is serialized by ADR-0005. */
   private active: string | undefined
   private busy: Promise<unknown> | undefined
+  /** Records whose route is currently awaiting a work item; a second overlapping route is refused, never duplicated. */
+  private readonly routing = new Set<string>()
   constructor(private readonly host: DiagnosisHost) {
     this.now = host.now ?? (() => new Date())
     this.timeoutMs = host.timeoutMs ?? DIAGNOSIS_TIMEOUT_MS
@@ -303,37 +308,69 @@ export class Diagnosis {
   /**
    * Routes one diagnosed record through the existing self-evolution outlets, at most once: `incident.resolution` is the
    * guard. A registered project (or the self repository when a project registers it) raises a discovery Request that the
-   * Lead turns into Tickets; anything else about this repository's own code becomes a self-report; an operational
-   * conclusion creates neither. Operational failures are caught so an operator can retry.
+   * Lead turns into Tickets; a finding about this repository's own code becomes a self-report when the self repository is
+   * not registered; an operational conclusion creates neither. The await path holds a per-incident reservation, and
+   * settlement is a compare-and-swap, so overlapping calls create at most one work item and a dismissal/recovery that
+   * lands meanwhile wins.
    */
   async route(id: string, options: { manual?: boolean } = {}): Promise<RouteResult> {
+    if (this.routing.has(id)) return { status: 'refused', reason: 'concurrent' }
+    this.routing.add(id)
+    try {
+      return await this.routeOnce(id, options)
+    } finally {
+      this.routing.delete(id)
+    }
+  }
+
+  private async routeOnce(id: string, options: { manual?: boolean }): Promise<RouteResult> {
     const incident = this.host.store.incidents.get(id)
     if (incident === undefined) return { status: 'refused', reason: 'unknown' }
+    // The compare-and-swap snapshot for every settlement on this route: a newer write during `resolve` wins.
+    const expected = { status: incident.status, updated_at: incident.updated_at }
     // Only a diagnosed record may create work (ADR-0005 §7). Reopening a dismissed record keeps its old diagnosis for a
     // person to read but clears the resolution, so the status guard is what stops that stale text from routing again.
     if (incident.status !== 'diagnosed') return { status: 'refused', reason: 'notDiagnosed' }
     const diagnosis = parseIncidentDiagnosis(incident.diagnosis)
     // An unreadable answer names no target: the automatic route records that as operational, while a person asking to
     // create work explicitly is told there is nowhere to route it.
-    if (diagnosis === null) return options.manual === true ? { status: 'refused', reason: 'notDiagnosed' } : this.settle(incident, 'operational')
-    if (diagnosis.target.kind === 'none') return options.manual === true ? { status: 'refused', reason: 'notRoutable' } : this.settle(incident, 'operational')
+    if (diagnosis === null) return options.manual === true ? { status: 'refused', reason: 'notDiagnosed' } : this.settle(incident, 'operational', expected)
+    if (diagnosis.target.kind === 'none') return options.manual === true ? { status: 'refused', reason: 'notRoutable' } : this.settle(incident, 'operational', expected)
     if (incident.resolution !== undefined && incident.resolution !== '') return { status: 'refused', reason: 'alreadyRouted' }
     try {
       const resolution = await this.resolve(incident, diagnosis)
-      return this.settle(incident, resolution)
+      return this.settle(incident, resolution, expected)
     } catch (error) {
       this.host.logs.record('warn', DIAGNOSIS_SCOPE, `diagnosis.route-failed id=${id} reason=${short(error)}`)
       return { status: 'refused', reason: 'failed' }
     }
   }
 
-  /** Stores one routing outcome, which is also the guard that keeps an incident from routing twice. */
-  private settle(incident: Incident, resolution: string): RouteResult {
-    const current = this.host.store.incidents.get(incident.id) ?? incident
+  /**
+   * Stores one routing outcome, which is also the guard that keeps an incident from routing twice. The save is a
+   * compare-and-swap on the status and `updated_at` captured when the route started: a dismissal, recovery or repeat that
+   * landed during `resolve` is newer state and must survive. Work already created before the swap lost is logged (with
+   * the resolution id when there is one) so it stays observable; it is never recorded on the record or deleted.
+   */
+  private settle(incident: Incident, resolution: string, expected: Pick<Incident, 'status' | 'updated_at'>): RouteResult {
+    const current = this.host.store.incidents.get(incident.id)
+    if (current === undefined || current.status !== 'diagnosed' || current.updated_at !== expected.updated_at
+      || (current.resolution !== undefined && current.resolution !== '')) {
+      this.conflict(incident.id, resolution, current)
+      return { status: 'refused', reason: 'conflict' }
+    }
     const updated: Incident = { ...current, resolution, updated_at: this.now().toISOString() }
-    this.host.store.incidents.save(updated)
+    if (!this.host.store.incidents.swap(updated, expected)) {
+      this.conflict(incident.id, resolution, this.host.store.incidents.get(incident.id))
+      return { status: 'refused', reason: 'conflict' }
+    }
     this.host.logs.record('info', DIAGNOSIS_SCOPE, `diagnosis.routed id=${incident.id} resolution=${resolution}`)
     return { status: 'routed', incident: updated, resolution }
+  }
+
+  private conflict(id: string, created: string, current: Incident | undefined): void {
+    this.host.logs.record('warn', DIAGNOSIS_SCOPE,
+      `diagnosis.route-conflict id=${id} created=${created} status=${current?.status ?? 'missing'}`)
   }
 
   /** The one routing decision: a destination id for a Request, or `operational` for a conclusion with no work item. */
@@ -341,7 +378,10 @@ export class Diagnosis {
     if (diagnosis.target.kind === 'project') {
       const project = this.projectFor(diagnosis.target) ?? this.namedProject(diagnosis)
       if (project !== undefined) return `request:${this.raiseRequest(incident, diagnosis, project.id).id}`
-      // A defect in a repository this installation does not manage is reported about this repository instead.
+      // A defect in a repository this installation does not manage becomes work on this repository: the Issue outlet
+      // refuses jurisdiction exactly when a project registers the self repository, so that case uses the Request outlet.
+      const self = this.selfProject()
+      if (self !== undefined) return `request:${this.raiseRequest(incident, diagnosis, self.id).id}`
       return this.raiseSelfReport(incident, diagnosis)
     }
     if (diagnosis.target.kind === 'self') {
