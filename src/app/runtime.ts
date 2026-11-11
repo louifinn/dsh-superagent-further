@@ -477,6 +477,9 @@ export class Runtime extends Service implements SourceHost {
     const registry = this.ctx.workspaceRegistry as unknown as WorkspaceRegistryLike
     const workspace = await registerWorkspace(registry, prepared)
     const storedMaster = this.store.get(KV.runtime.masterId)
+    // Retiring a previous master is best-effort history hygiene, never a startup gate (docs/011 Part L): an archive or delete
+    // failure keeps the old Session and its registration intact and readable, logs a warning, and lets startup continue. The
+    // legacy registration's delete runs again on the next start; failing the host over history that already exists would be worse.
     const retired = await retireMaster({ desired: this.masterId, stored: storedMaster, stateDir: this.machine.stateDir,
       workspaceId: workspace.id, registry,
       hasSession: async id => !('error' in await this.ctx.sessionController.resolveAgent(id as SessionId)) })

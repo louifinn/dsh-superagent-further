@@ -18,7 +18,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   `workspaceNotWritable` or `workspaceUnsafe`, and startup stays `paused`/`setupPending` with no workspace registration, no
   master Session, no Source polling and no Executor. An upgrade archives the old master Session with `stopActivity`, deletes
   the legacy `stateDir` DSH workspace registration without deleting a Session, creates the new master Session in the selected
-  workspace and publishes the new id in one `store.atomic` write. The setup wizard's workspace step is mandatory — skip,
+  workspace and publishes the new id in one `store.atomic` write; retiring the previous master is best-effort, so an archive
+  or delete failure is logged as a warning, leaves the old Session and registration intact and readable, and startup still
+  reaches `ready`. The setup wizard's workspace step is mandatory — skip,
   close and finish are inert until a workspace is saved, and `PUT wizard` refuses a skip — the Execution settings page shows
   the titled workspace card, and `GET state`/`GET settings` expose `setup.workspace` and `blocks.workspace`.
   `docs/adr/0003-workspace-identity.md` records the decision. Covered by `tests/workspace-identity.spec.ts` and the extended

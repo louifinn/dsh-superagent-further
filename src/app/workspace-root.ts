@@ -229,6 +229,9 @@ export interface RetireInput {
  * registration is deleted, and no session is ever removed: the old conversation stays readable as history while the new
  * workspace-derived session, with a new id, has no conversation continuity. The caller publishes the new master id only
  * after creating that session, so a crash between the steps replays the same idempotent retirement on the next start.
+ * A failure propagates to the caller, which treats retirement as best-effort history hygiene rather than a startup gate:
+ * it logs a warning and continues, leaving the old Session and registration intact and readable; the legacy registration's
+ * delete runs again on the next start.
  */
 export async function retireMaster(input: RetireInput): Promise<{ archived: string[] }> {
   const archived: string[] = []

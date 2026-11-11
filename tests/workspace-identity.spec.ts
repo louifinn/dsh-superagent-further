@@ -328,6 +328,39 @@ describe('workspace identity in a running host', () => {
     expect(host.registry.delete.mock.calls.every((call: unknown[]) => call[0] === host.directory)).toBe(true)
   })
 
+  test('a failed retirement is logged as a warning and startup still reaches ready with a new master Session', async () => {
+    const directory = temporary('workspace-retire-state-')
+    const workspaces = fakeWorkspaces(directory)
+    // The archive the migration wants to perform fails; DSH keeps the old Session resolvable, so retirement really runs.
+    workspaces.registry.archiveSession.mockRejectedValue(new Error('archive store unavailable'))
+    const host = await startRuntime(store => { store.set(KV.runtime.masterId, 'orchestrator-legacy') },
+      { directory, workspaces, existingSessions: ['orchestrator-legacy'] })
+    cleanups.push(() => host.stop())
+
+    // The failure is not silent: the bounded log ring (which the panel's Logs page reads) carries the warning.
+    const logs = (await host.api('GET', 'logs?level=warn&scope=host')).body as { entries: { level: string; message: string }[] }
+    const warning = logs.entries.find(entry => entry.message.includes('could not retire the previous master session'))
+    expect(warning?.level).toBe('warn')
+    expect(warning?.message).toContain('archive store unavailable')
+
+    // Retirement is best-effort history hygiene, not a startup gate: the runtime reaches ready, registers the workspace and
+    // ensures and publishes the new workspace-derived master Session.
+    expect(((await host.api('GET', 'state')).body as { health: { runtime: { state: string } } }).health.runtime.state).toBe('ready')
+    const settings = host.runtime.store.settings()
+    expect(host.registry.create).toHaveBeenCalledWith(settings.workspace.path,
+      `dsh-superagent-further · ${settings.workspace.path.split(/[\\/]/).at(-1)}`)
+    expect(host.controller.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: host.runtime.masterId,
+      workspaceId: settings.workspace.path }))
+    expect(host.runtime.store.get(KV.runtime.masterId)).toBe(host.runtime.masterId)
+
+    // A failed retirement loses nothing: the old Session stays resolvable and unarchived, and the legacy state-directory
+    // registration is still registered, because archiving runs before the registration is deleted.
+    expect(host.workspaces.archived.has('orchestrator-legacy')).toBe(false)
+    expect(await host.resolveDefault('orchestrator-legacy')).toHaveProperty('agent')
+    expect(host.registry.delete).not.toHaveBeenCalled()
+    expect(host.workspaces.registered.has(directory)).toBe(true)
+  })
+
   test('the panel exposes the workspace title in state and the workspace block in settings', async () => {
     const host = await startRuntime()
     cleanups.push(() => host.stop())
