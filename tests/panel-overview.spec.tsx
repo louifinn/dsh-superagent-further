@@ -296,3 +296,25 @@ it('lists open escalations and automations needing attention as work for a perso
   expect(text()).toContain(zh.automationAttentionTitle)
   expect(text()).toContain('The Host task is missing')
 })
+
+it('shows observe-mode self report drafts and approves or dismisses them from the overview', async () => {
+  server.selfReports = [
+    { id: 'srep-1', title: 'Watcher crashes after a failed poll', target_repo: 'louifinn/dsh-superagent-further',
+      evidence: 'The watcher exits with ENOENT after one failed poll.', createdAt: '2026-11-10T00:00:00.000Z' },
+    { id: 'srep-2', title: 'Label refresh misses a closed pull request', target_repo: 'louifinn/dsh-superagent-further',
+      evidence: 'Labels stay stale after a pull request closes.', createdAt: '2026-11-10T01:00:00.000Z' }]
+  server.selfReportsBlocked = true
+  await mount()
+  expect(text()).toContain(zh.selfReportsTitle)
+  const row = document.querySelector<HTMLElement>('[data-self-report="srep-1"]')!
+  expect(row.textContent).toContain('Watcher crashes after a failed poll')
+  expect(row.textContent).toContain('louifinn/dsh-superagent-further')
+  expect(row.textContent).toContain('ENOENT')
+  expect(row.textContent).toContain(zh.selfReportBlocked)
+  await click([...row.querySelectorAll('button')].find(button => button.textContent === zh.selfReportApprove)!)
+  expect(server.selfReports.map(item => item.id)).toEqual(['srep-2'])
+  await click([...document.querySelector('[data-self-report="srep-2"]')!.querySelectorAll('button')]
+    .find(button => button.textContent === zh.selfReportDismiss)!)
+  expect(server.selfReports).toEqual([])
+  expect(text()).not.toContain(zh.selfReportsTitle)
+})

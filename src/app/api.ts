@@ -79,6 +79,10 @@ export interface Api {
   /** Decide one escalated project request from the Overview; its mandatory reply reaches the Lead. */
   'POST escalations/:id/decide': { body: { decision: 'accept' | 'reject' | 'needs-info'; reply: string
     ; units?: { project: string; title?: string; after?: number[] }[]; deliverable?: 'change' | 'answer' }; response: EscalationDecisionResult }
+  /** Approve one draft self report from the Overview: file it within the outlet's limits, or link the Issue that already tracks it. */
+  'POST self-reports/:id/approve': { response: { status: 'filed' | 'linked'; report_id: string; issue_number: number } }
+  /** Dismiss one draft self report from the Overview without filing it. */
+  'POST self-reports/:id/dismiss': { response: { status: 'dismissed'; id: string } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

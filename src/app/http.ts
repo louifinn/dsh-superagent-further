@@ -26,6 +26,7 @@ import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import type { LeadRow, DeliveryFailure } from './views/overview.ts'
+import type { SelfReports } from './self-reports.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
@@ -58,6 +59,8 @@ export interface HttpHost {
   deliveryFailures(): readonly DeliveryFailure[]
   /** The plugin's automation tasks; absent when the Host's `schedule` service is not installed. */
   readonly automations?: Automations
+  /** The self-evolution Issue outlet: drafts for the Overview, and the approve/dismiss actions. */
+  readonly selfReports: SelfReports
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -243,7 +246,7 @@ function routes(runtime: HttpHost): Routes {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
       executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.leadOverview(),
-      runtime.deliveryFailures()),
+      runtime.deliveryFailures(), runtime.selfReports.drafts()),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
@@ -357,6 +360,19 @@ function routes(runtime: HttpHost): Routes {
       const result = await runtime.decideEscalation({ ...input, id: params.id })
       audit('escalation.decide', { request: params.id, decision: input.decision, units: input.units?.length ?? 0 })
       return result
+    },
+    // The self-evolution outlet's two review actions (docs/014 D5): only a draft is approvable or dismissable, and filing
+    // reuses the outlet's own deduplication, daily cap and label rules rather than a second HTTP path for them.
+    'POST self-reports/:id/approve': async ({ params }) => {
+      const result = await runtime.selfReports.approve(params.id)
+      if (result.status !== 'filed' && result.status !== 'linked') throw new RouteError(409, 'Self report could not be filed')
+      audit('self-report.approve', { report: result.report.id, issue: result.issue_number, status: result.status })
+      return { status: result.status, report_id: result.report.id, issue_number: result.issue_number }
+    },
+    'POST self-reports/:id/dismiss': ({ params }) => {
+      const report = runtime.selfReports.dismiss(params.id)
+      audit('self-report.dismiss', { report: report.id })
+      return { status: 'dismissed', id: report.id }
     },
     'POST memory/forget': async ({ body }) => {
       const { id } = z.object({ id: z.string().min(1) }).parse(await body())

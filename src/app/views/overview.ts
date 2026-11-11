@@ -1,5 +1,6 @@
 /** Overview view: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow. */
-import { projectRequestOpen, reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
+import { filedSelfReportsToday, projectRequestOpen, reasonText, ticketStage, SELF_REPORT_DAILY_LIMIT, type Decision, type SelfReport, type Thread }
+  from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
@@ -16,6 +17,8 @@ export interface LeadRow { project: string; name: string; session: string; statu
 export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
 /** One file delivery `Runtime.sendFile` could not complete: what was sent where, the Source's reason, and when. */
 export interface DeliveryFailure { path: string; chat: string; reason: string; at: string }
+/** One observe-mode self report awaiting a person: its title, target repository, evidence preview and age (docs/014 D5). */
+export interface SelfReportRow { id: string; title: string; target_repo: string; evidence: string; createdAt: string }
 import { preview } from './text.ts'
 
 /** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
@@ -48,7 +51,9 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   /** One row per registered project, so the panel can show each Lead and what it holds. */
   leads: LeadRow[] = [],
   /** Recent failed file deliveries, newest last, each shown as a problem with the Source's own reason. */
-  deliveries: readonly DeliveryFailure[] = []) {
+  deliveries: readonly DeliveryFailure[] = [],
+  /** The self-evolution outlet's drafts; only drafts need a person, filed Issues live in the remote repository. */
+  selfReports: readonly SelfReport[] = []) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -113,6 +118,10 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     requests: openRequests,
     escalations,
     automationAttention: { count: automationAttention.length, items: automationAttention.slice(0, 5) },
+    selfReports: selfReports.filter(report => report.status === 'draft').map((report): SelfReportRow => ({ id: report.id,
+      title: report.title, target_repo: report.target_repo, evidence: preview(report.evidence), createdAt: report.created_at })),
+    /** True when today's daily cap is reached, so the panel says why approving will keep a draft instead of filing it. */
+    selfReportsBlocked: filedSelfReportsToday(store.selfReports.list('filed'), now).length >= SELF_REPORT_DAILY_LIMIT,
   }
 }
 export type OverviewView = ReturnType<typeof overview>

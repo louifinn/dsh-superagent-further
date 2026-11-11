@@ -154,7 +154,7 @@ tool with origin `'tool'` (`src/app/tools/main.ts:285-301`), and the tool's enum
 | Block | Fields | Agent tool today | Guard today | First effect | Restart? |
 |---|---|---|---|---|---|
 | `policy` | `rules[]`, `sources{}` | yes | none | next pass; a new Policy version and per-Ticket effects (`src/app/settings.ts:200-206`; restart decision at `:196`) | no |
-| `eval` | `mode`, `timeoutSeconds`, `model` | yes | none | `mode`: next assessment; `timeoutSeconds`: next eval; `model`: next Session only | no |
+| `eval` | `mode`, `selfReport`, `timeoutSeconds`, `model` | yes | none | `mode`: next assessment; `selfReport`: next Issue tool call (off records nothing, observe drafts, auto files within the dedupe and three-a-day limits); `timeoutSeconds`: next eval; `model`: next Session only | no |
 | `executor` | `model`, `maxWorkers`, `projectWorkers`, `directory`, `prepare`, `blockedCommands`, `projects`, `worktreeKeepDays` | yes | changing `directory`, `prepare`, `blockedCommands`, `projects` from a non-panel origin is refused with `panelOnlyEnvironment` (`src/app/settings.ts:24-25`, `:46`) | caps and keep-days on the next pass; `blockedCommands` rewrites the command shims in the same save (`:207-210`); `model` on the next Session only | no |
 | `memory` | `enabled`, `inject`, `autoWrite`, `pinnedLimit`, `recentLimit`, `promptChars`, `retentionDays` | no | any change is refused with `panelOnlyMemory` (`src/app/settings.ts:52-54`) | next model request through the runtime-context snapshot (`src/app/sessions.ts:309-315`) | no |
 | `language` | `default` | no | any change is refused with `panelOnlyLanguage` (`:60-62`) | next model request through the runtime-context snapshot (`src/app/sessions.ts:316-322`) | no |
@@ -167,6 +167,14 @@ Two block fields deserve their own sentence:
   inferred strength unless the mode is `auto`, and `policy.ts:196` turns an existing proactive
   Ticket into not-proactive when the mode leaves `auto`. It is part of the Policy version hash
   (`src/policy.ts:152-154`). An Agent that can set this field can widen its own proactive authority.
+- `eval.selfReport` decides what the self-evolution Issue outlet does with a finding: `off`
+  records nothing, `observe` (the default) records a draft a person approves in Overview, and
+  `auto` files an Issue through the existing `gh` command path. The outlet's target repository is
+  the fixed `SELF_REPOSITORY` constant, not a setting, and the tool refuses when that repository
+  is registered as a project, naming the discovery Request route instead. Filing is bounded by the
+  open-Issue and 14-day deduplication, the three-a-day cap, the content rules that refuse Feishu
+  content, credentials and private local paths, and labels that must already exist. The field is
+  tier B, so a Session proposes it and the operator confirms it.
 - `eval.model` and `executor.model` are not hot. `initializeRoleModel` only seeds the model onto a
   brand-new Session and leaves later selections intact (`src/app/role-models.ts:14-17`), and the
   plugin calls it only at Session creation (`src/app/sessions.ts:179`). Changing a model is a
@@ -195,7 +203,7 @@ dangerous one (the `executor` block is the obvious case).
 | Tier | Meaning | Fields |
 |---|---|---|
 | **A — direct** | the Agent saves it now, audited; bounded, reversible, and it changes no authority and no execution environment | `pause`; `eval.timeoutSeconds`; `executor.worktreeKeepDays`; Source `pollSeconds`, `failuresBeforeError`, `observeIssues`, `observePulls`, `observeComments`, `observeCi`, `readPageSize`, `linkTimeoutMs`, `digestHour` |
-| **B — confirmation** | needs the operator's explicit approval in the panel; the Agent writes a *proposal*, never the value | `eval.mode`, `eval.model`; `executor.model`, `executor.maxWorkers`, `executor.projectWorkers`; every `policy.rules` and `policy.sources` change; every `memory.*` field; `language.default`; Source `enabled`, the chat membership lists (`chats[]`), `directMessages`, `otherChats` and `digestChat` |
+| **B — confirmation** | needs the operator's explicit approval in the panel; the Agent writes a *proposal*, never the value | `eval.mode`, `eval.selfReport`, `eval.model`; `executor.model`, `executor.maxWorkers`, `executor.projectWorkers`; every `policy.rules` and `policy.sources` change; every `memory.*` field; `language.default`; Source `enabled`, the chat membership lists (`chats[]`), `directMessages`, `otherChats` and `digestChat` |
 | **C — panel only** | never accepted from an Agent, not even as a proposal | `executor.directory`, `executor.prepare`, `executor.blockedCommands`, `executor.projects`; `github.repository`, `github.cli`, `feishu.cli`; anything that triggers a restart |
 
 Rationale:

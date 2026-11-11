@@ -40,6 +40,15 @@ export interface InstallationRequestInput {
   deliverable?: Deliverable
 }
 
+/** What the main Session asks when its own discovery of a problem in superagent itself becomes work (docs/014 D2, schema 24). */
+export interface DiscoveryRequestInput {
+  title: string
+  instruction: string
+  /** One Ticket per unit, in order; every unit names a registered project. */
+  units: DeliveryUnit[]
+  deliverable?: Deliverable
+}
+
 /** What the Orchestrator records when it disposes a project Lead's escalated request (docs/012 D13). */
 export interface EscalationDecisionInput {
   /** One Ticket per unit, in order; every unit names a registered project. */
@@ -246,12 +255,7 @@ export class Engine {
       }
       const automation = input.automation.trim()
       if (!automation) throw new ProjectRequestError('emptyText')
-      const units = input.units.slice(0, 8).map((unit): DeliveryUnit => {
-        const project = unit.project?.trim()
-        if (!project) throw new Error('Every installation request unit needs a registered project')
-        return { project, ...unit.title?.trim() ? { title: unit.title.trim() } : {}, ...unit.after?.length ? { after: unit.after } : {} }
-      })
-      if (!units.length) throw new Error('An installation request needs at least one delivery unit')
+      const units = this.requestUnits(input.units)
       const existing = this.repo.requests.list().find(request => !request.ended && request.title === title
         && request.mandate.basis.via === 'installation' && request.mandate.basis.automation === automation)
       if (existing) return existing
@@ -266,10 +270,65 @@ export class Engine {
       }
       const outcome: Extract<AssessmentOutcome, { kind: 'accept' }> = {
         kind: 'accept', title, scope: instruction, reason: 'installationAutomation',
+        name: this.requestWorktreeName(title, 'installation-request'),
         deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
       }
       return this.tickets.createLead(decisionId, mandate, outcome, at)
     })
+  }
+  /**
+   * Turn the main Session's own discovery of a problem in superagent itself into work (docs/014 D2, schema 24): one
+   * rootless Request with its delivery units' Tickets, under a discovery Mandate. No Source message and no automation
+   * asked for it, so the basis records only `discovery` and revalidates like an installation accept. A repeated raise for
+   * the same title while the first Request is open returns it instead of creating a second one.
+   * @throws ProjectRequestError when the title or instruction is empty or too long, or a unit names no project.
+   */
+  raiseDiscoveryRequest(input: DiscoveryRequestInput): Request {
+    return this.repo.atomic(() => {
+      const title = input.title.trim(), instruction = input.instruction.trim()
+      if (!title || !instruction) throw new ProjectRequestError('emptyText')
+      if (title.length > PROJECT_REQUEST_TITLE_LIMIT || instruction.length > PROJECT_REQUEST_INSTRUCTION_LIMIT) {
+        throw new ProjectRequestError('tooLong')
+      }
+      const units = this.requestUnits(input.units)
+      const existing = this.repo.requests.list().find(request => !request.ended && request.title === title
+        && request.mandate.basis.via === 'discovery')
+      if (existing) return existing
+      const at = this.now()
+      const decisionId = key('discovery-request', title, at)
+      const mandate: Mandate = {
+        strength: 'explicit',
+        policyVersion: this.options.policy().version,
+        basis: { via: 'discovery' },
+        actor: { source: 'dsh-superagent', id: 'discovery' },
+        scope: instruction,
+      }
+      const outcome: Extract<AssessmentOutcome, { kind: 'accept' }> = {
+        kind: 'accept', title, scope: instruction, reason: 'discoveryFinding',
+        name: this.requestWorktreeName(title, 'discovery-request'),
+        deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
+      }
+      return this.tickets.createLead(decisionId, mandate, outcome, at)
+    })
+  }
+  /**
+   * A worktree-safe short name for Tickets an internal request creates: no assessor chose one, so the title supplies it.
+   * Chinese or digit-led titles fall back to a stable English name.
+   */
+  private requestWorktreeName(title: string, fallback: string): string {
+    const words = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').filter(Boolean).slice(0, 4)
+    const slug = words.join('-').slice(0, 32).replace(/-+$/g, '')
+    return /^[a-z]+(?:-[a-z0-9]+){0,3}$/.test(slug) ? slug : fallback
+  }
+  /** The trimmed delivery units of an internal request: at most eight, in order, every unit naming a project. */
+  private requestUnits(units: DeliveryUnit[]): DeliveryUnit[] {
+    const request = units.slice(0, 8).map((unit): DeliveryUnit => {
+      const project = unit.project?.trim()
+      if (!project) throw new Error('Every installation request unit needs a registered project')
+      return { project, ...unit.title?.trim() ? { title: unit.title.trim() } : {}, ...unit.after?.length ? { after: unit.after } : {} }
+    })
+    if (!request.length) throw new Error('An installation request needs at least one delivery unit')
+    return request
   }
   /**
    * Record a project Lead's escalation of work that does not belong to its own project (docs/012 D13): a pending
@@ -741,7 +800,7 @@ export type EngineForLeadApprovals = Pick<Engine, 'planProjectRequest' | 'reques
 export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'
-  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest'
+  | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest' | 'raiseDiscoveryRequest'
   | 'listEscalations' | 'decideEscalation'>
 /** What people ask of the Engine, through the panel or the main Session. */
 export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>

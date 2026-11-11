@@ -229,3 +229,19 @@ it('shows the GitHub Source\'s switches for what it receives across the reposito
   expect(field('Default branch CI · Not on the list · no mention')).toBeTruthy()
   expect(all('.dt-admission thead th').map(cell => cell.textContent)).toContain(en.admissionAddressed)
 })
+
+it('sets the self report filing gate beside the accept mode and saves it in the Eval block', async () => {
+  await mount()
+  await click(tab(zh['tab.settings']))
+  await click(find(zh['term.eval'], '.dt-settings-link'))
+  const gate = document.querySelector<HTMLElement>(`[role="tablist"][aria-label="${zh.selfReportMode}"]`)!
+  expect(gate).toBeTruthy()
+  // Observe is the default and says what it does; choosing auto explains that Issues file directly within the limits.
+  expect(text()).toContain(zh['selfReportOption.observe'])
+  await click([...gate.querySelectorAll('button')].find(button => button.textContent === zh['selfReport.auto'])!)
+  expect(text()).toContain(zh['selfReportOption.auto'])
+  await click(zh.save)
+  expect(server.settings.eval.selfReport).toBe('auto')
+  expect(server.requests.some(request => request.path === 'settings/eval'
+    && (request.body as { value: { selfReport?: string } }).value.selfReport === 'auto')).toBe(true)
+})

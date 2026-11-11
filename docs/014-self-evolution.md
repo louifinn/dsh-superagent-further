@@ -151,14 +151,15 @@ gates. Documentation lands with its phase, not in a batch at the end.
 - **Phase 1 — discovery layer (prompts only, no code).** The three prompt sections and the skill text;
   `tests/prompts.spec.ts` pins them. Live proof: one real Ticket records one real superagent finding in flight
   and it becomes a self-fix Ticket through the existing `request_create` or escalation path.
-- **Phase 2 — the Issue outlet and the discovery provenance.** Schema 24 `self_report`, the
+- **Phase 2 — the Issue outlet and the discovery provenance (shipped).** Schema 24 `self_report`, the
   `orchestrator_issue_create` tool (jurisdiction refusal, gate, dedup, rate limit, content rules), the
   discovery provenance on `orchestrator_request_create`, the Eval self-report mode, the Overview draft rows.
   Live proof: a real draft in `observe`, approved and filed as a marked test Issue on
-  `louifinn/dsh-superagent-further`, then closed; the jurisdiction refusal covered by tests.
-- **Phase 3 — scheduled self-inspection.** The switch, the built-in automation's ensure/remove/reconcile and
-  the instruction template. Live proof: toggling works and one `automation_run` inspection routes its findings
-  correctly.
+  `louifinn/dsh-superagent-further`, then closed; the jurisdiction refusal covered by tests. The code and
+  docs shipped here; opening and closing the marked live Issue is the operator's acceptance step.
+- **Phase 3 — scheduled self-inspection (remaining, not in this phase).** The switch, the built-in automation's
+  ensure/remove/reconcile and the instruction template. Live proof: toggling works and one `automation_run`
+  inspection routes its findings correctly.
 - **Phase 4 — documentation sweep.** Updates to [002](002-authorization.md), [004](004-prompts.md),
   [005](005-panel.md), [006](006-deployment.md) and [007](007-architecture.md) for what shipped, with the
   CHANGELOG and README counts.

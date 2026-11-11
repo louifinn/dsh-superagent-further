@@ -94,7 +94,12 @@ it('carries the self-evolution discovery passage in both roles and the project-r
   for (const role of ['orchestrator', 'worker'] as const) expect(composePrompt(config, role)).toContain('problem of superagent itself')
   expect(composePrompt(config, 'worker')).toContain('never fix it inside this ticket')
   expect(composePrompt(config, 'worker')).toContain('this ticket\'s project owns the superagent repository')
-  expect(composePrompt(config, 'orchestrator')).toContain('self-finding')
+  const orchestrator = composePrompt(config, 'orchestrator')
+  expect(orchestrator).toContain('self-finding')
+  // Phase 2 routing (docs/014 D2, D3): in jurisdiction the finding becomes a Request through discovery; otherwise an Issue.
+  expect(orchestrator).toContain('orchestrator_request_create and via discovery')
+  expect(orchestrator).toContain('orchestrator_issue_create')
+  expect(orchestrator).not.toContain('goes to memory_write tagged self-finding')
   expect(composeSkill(config, 'project-request')).toContain('A superagent-self finding')
 })
 
