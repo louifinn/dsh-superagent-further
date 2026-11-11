@@ -8,6 +8,34 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Staged runtime updates with a supervisor-owned swap and safe rollback (ADR-0007, schema 25 unchanged, RuntimeHost API 1
+  unchanged). `scripts/stage-runtime.mjs` validates a built `lib/runtime-entry.js` + `lib/runtime-manifest.json` (shape,
+  version, host API, integer schema, entry name, SHA-256) and copies them into `<stateDir>/runtime/<version>/` through a
+  temporary directory and one rename, adding `builtAt` and `node`; `scripts/deploy-runtime.mjs` wraps it as
+  `stage|apply|status|watch|rollback` behind `pnpm deploy`, requires `--state-dir`, writes one atomic
+  `{api:1,id,action:'apply'|'rollback',version?,at,by:'operator'}` request under `<stateDir>/updates/`, and refuses a
+  downgrade, a missing or unverified version, a second request or an already-running version. `src/supervisor/update.ts`
+  polls with an unref'd 2 s timer, validates and claims the request by rename to `request.processing.json`, single-flights
+  one update, and journals `prepare → stage → backup → drain → swap → load → init → commit`: `VACUUM INTO
+  runtime/backups/<version>-<timestamp>.sqlite` while the old runtime serves, the old runtime drains with reason
+  `update` while the supervisor keeps the state lock, `previous.json` and `current.json` are written atomically, and the
+  new runtime loads with the same hash/host-API/schema checks, a bounded readiness and the supervisor's self-check. A
+  failure after the backup or swap disposes the candidate with a bound, restores the database backup, restores both
+  pointers byte-for-byte, reloads the previous (else packaged) runtime, journals `fail('rollback')`, appends the failed
+  history and logs `update.failed phase=… reason=…`; the schema never moves down and no exception escapes into the DSH
+  fiber. A crash leaves the running journal and claim, and the next start clears the claim, appends an `interrupted`
+  history entry and never re-runs the swap. `src/supervisor/update-state.ts` owns the request/claim files, the
+  append-only bounded `runtime/history.jsonl`, descriptor and pointer writers, the database backup/restore and
+  `updateSnapshot`; `Supervisor.updateStatus()`/`history()` expose the current and previous descriptors, journal, pending
+  request, rollback eligibility, deploy hints and recent history. The runtime adds read-only same-origin `GET updates` and
+  `POST updates/rollback` (literal `confirm:'ROLLBACK'`, audited, one atomic request, 409 while a request is pending or an
+  update runs; no upload, download or code-body route), the Updates tab with the confirm-token rollback and history, the
+  Overview's pending/failed update link, both locales, and the live `update-failures` incident rule (one record per
+  phase, recovered by a later `update.applied`). `scripts/drill.mjs` (`pnpm drill`) runs 13 fault-injection scenarios
+  against a throwaway state directory (stage+apply, rollback round-trip, crash recovery at every phase, a corrupt staged
+  entry, a pending-request storm, a schema downgrade, a failed-init rollback) and writes
+  `.artifacts/drills/<timestamp>.json`; ADR-0007, docs/003, 005, 006, 007, 009, 011 and 013, README, README.zh-CN and the
+  pack/docs gates are updated. Live HMR stays development-only.
 - A stable supervisor and a versioned domain runtime (ADR-0006, schema 25 unchanged). `src/index.ts` now starts
   `Supervisor`, which owns the state-directory lock, one process-wide `Logs` ring and `LogFileSink`, the machine
   configuration, the runtime version pointers and journal, and the drain controller. It exposes readiness through

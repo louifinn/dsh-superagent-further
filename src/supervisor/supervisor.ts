@@ -24,10 +24,13 @@ import { HOST_API, type DrainReport, type RuntimeDescriptor, type RuntimeHandle,
 import { VERSION } from '../version.ts'
 import { DrainController } from './drain.ts'
 import { buildRuntimeHost, type BuiltHost } from './host.ts'
-import { Journal, type JournalRecovery } from './journal.ts'
+import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
+import { UpdateEngine, type UpdateEnvironment } from './update.ts'
+import { readUpdateHistory, UPDATE_POLL_MS, updateSnapshot, type UpdateHistoryEntry, type UpdateSnapshot } from './update-state.ts'
 import {
-  databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, type RuntimeCandidate, type RuntimeSource,
+  databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor, type RuntimeCandidate,
+  type RuntimeSource,
 } from './versions.ts'
 
 /** How long the supervisor waits for a runtime's `ready` before disposing it and trying the next candidate. */
@@ -74,6 +77,10 @@ export interface SupervisorOptions {
   readonly logSink?: LogFileSink
   /** Journal timestamps. */
   readonly now?: () => string
+  /** How often the update engine looks for an operator request; tests shorten it. */
+  readonly updatePollMs?: number
+  /** Test seam: disable the update engine for a supervisor that must never claim a request. */
+  readonly updates?: boolean
 }
 
 /**
@@ -98,6 +105,7 @@ export class Supervisor {
   private releasing = false
   private record?: RuntimeDescriptor
   private statusValue?: SupervisorStatus
+  private updater?: UpdateEngine
 
   constructor(private readonly options: SupervisorOptions) {
     this.log = options.context.logger as HostLogger
@@ -115,6 +123,12 @@ export class Supervisor {
   setupProblem(): SetupProblem | undefined { return this.runtime?.setupProblem }
   /** The runtime and version currently serving; M36 reads this for the Updates surface. */
   versionStatus(): SupervisorStatus | undefined { return this.statusValue }
+  /** The read-only update surface: pointers, journal projection, pending request, rollback eligibility and history. */
+  updateStatus(): UpdateSnapshot { return updateSnapshot(this.options.machine.stateDir) }
+  /** The newest finished update attempts, oldest first. */
+  history(): UpdateHistoryEntry[] { return readUpdateHistory(this.options.machine.stateDir) }
+  /** True while the update engine is claiming or running a request. */
+  get updating(): boolean { return this.updater?.busy ?? false }
   /** The supervisor-owned ring, for tests and a future diagnostics surface. It is the same instance for every attempt. */
   get logs(): Logs { return this.logsRing }
   /** The current runtime handle, for tests; production code goes through the plugin entry and the Host services. */
@@ -125,6 +139,7 @@ export class Supervisor {
    * second call returns the first report and does nothing.
    */
   async drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    await this.updater?.stop()
     this.releasing = true
     const runtime = this.runtime
     if (runtime === undefined) {
@@ -145,6 +160,13 @@ export class Supervisor {
   }
 
   private async shutdown(): Promise<void> {
+    // An update in flight must finish or cancel before the supervisor starts releasing the lock; the engine's stop is
+    // idempotent and never rethrows a failed attempt.
+    try {
+      await this.updater?.stop()
+    } catch (error) {
+      this.log.warn('dsh-superagent-further could not stop the update engine: %s', String(error))
+    }
     this.releasing = true
     try {
       if (this.runtime !== undefined) {
@@ -206,6 +228,7 @@ export class Supervisor {
       for (const candidate of resolution.candidates) {
         try {
           await this.attempt(candidate, database, previous, interrupted)
+          this.startUpdates(interrupted)
           return
         } catch (error) {
           last = error
@@ -229,19 +252,7 @@ export class Supervisor {
   /** Load and initialize one verified candidate. A failure disposes what it created and leaves the lock for the next try. */
   private async attempt(candidate: RuntimeCandidate, database: number | undefined, previous: RuntimeDescriptor | undefined,
     interrupted: ReturnType<Journal['interrupted']>): Promise<void> {
-    const built = buildRuntimeHost({
-      context: this.options.context,
-      machine: this.options.machine,
-      restart: this.options.restart ?? (() => {}),
-      exit: this.options.exit ?? (() => {}),
-      version: candidate.descriptor.version,
-      logger: this.log,
-      lifetime: this.lockLost.signal,
-      flushLogs: () => this.flushLogs(),
-      releaseStateLock: () => this.releaseGated(),
-      logs: this.logsRing,
-      ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
-    })
+    const built = this.buildHost(candidate.descriptor.version)
     this.apply(built)
     const journal = this.journal as Journal
     journal.begin('startup', candidate.descriptor, previous)
@@ -288,6 +299,119 @@ export class Supervisor {
     }
     this.log.info('dsh-superagent-further runtime %s started from the %s runtime (host API %s, schema %s)',
       candidate.descriptor.version, candidate.source, HOST_API, loaded.schema)
+  }
+
+  /** Build one runtime host over the shared ring, sink and lifetime; startup and the update engine use the same builder. */
+  private buildHost(version: string): BuiltHost {
+    return buildRuntimeHost({
+      context: this.options.context,
+      machine: this.options.machine,
+      restart: this.options.restart ?? (() => {}),
+      exit: this.options.exit ?? (() => {}),
+      version,
+      logger: this.log,
+      lifetime: this.lockLost.signal,
+      flushLogs: () => this.flushLogs(),
+      releaseStateLock: () => this.releaseGated(),
+      logs: this.logsRing,
+      ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
+    })
+  }
+
+  /** Start the update engine after the first runtime is serving; it owns polling and crash-claim cleanup from here on. */
+  private startUpdates(interrupted: JournalState | undefined): void {
+    if (this.options.updates === false) return
+    const engine = this.updater = new UpdateEngine(this.updateEnvironment(),
+      { pollMs: this.options.updatePollMs ?? UPDATE_POLL_MS })
+    engine.start(interrupted?.operation === 'update' ? interrupted : undefined)
+  }
+
+  /** The supervisor half of the update engine: the serving slot, the loader, drains and the packaged fallback. */
+  private updateEnvironment(): UpdateEnvironment {
+    const stateDir = this.options.machine.stateDir
+    const database = (): number | undefined => databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+    return {
+      stateDir,
+      journal: this.journal as Journal,
+      logs: this.logsRing,
+      logger: this.log,
+      now: this.now,
+      readyTimeoutMs: this.options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+      disposeMs: this.options.disposeMs ?? DISPOSE_MS,
+      current: () => this.record,
+      previous: () => readDescriptorFile(previousPointer(runtimeDirectory(stateDir))).descriptor,
+      verify: descriptor => verifyDescriptor(runtimeDirectory(stateDir), descriptor, database()),
+      packaged: () => {
+        try { return (this.options.packaged ?? (() => packagedRuntime()))() } catch (error) {
+          this.log.warn('dsh-superagent-further cannot discover the packaged runtime for a rollback: %s', message(error))
+          return undefined
+        }
+      },
+      load: async (descriptor, entry) => {
+        await this.closeBuilt()
+        const built = this.buildHost(descriptor.version)
+        this.apply(built)
+        try {
+          return await loadRuntime({ host: built.host, entry, databaseSchema: database() })
+        } catch (error) {
+          await this.closeBuilt()
+          throw error
+        }
+      },
+      ready: async (loaded, version) => {
+        this.runtime = loaded.handle
+        try {
+          await bounded(loaded.handle.ready, this.options.readyTimeoutMs ?? READY_TIMEOUT_MS, `the ${version} runtime readiness`)
+          this.selfCheck(loaded, version)
+        } catch (error) {
+          this.runtime = undefined
+          try {
+            await bounded(loaded.handle.dispose(), this.options.disposeMs ?? DISPOSE_MS, `the ${version} runtime dispose`)
+          } catch (disposeError) {
+            this.log.warn('dsh-superagent-further could not dispose the failed %s runtime: %s', version, message(disposeError))
+          }
+          await this.closeBuilt()
+          throw error
+        }
+      },
+      serve: (loaded, descriptor) => {
+        this.record = { ...descriptor, schema: loaded.schema }
+        this.statusValue = { version: descriptor.version, source: 'current', hostApi: HOST_API, schema: loaded.schema }
+      },
+      discard: async (loaded, version) => {
+        try {
+          await bounded(loaded.handle.dispose(), this.options.disposeMs ?? DISPOSE_MS, `the ${version} runtime dispose`)
+        } catch (error) {
+          this.log.warn('dsh-superagent-further could not dispose the unused %s runtime: %s', version, message(error))
+        }
+        await this.closeBuilt()
+      },
+      drain: async reason => {
+        const runtime = this.runtime
+        this.runtime = undefined
+        if (runtime === undefined) throw new Error('no runtime is running to drain for the update')
+        const report = await runtime.drain(reason)
+        await this.flushLogs()
+        return report
+      },
+      unserved: () => {
+        this.runtime = undefined
+        this.record = undefined
+        this.statusValue = undefined
+      },
+    }
+  }
+
+  /** The post-readiness self-check: the runtime must answer configured() and setupProblem without throwing or lying. */
+  private selfCheck(loaded: LoadedRuntime, version: string): void {
+    if (loaded.handle.configured !== undefined) {
+      const configured = loaded.handle.configured()
+      if (typeof configured !== 'boolean') throw new Error(`the ${version} runtime returned a non-boolean configured()`)
+    }
+    const problem: unknown = loaded.handle.setupProblem
+    if (problem !== undefined && problem !== null && typeof problem !== 'object') {
+      throw new Error(`the ${version} runtime returned an invalid setupProblem`)
+    }
   }
 
   private apply(built: BuiltHost): void {

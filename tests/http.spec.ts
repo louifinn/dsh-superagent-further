@@ -10,6 +10,7 @@ import { Logs } from '../src/app/logs.ts'
 import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
 import { SELF_REPOSITORY, type SelfReport, type SelfReportRepository, type SelfReportStatus } from '../src/core/index.ts'
 import { SetupError } from '../src/setup.ts'
+import type { UpdateSnapshot } from '../src/supervisor/update-state.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
@@ -592,3 +593,55 @@ it('answers a failed, unfiled or unknown self-report action with its status and 
   expect((await unfiled('GET', 'logs?scope=audit')).body.entries).toEqual([])
 })
 
+
+it('serves the update pipeline read-only and queues one confirmed rollback, refusing pending work with 409', async () => {
+  let snapshot: UpdateSnapshot = {
+    api: 1 as const, stateDir: '/srv/dsh-superagent-further',
+    current: { version: '0.4.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'a'.repeat(64), schema: 25 },
+    previous: { version: '0.3.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'b'.repeat(64), schema: 25 },
+    journal: null, pending: null, busy: false,
+    rollback: { eligible: true, version: '0.3.0', reason: '' },
+    deploy: { command: 'node deploy', status: 'node deploy status', apply: 'node deploy apply --version <version>',
+      rollback: 'node deploy rollback', watch: 'node deploy watch' },
+    history: [], databaseSchema: 25,
+  }
+  const rollbacks: string[] = []
+  const call = serve({ updates: {
+    status: () => snapshot,
+    attention: () => ({ pending: false, failed: false, version: null, phase: null, reason: null }),
+    rollback: () => {
+      if (snapshot.busy) return { ok: false, reason: 'An update is already in progress; wait for it to finish before rolling back.' }
+      if (snapshot.pending !== null) return { ok: false, reason: 'An update request is already pending; wait for it to be claimed before rolling back.' }
+      if (!snapshot.rollback.eligible) return { ok: false, reason: snapshot.rollback.reason || 'There is no previous runtime to roll back to.' }
+      const request = { api: 1 as const, id: 'rb-1', action: 'rollback' as const, at: '2026-11-11T00:00:00.000Z', by: 'operator' as const }
+      rollbacks.push(request.id)
+      snapshot = { ...snapshot, pending: request, rollback: { eligible: false, version: '0.3.0', reason: 'An update request is pending' } }
+      return { ok: true as const, request, status: snapshot }
+    },
+  } })
+  expect((await call('GET', 'updates')).body).toMatchObject({ api: 1, current: { version: '0.4.0' }, previous: { version: '0.3.0' },
+    rollback: { eligible: true } })
+  // The confirmation token is literal: a missing, false or different token never queues anything.
+  expect(await call('POST', 'updates/rollback', {})).toMatchObject({ status: 400 })
+  expect(await call('POST', 'updates/rollback', { confirm: true })).toMatchObject({ status: 400 })
+  expect(await call('POST', 'updates/rollback', { confirm: 'rollback' })).toMatchObject({ status: 400 })
+  expect(rollbacks).toEqual([])
+  const queued = await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })
+  expect(queued).toMatchObject({ status: 200, body: { requested: true, request: { action: 'rollback', by: 'operator' },
+    status: { pending: { action: 'rollback' } } } })
+  expect(rollbacks).toEqual(['rb-1'])
+  // A second request while one is pending is a conflict; the route writes nothing.
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409 })
+  expect(rollbacks).toEqual(['rb-1'])
+  // Busy and ineligible states are conflicts with the engine's own reason, never a queued request.
+  snapshot = { ...snapshot, pending: null, busy: true, rollback: { eligible: true, version: '0.3.0', reason: '' } }
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409,
+    body: { error: 'An update is already in progress; wait for it to finish before rolling back.' } })
+  snapshot = { ...snapshot, busy: false, rollback: { eligible: false, version: null, reason: 'No previous runtime is recorded' } }
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409,
+    body: { error: 'No previous runtime is recorded' } })
+  // The rollback action is in the operator audit trail, naming the request only.
+  const audit = (await call('GET', 'logs?scope=audit')).body.entries as { message: string; data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message)).toEqual(['updates.rollback request=rb-1 actor=operator'])
+  expect(audit[0]!.data).toMatchObject({ action: 'updates.rollback', request: 'rb-1' })
+})

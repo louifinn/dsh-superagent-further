@@ -11,8 +11,8 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { dirname } from 'node:path'
 import type { RuntimeDescriptor } from '../runtime-host.ts'
 
-/** The steps of a runtime start, swap, drain, or rollback. */
-export type JournalPhase = 'prepare' | 'stage' | 'drain' | 'swap' | 'load' | 'init' | 'commit' | 'rollback'
+/** The steps of a runtime start, update, drain, or rollback. */
+export type JournalPhase = 'prepare' | 'stage' | 'backup' | 'drain' | 'swap' | 'load' | 'init' | 'commit' | 'rollback'
 /** One recorded step. `started` is written before the step runs; `done`/`failed` after it. */
 export interface JournalStep {
   readonly phase: JournalPhase
@@ -31,7 +31,7 @@ export interface JournalRecovery {
 export interface JournalState {
   readonly api: 1
   readonly status: 'running' | 'committed' | 'failed'
-  readonly operation: 'startup' | 'drain'
+  readonly operation: 'startup' | 'drain' | 'update'
   readonly phase: JournalPhase
   readonly updatedAt: string
   readonly steps: readonly JournalStep[]

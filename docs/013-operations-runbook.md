@@ -88,7 +88,8 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   (`request:<id>`, `self-report:<id>`, `self-report:off` or `operational`) — never the diagnosis prose or the evidence.
   The diagnose response carries the same token so a caller learns the work id the automatic route created.
 - **What this does not do**: detection and diagnosis make no code change, retry no Ticket and merge nothing, and an
-  operational conclusion never becomes an Issue. The `update-failures` rule remains reserved for M36.
+  operational conclusion never becomes an Issue. The `update-failures` rule reads the supervisor's
+  `update.failed phase=…` lines — one record per phase — and a later `update.applied` recovers every phase.
 - **Schema**: records live in the `incident` table of schema 25. A schema 24 database migrates on start with the
   table created empty; no backfill invents historical incidents. The table is not part of `archive-state` beyond the
   database copy, and the evidence bundles live outside the database, so copy `<workspace>/artifacts/incidents`
@@ -109,10 +110,15 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   them, and stop the Host for a quiescent copy: pausing is not enough, because the pause holds evaluation, dispatch
   and outbound delivery while Sources and health transitions still log. A copy taken while the Host runs (paused or
   not) may gain lines, so treat it as a best-effort backup rather than a consistent snapshot.
-- `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors (M35 reads `previous.json`; the update pipeline in M36 writes it), one directory per
-  deployed version, and `journal.json`. The packaged runtime it falls back to lives beside the installed package in
-  `lib/runtime-entry.js` and `lib/runtime-manifest.json`. The runtime directory belongs in a backup with the database; do not edit a pointer or a version
-  directory while the Host runs, and never hand-edit a hash to make a bundle verify.
+- `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors (the update
+  pipeline writes both; the supervisor reads them), one directory per staged or deployed version with its
+  `runtime-entry.js` and `runtime-manifest.json`, `journal.json`, `backups/` (the per-update
+  `<version>-<timestamp>.sqlite` `VACUUM INTO` copies), and `history.jsonl` (the append-only, bounded update history).
+  `<stateDir>/updates/` holds the operator request files: `request.json` while one waits, and
+  `request.processing.json` while the supervisor has claimed it. The packaged runtime it falls back to lives beside the
+  installed package in `lib/runtime-entry.js` and `lib/runtime-manifest.json`. The runtime directory belongs in a
+  backup with the database; do not edit a pointer, a version directory or a request file while the Host runs, and never
+  hand-edit a hash to make a bundle verify.
 - Worktrees live under `<stateDir>/work`; `scripts/clean-worktrees` prunes finished ones by age. Do not delete a
   worktree of an open Ticket; its assignment is the only record of the checkout.
 
@@ -134,19 +140,62 @@ watches four signals it already has — failed or stopped Assignment ends, the o
 - **A deployed runtime was refused or fell back**: the Logs page (`host` scope) names the descriptor that was rejected
   and why — a missing or unreadable pointer, a bad hash, another host API, or a schema older than the database. Read
   `<stateDir>/runtime/journal.json` for the recorded phase and recovery note. Fix the deployment or remove
-  `current.json` while the Host is stopped to start the packaged runtime; M35 writes no `previous.json`, so without one
-  that fallback is the packaged runtime. Do not delete `previous.json` if it is the last
-  known-good version. A source checkout that was never built logs a warning that the packaged runtime cannot be
-  discovered and still starts a verified deployed version; when no candidate starts, the error names `run pnpm build`.
+  `current.json` while the Host is stopped to start the packaged runtime. Do not delete `previous.json` if it is the
+  last known-good version; the Updates tab's rollback writes the request that swaps back to it. A source checkout that
+  was never built logs a warning that the packaged runtime cannot be discovered and still starts a verified deployed
+  version; when no candidate starts, the error names `run pnpm build`.
+- **An update failed**: the Updates tab shows the failed phase and reason, the Overview's update block links there, and
+  the `update-failures` incident records one line per phase. The engine already restored the database from
+  `runtime/backups/`, put both pointers back and reloaded the previous (else packaged) runtime; do not re-run the same
+  request. `journal.json` records the failed `rollback` phase, `history.jsonl` the `rolledback` or `failed` outcome.
+  Inspect `<stateDir>/logs`, fix the bundle, stage a new verified version, and apply again. A crash during an update
+  leaves a running `update` journal and `request.processing.json`; the next start clears the marker, appends an
+  `interrupted` history entry and never re-runs the failed swap.
 - **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
   runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
   records the expiry, the journal is still committed, and the Store is closed and the lock released whenever the drain
   reached those phases. A maintenance phase is never skipped by an abort signal; only intake, cancel and in-flight may
   be. If `journal.json` still says `running`, the next start recovers it.
-- **The journal says `running`**: the previous process stopped during `startup` or `drain`. The next start recovers by
-  preferring the recorded current version when it still verifies, then the previous verified version, then the packaged
-  runtime, and records the recovery. Do not edit the journal or the database schema by hand; a runtime whose schema is
-  older than the database is refused by design and the schema is never migrated down.
+- **The journal says `running`**: the previous process stopped during `startup`, `drain` or an `update`. The next start
+  recovers by preferring the recorded current version when it still verifies, then the previous verified version, then
+  the packaged runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted`
+  history entry and does not re-run the swap. Do not edit the journal or the database schema by hand; a runtime whose
+  schema is older than the database is refused by design and the schema is never migrated down.
+
+## Runtime updates
+
+Staging and deploying are operator steps; the supervisor owns the swap, so nothing is uploaded over HTTP and the
+running process keeps the state-directory lock.
+
+1. Build and stage the release: `pnpm build`, then `pnpm deploy stage` (or
+   `node --experimental-transform-types scripts/deploy-runtime.mjs --state-dir <dir> stage`). Staging copies
+   `lib/runtime-entry.js` and `lib/runtime-manifest.json` into `<stateDir>/runtime/<version>/` through a temporary
+   directory and one rename, verifies the hash, host API, schema and entry path, and prints the staged descriptor
+   (version, hostApi, schema, sha256, builtAt, node). Staging the same bundle twice is idempotent; a different bundle
+   under the same version is refused.
+2. `pnpm deploy apply [--version <v>]` writes one atomic `{api:1,id,action:'apply',version,at,by:'operator'}` request.
+   The supervisor's 2 s poll claims it by rename, journals
+   `prepare → stage → backup → drain → swap → load → init → commit`, backs the database up with `VACUUM INTO`
+   (`runtime/backups/<version>-<timestamp>.sqlite`) while the old runtime still serves, drains with reason `update`,
+   writes `previous.json` and `current.json`, loads and initializes the new runtime (bounded readiness and self-check), and
+   commits. `pnpm deploy status` prints the snapshot (current, previous, journal, pending request, rollback eligibility,
+   history, deploy hints); `pnpm deploy watch` waits, bounded, for the request to resolve.
+3. Any failure after the backup or swap restores the database backup, puts both pointers back, reloads the previous
+   runtime (else the packaged one) and records the failure. A schema downgrade is refused before any drain; the schema
+   only moves forward.
+4. `pnpm deploy rollback` (or the Updates tab's **Roll back**, which needs the literal confirmation token `ROLLBACK`)
+   writes a rollback request; it is refused while a request is pending or an update is in flight, and is eligible only
+   when the previous runtime still verifies and its schema is not older than the database.
+
+Fault-injection and smoke checks: `pnpm drill` runs 13 scenarios against a throwaway state directory (a real
+stage/apply, a rollback round-trip, crash recovery at every phase, a corrupt staged entry, a pending-request storm, a
+schema downgrade and a failed-init rollback) and writes `.artifacts/drills/<timestamp>.json` with pass/fail per
+scenario; it exits non-zero on failure.
+
+Live HMR is for development only: the `dsh-tower enable-dev-hmr` command and the profile's `cordis.patch.yml` entry
+(`id: hmr`, `root: [<repo>]`) reload client bundles without a page refresh only in a dev setup. Production updates use
+the staged version swap above; a client bundle change still needs a page refresh, and only the runtime bundle is
+swapped.
 
 ## Upgrade
 

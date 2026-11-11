@@ -19,6 +19,7 @@ import type { TicketListView } from './views/tickets.ts'
 import type { IncidentDetailView, IncidentListView } from './incidents.ts'
 import type { DiagnoseResult, RouteResult } from './diagnosis.ts'
 import type { Incident, IncidentSeverity, IncidentStatus } from '../core/incidents.ts'
+import type { UpdateRequest, UpdateSnapshot } from '../supervisor/update-state.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -106,6 +107,10 @@ export interface Api {
   'POST incidents/:id/dismiss': { body: { reason: string }; response: { incident: Incident } }
   /** Create the follow-up work once, from an existing diagnosis; confirmation is required and the record never routes twice. */
   'POST incidents/:id/route': { body: { confirm: true }; response: RouteResult }
+  /** The update pipeline's read-only status: the pointers, the journal, the pending request and recent history (ADR-0007). */
+  'GET updates': { response: UpdateSnapshot }
+  /** Queue one rollback behind a literal confirmation; 409 while a request or an update is already pending (docs/005-panel.md). */
+  'POST updates/rollback': { body: { confirm: 'ROLLBACK' }; response: { requested: true; request: UpdateRequest; status: UpdateSnapshot } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

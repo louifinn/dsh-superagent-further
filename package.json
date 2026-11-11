@@ -55,6 +55,8 @@
     "docs:generate": "node --experimental-transform-types scripts/generate-tool-reference.mjs",
     "docs:check": "node --experimental-transform-types scripts/generate-tool-reference.mjs --check",
     "architecture:check": "node scripts/check-architecture.mjs",
+    "deploy": "node --experimental-transform-types scripts/deploy-runtime.mjs",
+    "drill": "node --experimental-transform-types scripts/drill.mjs",
     "check": "pnpm typecheck && pnpm architecture:check && pnpm build && pnpm test && pnpm runtime:check && pnpm pack:check && pnpm docs:check"
   },
   "engines": {

@@ -8,6 +8,7 @@ import type { Store } from '../store.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
+import type { UpdateAttention } from '../updates.ts'
 
 /** One project's Lead in the panel: its Session, and the executors and messages the project holds. */
 export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number
@@ -56,7 +57,9 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   /** Recent failed file deliveries, newest last, each shown as a problem with the Source's own reason. */
   deliveries: readonly DeliveryFailure[] = [],
   /** The self-evolution outlet's drafts; only drafts need a person, filed Issues live in the remote repository. */
-  selfReports: readonly SelfReport[] = []) {
+  selfReports: readonly SelfReport[] = [],
+  /** The update pipeline's needs-attention state; absent when the runtime has no update surface. */
+  updates?: UpdateAttention) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -131,6 +134,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     incidents: { count: store.incidents.openCount(), items: openIncidents.map((incident): IncidentRow => ({ id: incident.id,
       rule: incident.rule, severity: incident.severity, title: incident.title, occurrences: incident.occurrences,
       last_at: incident.last_at, scope: incident.scope })) },
+    /** A pending request, a running update or a failure the engine could not roll back raises one "needs you" row. */
+    update: updates ?? { pending: false, failed: false, version: null, phase: null, reason: null },
   }
 }
 export type OverviewView = ReturnType<typeof overview>
