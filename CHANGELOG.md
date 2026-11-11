@@ -291,6 +291,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   refuses `PUT wizard` with `workspaceRequired`, Skip step and Skip all stay disabled, and the header **Setup wizard** entry
   reopens the dialog. The dialog also states that closing it leaves SuperAgent paused. Covered by
   `tests/panel-setup-wizard.spec.tsx`.
+- A refused workspace selection now says why. The panel rendered only the generic `workspaceInvalid` sentence, so a path refused
+  because it overlaps a project checkout or the repository, is a file, is relative, is a UNC path or has no existing parent
+  looked like an unexplained rejection that matched none of the listed cases. The localized message now interpolates the
+  server's `reason` and `path` values, and the panel fixture answers with the same shape. Covered by
+  `tests/panel-setup-wizard.spec.tsx`.
 - A refused database restore can no longer silently roll a WAL-mode database back to its older main file. `restoreDatabase`
   removed `<stateDir>/orchestrator.sqlite-wal` and `-shm` before copying the backup, so when the journaled backup was
   missing, unreadable or truncated — or the process died between the two steps — the candidate's committed migration,

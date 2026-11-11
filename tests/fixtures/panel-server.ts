@@ -609,6 +609,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       // As the host does: a selection is an absolute canonical directory and a change restarts setup.
       if (value.path !== '' && !/^(?:[A-Za-z]:[\\/]|\/)/.test(value.path)) {
         return refuse(400, 'The workspace path must be absolute.', { setup: { ...WORKSPACE_REQUIRED, code: 'workspaceInvalid',
+          values: { path: value.path, reason: 'a relative path' },
           detail: 'The workspace path must be an absolute directory.' } })
       }
       restarting = value.path !== server.settings.workspace.path

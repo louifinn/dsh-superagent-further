@@ -122,6 +122,18 @@ it('keeps skipping and finishing locked, but lets the dialog close before a work
   expect(text()).toContain(zh.wizardProjectIntro)
 })
 
+it('shows the server\'s specific refusal reason instead of only the generic workspace text', async () => {
+  server.settings = { ...server.settings, workspace: { path: '' } }
+  server.setup = { ...server.setup, workspace: null }
+  server.wizard = { firstRun: true, skipped: false }
+  await mount()
+  await click(wizardButton(zh.wizardStart))
+  await type(field<HTMLInputElement>(zh.wizardWorkspaceLabel), 'relative/path')
+  await click(wizardButton(zh.wizardSave))
+  expect(text()).toContain('a relative path')
+  expect(all('[role="dialog"]')).toHaveLength(1)
+})
+
 it('saves the default language and finishes the wizard', async () => {
   server.wizard = { firstRun: true, skipped: false }
   await mount()
