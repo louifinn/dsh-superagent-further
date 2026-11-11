@@ -26,15 +26,19 @@ flowchart TB
   effects --> store
 ```
 
-`Runtime` (`src/app/runtime.ts`) constructs the application, supplies dependencies, and owns startup and shutdown. `Engine` constructs its own internal parts. The Executor and Assessor call back into the Engine, so Runtime gives them getters rather than requiring construction in a circular order.
+`Supervisor` (`src/supervisor/supervisor.ts`) is the stable shell that DeepSeek Harness loads as the plugin; `Runtime` (`src/app/runtime.ts`) is the versioned domain runtime it starts. `Engine` constructs its own internal parts. The Executor and Assessor call back into the Engine, so Runtime gives them getters rather than requiring construction in a circular order.
 
-### Runtime
+### Supervisor and runtime
 
-`Runtime` is the composition root; it contains no domain rules. Its constructor locks the state directory, opens the Store and builds each component. If construction fails, it closes the Store and releases the lock.
+The supervisor owns everything that must survive a domain-release change: the plugin's `Config` (`src/supervisor/config.ts`), machine validation, the state-directory lock, one process-wide `Logs` ring and its `LogFileSink`, version resolution, the crash journal and the drain controller. The ring is created once in the `Supervisor` and shared by every candidate and version, so entries from a failed start survive the fallback. It owns no health probe: runtime health stays on the runtime's `HealthBoard`, and the supervisor's readiness surface is `configured()`/`setupProblem()` (the runtime's setup gate) plus `versionStatus()` (what started and from where). It builds one frozen `RuntimeHost` (`src/runtime-host.ts`, `hostApi: 1`) from the live Cordis context and passes that context as the frozen DSH service channel, the DSH value exports (`Service`, `freezeMessage`, `MessageId`, `ReasoningEffortId`, `scopeParentOf`, schemastery), the machine, the restart callback, the logger, the lifetime signal, the log ring and sink, and the lock release through that interface. There is no separate services object. The runtime imports only types from `@deepseek-ai/*`; every value it needs arrives through the host, so a runtime bundle is self-contained.
+
+The supervisor reads `<stateDir>/runtime/current.json`, verifies the descriptor's host API, its entry inside `<stateDir>/runtime/<version>/`, its SHA-256 and its schema against the open database, and loads the entry with a dynamic import. A missing, invalid, mismatched or failed version falls back to the previous verified version and then to the packaged `lib/runtime-entry.js` with a warning; it never stops the supervisor. The packaged candidate is the built artifact pair `lib/runtime-entry.js` and `lib/runtime-manifest.json`; a source checkout that was never built refuses startup with a packaging error naming `pnpm build` rather than trying to import TypeScript at run time. [ADR-0006](adr/0006-supervisor-and-versioned-runtime.md) records the contract.
+
+`Runtime` is the composition root; it contains no domain rules. It opens the Store, builds each component and registers itself as the Cordis `orchestrator` service. Source plugins inject it through the narrow `SourceHost` interface.
 
 Startup registers management routes and runs Setup. Setup prepares the mandatory Orchestrator workspace first, then the projects, accounts and worker environment; only after it resolves does startup register the workspace with DeepSeek Harness under its explicit title, retire the legacy master id and its `stateDir` registration when the workspace changed (best-effort: a failure is logged and startup continues with the old Session and registration intact and readable), unarchive the returning workspace's own archived master when it was used before (an unarchive failure fails startup with `workspaceUnsafe`), install Session and Executor hooks, ensure the main Session in that workspace, start Policy syncs, resume interrupted Assignments, and start passes and effects. A failed setup leaves the runtime paused at `setupPending` before any of those steps: no workspace registration, no master Session, no Source polling and no Executor. `ready` marks completion of startup.
 
-Shutdown cancels turns, waits for passes, effects and agents, restores the process environment, closes the Store and releases the lock. Source plugins inject Runtime as the `orchestrator` service through the narrow `SourceHost` interface.
+Shutdown is the runtime's drain, driven by the supervisor's `DrainController`: it stops intake, cancels the remaining agents as a `user` stop with their inboxes kept, waits a bounded time for passes, effects, deliveries and agents (`DRAIN_IN_FLIGHT_MS`, 10 s; an expired phase is `failed` and the rest still run), disposes the components, flushes the log sink, closes the Store, releases the state-directory lock, and returns one ordered phase report. A second drain is a no-op that returns the first report. The supervisor writes the journal's `drain` phase, awaits that report, bounds its own sink close (`FLUSH_LOGS_MS`, 10 s) and lock release, and only then commits or fails the journal; [ADR-0006](adr/0006-supervisor-and-versioned-runtime.md) has the crash semantics.
 
 ### Platforms
 
@@ -179,7 +183,7 @@ Trigger and Thread `meta` belong to the Source. The core does not interpret them
 
 ### Store
 
-`Store` (`src/app/store.ts`) owns one SQLite database. Runtime acquires the directory lock before opening it, preventing a second process from migrating or writing the same state.
+`Store` (`src/app/store.ts`) owns one SQLite database. The supervisor acquires the state-directory lock before a runtime may open it, preventing a second process from migrating or writing the same state; the runtime closes the Store and the supervisor releases the lock only after the drain's earlier phases finish.
 
 Its interfaces are grouped by purpose:
 
@@ -297,7 +301,10 @@ Each model request binds the Session to the current prompt revision. The revisio
 
 | Glue | Translates |
 | --- | --- |
-| `src/app/runtime.ts` | The composition root: builds the parts with the interfaces they use, registers the routes and the Source host, and starts and stops dsh-superagent-further |
+| `src/app/runtime.ts` | The composition root: builds the parts with the interfaces they use, registers the routes and the Source host, and drains on the supervisor's request |
+| `src/runtime-host.ts` | The frozen host contract (`hostApi: 1`): the live Cordis context as the DSH service channel, injected DSH values, machine, restart, logger, lifetime, logs, lock release and drain report types that every versioned runtime receives |
+| `src/runtime-entry.ts` | The versioned runtime's entry: `createRuntime(host)` returns the `RuntimeHandle` (`ready`, idempotent `drain`, `dispose`), built by tsdown as the self-contained `lib/runtime-entry.js` |
+| `src/supervisor/*.ts` | The stable shell: config and machine validation, state-directory lock, the log ring and sink, version resolution and the loader with its packaged fallback, the crash journal, the drain controller, and the `Supervisor` that starts and stops a runtime |
 | `src/app/notices.ts` | Domain events and worker reports into notices and relays for the main Session |
 | `src/app/lead-dispatch.ts` | Raised project requests and unanswered worker reports into Lead prompts and durable `lead_message` records, the Lead's disposition back to the raising Session, and the bounded `needs-attention` fallback at the Lead activation boundary |
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts`, `src/app/tools/lead.ts` | Tool arguments of the main Session, the Executor Sessions and the project Lead into calls of the core classes, and their results into cards |
@@ -348,8 +355,18 @@ Some generic modules still refer directly to GitHub or Feishu:
 
 | Path | Responsibility |
 | --- | --- |
-| `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
-| `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the agent CLI from the Source settings and the primary repository from the first registered project, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields whose change restarts dsh-superagent-further. The code names no person, account or organization |
+| `src/index.ts` | The main plugin entry: reads the machine settings, starts the Supervisor, and gives it the restart that a save of a Source's account uses |
+| `src/runtime-host.ts` | The frozen `RuntimeHost` API v1 and the `DrainReport`/`RuntimeHandle` types: the only contract between the stable supervisor and a versioned runtime |
+| `src/runtime-entry.ts` | The versioned runtime's entry: exports `HOST_API`, `SCHEMA_VERSION` and `createRuntime(host): RuntimeHandle` |
+| `src/version.ts` | `VERSION`, the package version the supervisor pins in a descriptor and a spec keeps equal to `package.json` |
+| `src/supervisor/config.ts` | The plugin `Config` (the machine settings schema) and `machineOf`, which rejects configuration keys the plugin does not use |
+| `src/supervisor/host.ts` | `buildRuntimeHost`: builds one `RuntimeHost` from the live Cordis context (the frozen service channel), the `Logs` ring, the `LogFileSink`, the machine and the lock-release callback, and injects the DSH values the runtime must not import |
+| `src/supervisor/versions.ts` | Version resolution: the runtime directory's pointers, descriptor shape checks, safe relative entries, SHA-256 and host-API verification, the database schema read without the Store, and the ordered current → previous → packaged candidates with their rejection reasons |
+| `src/supervisor/loader.ts` | The packaged runtime's descriptor and the dynamic loader: an entry is imported through a non-analyzable specifier, then its `HOST_API`, `createRuntime`, `SCHEMA_VERSION` and handle shape are checked before it starts |
+| `src/supervisor/journal.ts` | The crash journal at `<stateDir>/runtime/journal.json`: phases, steps, the recorded current and previous descriptors, and recovery notes, written through a temporary file, fsync and rename |
+| `src/supervisor/drain.ts` | `DrainController`: one idempotent drain per runtime, its journal phase, the runtime's report, then the final log flush and lock release, then the journal commit or failure |
+| `src/supervisor/supervisor.ts` | The stable `Supervisor`: machine validation, the state-directory lock, the one process-wide log ring and sink, version resolution and fallback, startup recovery, the journal, the bounded readiness and failed-dispose waits, the bounded log flush and lock release, and the drain lifecycle; it reports readiness through `configured()`, `setupProblem()` and `versionStatus()`, not through a health probe |
+| `src/deployment.ts` | `Machine`, `Deployment` and `FeishuBot`; `resolveDeployment` and `resolveFeishuBot` read the agent CLI from the Source settings and the primary repository from the first registered project, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields whose change restarts dsh-superagent-further. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share |
 | `src/policy.ts` | The Policy: the settings schemas by block, the field tiers (A, B, C) that decide what a tool-origin save may change, the localized built-in rules and their migration from the English defaults, the Policy version, the gate and Mandate revalidation |
 | `src/projects.ts` | The projects this installation works on: one absolute local workspace and one `owner/name` remote repository per project, with an optional base branch; the Execution settings block holds the list, and the first project supplies the deployment's primary repository |
@@ -438,6 +455,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/executor/dsh.ts` | The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` |
 | `src/executor/lead-dispatch.ts` | `executorActivation` and `LeadActivations`: the subagent request that starts a Lead-hosted worker with `delivery: 'caller'` (the app's Lead messages are the only notification authority) or a reviewer with `delivery: 'parent'` (its verdict reaches the Lead model as DSH's settlement notice so it can record the review), and the activations a host holds, settles and disposes |
 | `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): observing jobs with `get` and the non-consuming `readAt`, `onJobSettled`, `jobOutputPreview`, `runningJobs`, `untilQuiet`, `killJobs`, `collectJob`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
+| `src/infra/bounded.ts` | `bounded`: races a promise against an unref'd timer and rejects with a named timeout message, used for readiness, a failed runtime's dispose, the in-flight drain wait, the supervisor's log-sink close and its state-directory lock release |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
 | `src/infra/environment.ts` | The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the environment and of a Ticket's directory |
 | `src/infra/batch.ts` | `isBatchFile`, `expandsInBatch`, `batchArguments` and `invocation`: how a `.cmd` or `.bat` CLI is started through `cmd.exe` on Windows, and the arguments that cannot be passed |
@@ -496,6 +514,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
 
 `src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled. The `session` kind has no bundle entry: the main plugin's Runtime registers it, because its Channel calls `Sessions.prompt` and its tool needs the Host's root `tools` service.
+
+`src/runtime-entry.ts` is the third build entry: `tsdown` writes the self-contained `lib/runtime-entry.js` and the descriptor `lib/runtime-manifest.json` that the supervisor verifies and loads. It is not a Cordis plugin and never appears in `cordis.patch.yml`; the stable entry in `src/index.ts` starts it through `Supervisor`.
 
 ## Tests
 
@@ -556,7 +576,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/health.spec.ts` | One health entry per part, each cleared by its own next success |
 | `tests/delivery.spec.ts` | `AgentDelivery` |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
-| `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
+| `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP, including the host-based start and the drain phases |
+| `tests/supervisor.spec.ts` | The supervisor and the versioned runtime: a verified current and previous version, the packaged fallback, a missing or invalid pointer, a wrong hash, host API, schema downgrade and escaping entry rejected before their code runs, loader import and export failures, the frozen host contract, a bounded readiness timeout whose failed runtime is disposed even when its dispose hangs, the bounded sink close and lock release, one ring kept across a failed candidate, packaged discovery failure at boot, an empty drain that reports incomplete but releases everything, interrupted-journal recovery, and one start/swap/drain whose ordered phases and journal are recorded once; a packaged runtime is injected, so the spec never needs a built `lib/` |
 | `tests/workspace-identity.spec.ts` | The mandatory Orchestrator workspace: validation, registration under its title, legacy retirement (best-effort: a failed archive is logged and startup still reaches `ready`), fail-closed startup, and the guards that keep the state directory out of DSH workspace registration and the master Session's cwd |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools, including the settings save's required reason and tier-A limit; and the Lead's architecture round trip — accept creating the design Ticket, the approval ask on the root Channel, the answer routed back to the Lead, `lead_request_approve` creating the staged implementation Request, and the reply to the raising worker |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
@@ -585,7 +606,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 
-`tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
+`tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host that builds a `RuntimeHost`; `values.ts`, the DSH values a runtime receives; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
 
 ## Persistence
 

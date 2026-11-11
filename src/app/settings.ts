@@ -9,6 +9,7 @@ import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { resolveRoleModel } from './role-models.ts'
+import type { RuntimeHostValues } from '../runtime-host.ts'
 import { changedPaths, settingsNotice } from './notices.ts'
 import type { Sessions } from './sessions.ts'
 import { setupChanged, type Setup } from './setup.ts'
@@ -130,6 +131,8 @@ export interface SettingsHost {
   readonly health: Pick<HealthBoard, 'claim'>
   /** DSH Cordis context used to validate and resolve role models. */
   readonly context: Context
+  /** The DSH value exports used while resolving a role's model. */
+  readonly values: RuntimeHostValues
   readonly lifetime: AbortSignal
   /** Session manager through which the main Session is notified of saved settings. */
   readonly sessions: Pick<Sessions, 'notify' | 'delivery'>
@@ -378,7 +381,7 @@ export class Settings {
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null
     if (model && JSON.stringify(model) !== JSON.stringify(previous)) {
-      try { await resolveRoleModel(this.host.context, model) }
+      try { await resolveRoleModel(this.host.context, model, this.host.values) }
       catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
     }
     rules.guard?.(current, candidate, origin)

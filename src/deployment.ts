@@ -1,9 +1,7 @@
 /** Plugin configuration and startup verification for repository access and agent CLI identities. */
-import { LIMITS } from './limits.ts'
 import { accessSync, constants, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import type { Volatile } from '@deepseek-ai/cordis'
-import s from '@deepseek-ai/schemastery'
 import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
@@ -11,43 +9,17 @@ import { absolutePath } from './infra/paths.ts'
 import { SetupError } from './setup.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
-const absolute = (description: string) => s.string().pattern(absolutePath).description(`${description} Absolute path.`)
 /** File names under which the host platform can find a bare command: Windows tries PATHEXT extensions before the bare name, like `where`. */
 const candidates = (name: string): string[] =>
   process.platform === 'win32' && !isAbsolute(name) && !/\.[A-Za-z0-9]+$/.test(name)
     ? [...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map(extension => name + extension.toLowerCase()), name]
     : [name]
-/** Plugin configuration of the dsh-superagent-further entry. Volatile fields apply without a restart because dsh-superagent-further reads them on each use; changing `stateDir` remounts the plugin. */
-export const Config = s.object({
-  stateDir: absolute('Directory for the database, locks, worker shims, the agent\'s git configuration and, by default, the ticket directories.').required(),
-  promptMaxChars: s.number().min(LIMITS.promptMaxChars.min).max(LIMITS.promptMaxChars.max).step(1).default(100000)
-    .description('Largest saved prompt configuration, in characters.').volatile(),
-  admissionContextMaxPages: s.number().min(LIMITS.admissionContextMaxPages.min).max(LIMITS.admissionContextMaxPages.max).step(1).default(10)
-    .description('Pages of thread context one assessment may read.').volatile(),
-  admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
-    .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
-})
-export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
   stateDir: string
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
 }
-const MOVED: Record<string, string> = {
-  repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
-  feishu: 'on the Feishu Source', author: 'prompt text', repositoryPath: 'in the prepare command of the Execution settings',
-  worktreeRoot: 'the ticket directory of the Execution settings', blockedCommands: 'in the Execution settings',
-}
-
-/** Read machine settings and reject unknown configuration keys (naming where deprecated keys moved). */
-export function machineOf(config: DeploymentConfig): Machine {
-  const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
-  if (unknown.length) throw new Error(`dsh-superagent-further configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
-}
-
 export const GithubAccountsSchema = z.object({
   repository: z.string().trim().regex(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?$/, 'owner/name').default(''),
   cli: z.string().trim().default(''),

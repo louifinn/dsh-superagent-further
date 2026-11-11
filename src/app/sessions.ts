@@ -2,7 +2,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
-import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { dirname } from 'node:path'
@@ -11,6 +10,7 @@ import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/in
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
+import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
@@ -32,6 +32,8 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
   readonly context: Context
+  /** The DSH value exports this part uses: scope identity, message IDs, and the message freezer. */
+  readonly values: RuntimeHostValues
   readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
@@ -147,7 +149,7 @@ export class Sessions {
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
     this.ctx = host.context
-    this.agentDelivery = new AgentDelivery(host.context)
+    this.agentDelivery = new AgentDelivery(host.context, host.values)
     this.lead = new LeadDispatch({ store: host.store, engine: () => {
       if (!this.leadEngine) throw new Error('The Engine is not available for the Lead tools yet')
       return this.leadEngine
@@ -220,7 +222,7 @@ export class Sessions {
     }
     if ('error' in result) throw result.error
     const settings = this.host.store.settings()
-    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
+    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model, this.host.values)
     await this.decorate(result.agent)
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
@@ -264,7 +266,7 @@ export class Sessions {
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
   /** The id of the message `prompt` delivers under `requestId`, which DSH's inbox events name it by. */
-  promptedId(requestId: string): MessageId { return messageId(key(requestId)) }
+  promptedId(requestId: string): MessageId { return messageId(this.host.values, key(requestId)) }
   /** Enqueues a steering relay to the main Session; relays are durable and retried by `Effects` until delivered, at most once per `requestId`. */
   relay(requestId: string, text: string): void { this.host.effects.enqueue('relay', requestId, { text }) }
   /** Enqueues a durable background notice for injection into the main Session; a new notice with the same `name` replaces a still-waiting notice of that `name`. */
@@ -449,7 +451,7 @@ export class Sessions {
    */
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     const store = this.host.store
-    const parent = scopeParentOf(agent)
+    const parent = this.host.values.scopeParentOf(agent)
     const ticket = store.tickets.get(ticketId)
     const denied = ticket && canComplete(ticket.deliverable) ? ANSWER_DENIED : []
     const allow = WORK_TOOLS.filter(name => !denied.includes(name) && agent.ctx.tools.get(name, parent))

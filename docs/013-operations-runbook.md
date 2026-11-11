@@ -109,6 +109,10 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   them, and stop the Host for a quiescent copy: pausing is not enough, because the pause holds evaluation, dispatch
   and outbound delivery while Sources and health transitions still log. A copy taken while the Host runs (paused or
   not) may gain lines, so treat it as a best-effort backup rather than a consistent snapshot.
+- `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors (M35 reads `previous.json`; the update pipeline in M36 writes it), one directory per
+  deployed version, and `journal.json`. The packaged runtime it falls back to lives beside the installed package in
+  `lib/runtime-entry.js` and `lib/runtime-manifest.json`. The runtime directory belongs in a backup with the database; do not edit a pointer or a version
+  directory while the Host runs, and never hand-edit a hash to make a bundle verify.
 - Worktrees live under `<stateDir>/work`; `scripts/clean-worktrees` prunes finished ones by age. Do not delete a
   worktree of an open Ticket; its assignment is the only record of the checkout.
 
@@ -127,11 +131,28 @@ watches four signals it already has — failed or stopped Assignment ends, the o
 - **Reload the plugin without restarting DSH**: in the plugin manager, disable and re-enable
   `include:dsh-superagent-further-github`; the loader reloads the bundle from `lib/` (rebuild first). The panel and the
   main Session keep working; the Sources restart as `starting`.
+- **A deployed runtime was refused or fell back**: the Logs page (`host` scope) names the descriptor that was rejected
+  and why — a missing or unreadable pointer, a bad hash, another host API, or a schema older than the database. Read
+  `<stateDir>/runtime/journal.json` for the recorded phase and recovery note. Fix the deployment or remove
+  `current.json` while the Host is stopped to start the packaged runtime; M35 writes no `previous.json`, so without one
+  that fallback is the packaged runtime. Do not delete `previous.json` if it is the last
+  known-good version. A source checkout that was never built logs a warning that the packaged runtime cannot be
+  discovered and still starts a verified deployed version; when no candidate starts, the error names `run pnpm build`.
+- **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
+  runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
+  records the expiry, the journal is still committed, and the Store is closed and the lock released whenever the drain
+  reached those phases. A maintenance phase is never skipped by an abort signal; only intake, cancel and in-flight may
+  be. If `journal.json` still says `running`, the next start recovers it.
+- **The journal says `running`**: the previous process stopped during `startup` or `drain`. The next start recovers by
+  preferring the recorded current version when it still verifies, then the previous verified version, then the packaged
+  runtime, and records the recovery. Do not edit the journal or the database schema by hand; a runtime whose schema is
+  older than the database is refused by design and the schema is never migrated down.
 
 ## Upgrade
 
-1. `node scripts/archive-state.mjs --state-dir <dir>`; 2. pull the release tarball; 3. `pnpm install --frozen-lockfile && pnpm build`;
-4. `node scripts/verify-install`; 5. reload the plugin; 6. confirm Overview and Logs are clean.
+1. `node scripts/archive-state.mjs --state-dir <dir>`; 2. pull the release tarball; 3. `pnpm install --frozen-lockfile && pnpm build`
+(which also writes `lib/runtime-entry.js` and its manifest through the bundle check); 4. `node scripts/verify-install`;
+5. reload the plugin; 6. confirm Overview and Logs are clean.
 
 If the installation predates workspace identity, step 4 reports exit 2 and the panel shows `workspaceRequired`: open the setup wizard, select an absolute empty directory (not the state directory, a DSH home or profile, the checkout, or a project workspace), and save. The host registers the titled DSH workspace and creates a new master Session; the old one stays archived and readable, and the main conversation does not continue. A workspace selected again after switching away is unarchived and resumes its own master Session. Then repeat step 4 until it exits 0.
 

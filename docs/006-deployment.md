@@ -237,10 +237,22 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, and, by default, the Ticket directories in `work`. It is system-owned and is never the main Session's workspace. Back it up before upgrades |
+| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, the versioned runtime pointers in `runtime/`, and, by default, the Ticket directories in `work`. It is system-owned and is never the main Session's workspace. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
+
+### Runtime versions and recovery
+
+The stable supervisor in the package starts a versioned domain runtime, so a business update is a file swap rather than a host restart. The supervisor keeps its own state under `<stateDir>/runtime/`:
+
+- `current.json` names the runtime that should start: `{version, entry, hostApi, sha256, schema}`. The entry is relative to `<stateDir>/runtime/<version>/`, and the supervisor checks the path stays inside that directory, the file exists, its SHA-256 matches, its host API is the one the supervisor implements, and its schema is not older than the open database.
+- `previous.json` is the pointer a failed start falls back to. M35 reads it when it names a verified version; the deploy/update pipeline that writes it arrives in M36.
+- `journal.json` records the latest startup or drain and its phase. It is written with a temporary file, fsync and rename, so a crash never leaves a half-written record. A failed `load` or `init` records that phase, not a generic rollback.
+
+The packaged runtime (`lib/runtime-entry.js` plus `lib/runtime-manifest.json` in the installed plugin) is always the last resort. A missing, invalid, mismatched or broken deployed version is a warning in the Logs page and a fallback to the previous version or the package; it does not stop the supervisor and it never changes the database schema downward. Readiness is bounded (30 s): a runtime whose `ready` never settles is disposed and the next candidate starts, and a dispose that hangs is abandoned after its own 10 s bound. Because the packaged pair is a built artifact, a source checkout without `pnpm build` logs that discovery failure and still starts a verified deployed version; only when nothing can start does the error name `pnpm build`, instead of importing TypeScript at run time. Startup records a recovery in the journal and the log when it had to abandon an interrupted version.
+
+Stopping normally drains the runtime in a fixed order: no new work, remaining agents cancelled as a `user` stop with their inboxes kept, a bounded wait for in-flight effects and deliveries (10 s; a phase that overruns is recorded as failed and the later phases still run), the components disposed, the log files flushed, the Store closed and only then the state-directory lock released. The abort signal may skip only the first three stages; dispose, flush, Store close and lock release always run, so an aborted drain never leaks the database or the lock. The supervisor bounds its own sink close (10 s) and lock release (10 s), warns and continues on expiry, and commits the journal only after they finish. The pending version stage/deploy/update surface arrives in M36; until then, an operator who needs to roll back can stop the instance and replace or remove `current.json` so startup uses `previous.json`/the packaged runtime. M35 does not write `previous.json`; an operator may drop in a verified descriptor, and without one startup goes straight to the packaged runtime.
 
 ## Start and stop
 

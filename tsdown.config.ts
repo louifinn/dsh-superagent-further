@@ -11,4 +11,9 @@ export default defineConfig([
   { entry: { client: 'src/client/index.tsx' }, outDir: 'lib', format: 'cjs', platform: 'browser', dts: false, clean: false, plugins: [raw],
     deps: { neverBundle: ['react', 'react/jsx-runtime', 'react-dom'] },
     outputOptions: { entryFileNames: 'client.js', banner: 'window.__ModuleLoader__.load({ id: "dsh-superagent-further", factory: (require) => {', footer: 'return module.exports; } });', intro: 'var module = { exports: {} }; var exports = module.exports;' } },
+  // The versioned domain runtime: one self-contained ESM file the supervisor can copy to <stateDir>/runtime/<version>/ and
+  // import at run time. It bundles every non-DSH dependency it uses and must not import a bare package at run time; only
+  // type imports from @deepseek-ai remain in the source, and the build erases them. `check-runtime-bundle.mjs` enforces that.
+  { entry: { 'runtime-entry': 'src/runtime-entry.ts' }, outDir: 'lib', format: 'esm', fixedExtension: false, platform: 'node', target: 'es2024', dts: false, clean: false,
+    deps: { alwaysBundle: ['zod', 'proper-lockfile'], neverBundle: [/^@deepseek-ai\//] } },
 ])

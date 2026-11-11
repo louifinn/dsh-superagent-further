@@ -53,6 +53,8 @@ const REQUIRED = [
   'lib/index.js',
   'lib/index.d.ts',
   'lib/client.js',
+  'lib/runtime-entry.js',
+  'lib/runtime-manifest.json',
   'prompts/worker.md',
   'skills/dsh-superagent-further-github/SKILL.md',
   'skills/dsh-superagent-further-feishu/SKILL.md',

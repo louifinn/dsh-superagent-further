@@ -23,6 +23,7 @@ import { SettingsSchema } from '../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { testMachine } from './fixtures/deployment.ts'
+import { startTestRuntime } from './fixtures/host.ts'
 import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
 
 type Role = 'orchestrator' | 'worker'
@@ -196,7 +197,7 @@ async function start() {
   seed.saveSettings(SettingsSchema.parse({ ...seeded, workspace: { path: workspaceRoot }, executor: { ...seeded.executor, projects: [project] },
     sources: { github, feishu: { enabled: true, config: { cli: BOT } } } }))
   seed.close()
-  const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), () => {})
+  const runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), () => {})
   await runtime.ready
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
   const settings = runtime.store.settings()

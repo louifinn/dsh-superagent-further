@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import { Runtime } from '../../src/app/runtime.ts'
+import { Runtime, type RuntimeOptions } from '../../src/app/runtime.ts'
+import { Logs } from '../../src/app/logs.ts'
 import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
@@ -16,7 +17,10 @@ import { githubKind } from '../../src/sources/github.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
+import type { Machine } from '../../src/deployment.ts'
 import type { JobEvent, JobView } from '../../src/executor/background.ts'
+import { buildRuntimeHost } from '../../src/supervisor/host.ts'
+import { VERSION } from '../../src/version.ts'
 import { testMachine } from './deployment.ts'
 import { fakeWorkspaces, workspaceDirectory, type FakeWorkspaces } from './workspaces.ts'
 
@@ -383,7 +387,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
   // An answer ticket reads an existing live checkout, so every seeded project needs its workspace directory.
   for (const project of seeded.settings().executor.projects) mkdirSync(project.workspace, { recursive: true })
   seeded.close()
-  const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())
+  const runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), vi.fn())
   await runtime.ready
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
   const settings = runtime.store.settings()
@@ -445,3 +449,20 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     jobs, subagents, step, claim, permissionPresets }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>
+
+/**
+ * Start a Runtime over a test host without the supervisor's directory lock, for the unit suites that do not test hosting.
+ * The supervisor's own specs construct a Supervisor; this helper only gives the runtime its frozen host, a no-op restart,
+ * and a sink that closes when the runtime drains.
+ */
+export function startTestRuntime(ctx: Context, machine: Machine, restart: () => void = () => {}, options: RuntimeOptions = {}): Runtime {
+  let built: ReturnType<typeof buildRuntimeHost> | undefined
+  built = buildRuntimeHost({
+    context: ctx, machine, restart, exit: () => {}, version: VERSION, logger: ctx.logger,
+    lifetime: new AbortController().signal,
+    logs: new Logs(),
+    flushLogs: async () => { await built!.logSink.close() },
+    releaseStateLock: async () => {},
+  })
+  return new Runtime(built.host, options)
+}
