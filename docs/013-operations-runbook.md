@@ -154,8 +154,14 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   happen after `previous.json` and `current.json` were rewritten but before the candidate was loaded or committed, so the
   next start first reconciles both pointers to the journal's baseline (the record of what was serving and what preceded
   it), logs `update.pointers-reconciled phase=… current=… previous=…`, then resolves versions — the uncommitted candidate
-  cannot be adopted by a later boot. It clears the marker, appends an `interrupted` history entry and never re-runs the
-  failed swap.
+  cannot be adopted by a later boot. If the candidate's `init` had already committed its database migration, the start
+  also restores the pre-swap backup recorded in the journal (`runtime/backups/<version>-<timestamp>.sqlite`), logs
+  `update.database-restored phase=… schema=… backup=…`, and only then resolves versions; without that restore the
+  baseline and the packaged runtime would both be older than the migrated database. A missing or unreadable backup, a
+  backup outside `runtime/backups/`, or a journal without a comparable baseline schema leaves the database untouched and
+  logs `update.database-restore-skipped phase=… reason=…` (fail closed, the ordinary refusal is reported instead). A
+  committed journal never restores. The recovery then clears the marker, appends an `interrupted` history entry and
+  never re-runs the failed swap.
 - **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
   runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
   records the expiry, the journal is still committed, and the Store is closed and the lock released whenever the drain
@@ -163,11 +169,13 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   be. If `journal.json` still says `running`, the next start recovers it.
 - **The journal says `running`**: the previous process stopped during `startup`, `drain` or an `update`. An interrupted
   update first reconciles `current.json`/`previous.json` to the journal's recorded baseline (the candidate may have been
-  written but never loaded) before any version is resolved; the recovery line names the phase and both versions. The
-  start then prefers the recorded current version when it still verifies, else the previous verified version, else the
-  packaged runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted`
-  history entry and does not re-run the swap. Do not edit the journal or the database schema by hand; a runtime whose
-  schema is older than the database is refused by design and the schema is never migrated down.
+  written but never loaded) and, when it recorded a pre-swap database backup and the database schema is newer than the
+  baseline's, restores that backup before any version is resolved; the recovery lines name the phase, both versions and
+  the restored schema. A committed journal never triggers a restore, and a missing backup fails closed. The start then
+  prefers the recorded current version when it still verifies, else the previous verified version, else the packaged
+  runtime, and records the recovery; an interrupted update also clears its claim, appends an `interrupted` history entry
+  and does not re-run the swap. Do not edit the journal or the database schema by hand; a runtime whose schema is older
+  than the database is refused by design and the schema is never migrated down.
 
 ## Runtime updates
 
@@ -189,17 +197,19 @@ running process keeps the state-directory lock.
    commits. `pnpm deploy status` prints the snapshot (current, previous, journal, pending request, rollback eligibility,
    history, deploy hints); `pnpm deploy watch` waits, bounded, for the request to resolve.
 3. Any failure after the backup or swap restores the database backup, puts both pointers back, reloads the previous
-   runtime (else the packaged one) and records the failure. A schema downgrade is refused before any drain; the schema
-   only moves forward.
+   runtime (else the packaged one) and records the failure. A crash after the candidate migrated the schema but before
+   `commit` is restored on the next start from the backup path the journal recorded, after the pointer reconciliation. A
+   schema downgrade is refused before any drain; the schema only moves forward.
 4. `pnpm deploy rollback` (or the Updates tab's **Roll back**, which needs the literal confirmation token `ROLLBACK`)
    writes a rollback request; it is refused while a request is pending or an update is in flight, and is eligible only
    when the previous runtime still verifies and its schema is not older than the database.
 
-Fault-injection and smoke checks: `pnpm drill` runs 15 scenarios against a throwaway state directory (a real
+Fault-injection and smoke checks: `pnpm drill` runs 16 scenarios against a throwaway state directory (a real
 stage/apply, a rollback round-trip, a simulated crash at each of the eight journaled apply phases — prepare, stage,
 backup, drain, swap, load, init and commit — each followed by a second boot that serves the reconciled pointer, a
-corrupt staged entry, a pending-request storm, a schema downgrade and a failed-init rollback) and writes
-`.artifacts/drills/<timestamp>.json` with pass/fail per scenario; it exits non-zero on failure.
+corrupt staged entry, a pending-request storm, a schema downgrade, a failed-init rollback and a schema-bumping crash
+that must restore the pre-swap database and serve the baseline) and writes `.artifacts/drills/<timestamp>.json` with
+pass/fail per scenario; it exits non-zero on failure.
 
 Live HMR is for development only: the `dsh-tower enable-dev-hmr` command and the profile's `cordis.patch.yml` entry
 (`id: hmr`, `root: [<repo>]`) reload client bundles without a page refresh only in a dev setup. Production updates use

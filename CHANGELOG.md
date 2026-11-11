@@ -36,12 +36,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   update runs; no upload, download or code-body route), the Updates tab with the confirm-token rollback and history, the
   Overview's pending/failed update link, both locales, and the live `update-failures` incident rule (one record per
   phase, recovered by a later success line, `update.applied` or a healed `update.rolledback`). `scripts/drill.mjs`
-  (`pnpm drill`) runs 15 fault-injection scenarios against a throwaway state directory (stage+apply, rollback round-trip, a
+  (`pnpm drill`) runs 16 fault-injection scenarios against a throwaway state directory (stage+apply, rollback round-trip, a
   simulated crash at each of the eight journaled apply phases — prepare, stage, backup, drain, swap, load, init and commit
   — each followed by a second boot that must serve the reconciled pointer, a corrupt staged entry, a pending-request
-  storm, a schema downgrade, a failed-init rollback) and writes
-  `.artifacts/drills/<timestamp>.json`; ADR-0007, docs/003, 005, 006, 007, 009, 011 and 013, README, README.zh-CN and the
-  pack/docs gates are updated. Live HMR stays development-only.
+  storm, a schema downgrade, a failed-init rollback and a schema-bumping crash that must restore the pre-swap database) and
+  writes `.artifacts/drills/<timestamp>.json`; ADR-0007, docs/003, 005, 006, 007, 009, 011 and 013, README, README.zh-CN
+  and the pack/docs gates are updated. Live HMR stays development-only.
 - A stable supervisor and a versioned domain runtime (ADR-0006, schema 25 unchanged). `src/index.ts` now starts
   `Supervisor`, which owns the state-directory lock, one process-wide `Logs` ring and `LogFileSink`, the machine
   configuration, the runtime version pointers and journal, and the drain controller. It exposes readiness through
@@ -284,6 +284,19 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A runtime update that crashed after the candidate's `init` had already committed its database migration but before
+  `journal.commit` no longer leaves the host unable to start. The pipeline allows a schema-newer candidate, so the
+  migrated database was newer than both the journal's baseline runtime and the packaged fallback and every start was
+  refused as a downgrade. The engine now records the pre-swap backup path in the journal (`Journal.noteBackup`), and
+  boot recovery — after reconciling the pointers, before resolving any version — restores that backup when the
+  interrupted update is at `swap`/`load`/`init`/`commit`, the recorded baseline schema is older than the database and the
+  path is inside `runtime/backups/`, then re-reads the schema and logs `update.database-restored phase=… schema=…
+  backup=…`. A committed journal never restores; a missing or unreadable backup, a path outside that directory or an
+  unrecorded baseline schema fails closed with `update.database-restore-skipped …` and the ordinary refusal stands. Also
+  fixed alongside it: a committed journal that lost only its history append now gets the missing `applied` entry from the
+  claimed request, and the package-relative packaged descriptor is no longer written to `previous.json` (it can never be a
+  rollback target, and a later boot would reject it). Covered by the new crash/committed/missing-backup/history/packaged
+  tests in `tests/update.spec.ts` and by the sixteenth `schema-bump-crash` scenario in `pnpm drill`.
 - A runtime update that crashes after the swap wrote `current.json` no longer comes back as the candidate on the next
   boot. The swap writes `previous.json` and `current.json` before the candidate is loaded, initialized or committed; a
   process death in between left a running journal but a pointer naming the uncommitted version, and the boot after the

@@ -45,8 +45,10 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    - `drain` calls the old runtime handle's own `drain('update')` — the same contract and phases as shutdown — so intake
      stops, in-flight work settles, and the Store closes. The supervisor keeps the lock; the runtime's lock phase is a
      no-op because the supervisor has not set `releasing`.
-   - `swap` writes `previous.json` (the old current, or the recorded previous when no current exists) and then
-     `current.json` (the new descriptor), each through a mode-`0600` temporary file, fsync and rename.
+   - `swap` writes `previous.json` (the old current, or the recorded previous when no current exists; only when that
+     descriptor verifies inside the runtime directory, since the packaged descriptor is relative to the package and can
+     never be a rollback target) and then `current.json` (the new descriptor), each through a mode-`0600` temporary file,
+     fsync and rename.
    - `load` and `init` use the same loader as startup: host API, hash, integer schema and downgrade refusal, then a
      bounded `ready` and the supervisor's self-check (`configured()`, `setupProblem`, `versionStatus()`), which catches a
      runtime that starts but cannot serve.
@@ -75,11 +77,21 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    recorded current (removed when the journal records no current), `previous.json` from the recorded previous
    (removed when it recorded `null`, left untouched when the record predates the field) — and logs
    `update.pointers-reconciled phase=… current=… previous=…`. Only then does it resolve, preferring the journal's
-   recorded current when it still verifies. Without this, the *second* boot would have no running journal to lean on and
-   would silently start the uncommitted candidate from `current.json`, with no drain, backup, self-check, history entry
-   or journal record. A crash inside `commit`, after the candidate began serving in memory, still reconciles to the
-   baseline: serving was never durable, and the baseline is the only state the journal vouches for. The engine then
-   clears the stale processing claim and appends an `interrupted` entry; it never re-runs the failed swap.
+   recorded current when it still verifies. The engine records the pre-swap backup path in the journal
+   (`Journal.noteBackup`), so if the database schema is newer than the recorded baseline's — the candidate's `init`
+   migration committed before the process died — the supervisor also restores that backup and re-reads the schema before
+   resolving, logging `update.database-restored phase=… schema=… backup=…`. Without this, the baseline and the packaged
+   runtime would both be refused as schema downgrades and the host could not start. The restore is limited to a running
+   `update` journal at `swap`, `load`, `init` or `commit`, a recorded path inside `runtime/backups/`, and a database
+   strictly newer than the baseline schema; a committed journal, a missing or unreadable backup, a path outside that
+   directory or an unrecorded baseline schema leaves the database untouched (`update.database-restore-skipped …`) and the
+   ordinary fail-closed refusal stands. Without the pointer reconciliation, the *second* boot would have no running
+   journal to lean on and would silently start the uncommitted candidate from `current.json`, with no drain, backup,
+   self-check, history entry or journal record. A crash inside `commit`, after the candidate began serving in memory,
+   still reconciles to the baseline: serving was never durable, and the baseline is the only state the journal vouches
+   for. The engine then clears the stale processing claim and appends an `interrupted` entry; it never re-runs the failed
+   swap. A crash between `journal.commit` and the history append is reconciled by the committed journal: the stale claim
+   is cleared and the missing `applied` entry is appended from the claimed request.
 
 7. **The panel surface is read-only plus one confirmed write.** The runtime exposes `GET updates` (same-origin, reads the
    files) and `POST updates/rollback`, which requires the literal `confirm:'ROLLBACK'`, audits `updates.rollback`, and
@@ -106,7 +118,8 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
   does not require a second process.
 - **Allow a schema downgrade so rollback always works.** It lets older code rewrite a newer database, losing columns and
   semantics. Rollback is therefore limited to a previous runtime whose schema is at least the current database's, and the
-  backup is a crash-recovery artifact, not a downgrade tool.
+  backup is a crash-recovery artifact, not a downgrade tool: boot recovery restores it only to undo a migration an
+  uncommitted candidate committed, never to move a committed database backwards.
 - **Run the update in the panel process or a helper process.** The state-directory lock, the log ring and the drain all
   live in the supervisor; a second process would either need the lock (blocked by design) or race the running runtime.
 - **Keep the update request in memory or in the database.** A file is visible to the CLI, survives a crash, and can be
@@ -128,11 +141,14 @@ state directory before touching production.
 
 `tests/update.spec.ts` covers the two-boot crash recovery at `swap` and `init` (the reconciled pointers, the recovered
 `versionStatus`, the uncommitted version never starting and `updateStatus()` reporting the recovered current/previous),
-backs up a database while another connection keeps WAL open, and drives a real `Runtime` through `drain('update')` and a
-replacement start on the same state directory. `scripts/drill.mjs` runs 15 scenarios, including a simulated crash at each
-of the eight journaled apply phases followed by a second boot that must serve the reconciled current pointer. The engine's
-apply loop itself is driven with interchangeable fake ESM bundles: serving the real built bundle through the engine
-in-process needs the built package and the live DSH host, so that one composition is exercised by the drill and by
-inspection of the shared `loadRuntime`/`DrainController` paths rather than by a unit test. That is the residual risk: a
-defect confined to the composition inside `UpdateEngine.run` that neither the fake bundles nor the real-runtime restart
-test would show.
+a schema-bumping crash that restores the journaled database backup and keeps the committed case from restoring, a
+missing backup that fails closed, a committed update that lost only its history append, and the packaged runtime never
+being recorded as the previous pointer; it also backs up a database while another connection keeps WAL open, and drives a
+real `Runtime` through `drain('update')` and a replacement start on the same state directory. `scripts/drill.mjs` runs 16
+scenarios, including a simulated crash at each of the eight journaled apply phases followed by a second boot that must
+serve the reconciled current pointer, and a schema-bumping crash that must restore the pre-swap database and serve the
+baseline. The engine's apply loop itself is driven with interchangeable fake ESM bundles: serving the real built bundle
+through the engine in-process needs the built package and the live DSH host, so that one composition is exercised by the
+drill and by inspection of the shared `loadRuntime`/`DrainController` paths rather than by a unit test. That is the
+residual risk: a defect confined to the composition inside `UpdateEngine.run` that neither the fake bundles nor the
+real-runtime restart test would show.

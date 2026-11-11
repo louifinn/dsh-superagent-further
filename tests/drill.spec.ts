@@ -53,8 +53,9 @@ describe('runtime drill', () => {
     expect(names).toEqual(expect.arrayContaining(['stage-built-runtime', 'apply-and-observe', 'rollback-round-trip',
       'crash-recovery-prepare', 'crash-recovery-stage', 'crash-recovery-backup', 'crash-recovery-drain',
       'crash-recovery-swap', 'crash-recovery-load', 'crash-recovery-init', 'crash-recovery-commit',
-      'corrupt-staged-entry', 'pending-request-storm', 'schema-downgrade', 'failed-init-rollback']))
-    expect(names).toHaveLength(15)
+      'corrupt-staged-entry', 'pending-request-storm', 'schema-downgrade', 'failed-init-rollback',
+      'schema-bump-crash']))
+    expect(names).toHaveLength(16)
     for (const scenario of written.scenarios) {
       expect(scenario.ok, `${scenario.name}: ${scenario.steps.map(step => `${step.name} ${step.ok ? 'ok' : step.detail}`).join('; ')}`).toBe(true)
       expect(scenario.durationMs).toBeGreaterThanOrEqual(0)

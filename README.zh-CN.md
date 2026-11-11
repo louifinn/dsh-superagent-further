@@ -35,7 +35,7 @@ dsh-superagent-further 是一个自托管的工程智能体，工作在你团队
 | --- | --- |
 | 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：108 个 spec 文件，**1765 passed / 5 skipped（1770）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 检查 | `pnpm check`：108 个 spec 文件，**1770 passed / 5 skipped（1775）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.4.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.4.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
 | 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复；项目自动化投递可经其 Lead 提出一个项目请求，安装级自动化投递可由主会话创建安装级 Request，Lead 可把本项目之外的工作升级给 Orchestrator 决定 |

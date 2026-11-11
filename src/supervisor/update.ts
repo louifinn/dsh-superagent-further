@@ -20,9 +20,10 @@ import type { Journal, JournalPhase } from './journal.ts'
 import type { LoadedRuntime, PackagedRuntime } from './loader.ts'
 import { currentPointer, previousPointer, runtimeDirectory, type RuntimeSource } from './versions.ts'
 import {
-  appendUpdateHistory, backupDatabase, claimUpdateRequest, readPointerBytes, readUpdateRequest, releaseUpdateClaim,
-  removeDescriptorFile, restoreDatabase, restorePointerBytes, shortReason, stagedDescriptor, updateProcessingPath, updateRequestPath,
-  writeDescriptorFile, type UpdateHistoryEntry, type UpdateOutcome, type UpdateRequest,
+  appendUpdateHistory, backupDatabase, claimUpdateRequest, readPointerBytes, readUpdateHistory, readUpdateRequest,
+  releaseUpdateClaim, removeDescriptorFile, restoreDatabase, restorePointerBytes, shortReason, stagedDescriptor,
+  updateProcessingPath, updateRequestPath, writeDescriptorFile, UPDATE_HISTORY_KEEP, type UpdateHistoryEntry,
+  type UpdateOutcome, type UpdateRequest,
 } from './update-state.ts'
 
 /** The supervisor side of the update engine; the engine owns the state machine, the supervisor owns the runtime. */
@@ -147,6 +148,16 @@ export class UpdateEngine {
     // A process that committed and then died before deleting the claim completed the update; do not report a failure.
     if (interrupted === undefined && journal?.status === 'committed') {
       this.line('info', `update.claim-cleared phase=commit id=${request?.id ?? 'unknown'}`)
+      // The crash may have landed between journal.commit and the history append as well. Record the outcome now, but only
+      // when the completed update is not already in the history (a crash after both writes leaves just the claim).
+      const recorded = request?.id !== undefined && readUpdateHistory(this.env.stateDir, UPDATE_HISTORY_KEEP)
+        .some(entry => entry.id === request.id && entry.outcome === 'applied')
+      if (!recorded) {
+        appendUpdateHistory(this.env.stateDir, { id: request?.id ?? 'committed', action: request?.action ?? 'unknown',
+          outcome: 'applied', version: journal.current?.version ?? request?.version ?? null,
+          from: journal.previous?.version ?? null, phase: 'commit',
+          reason: shortReason('the previous process committed the update but did not record its history'), durationMs: null })
+      }
       return
     }
     const id = request?.id ?? (journal === undefined ? 'interrupted' : `interrupted-${Date.parse(journal.updatedAt) || 0}`)
@@ -195,6 +206,9 @@ export class UpdateEngine {
       phase = 'backup'
       journal.mark('backup', 'started', 'copying the database before the swap')
       backup = backupDatabase(stateDir, target.version, env.now())
+      // Record the copy before the swap so a boot after a crash can restore it when the candidate's init migrated the
+      // database past the baseline schema. commit()/fail() drop the field on their own paths.
+      if (backup !== undefined) journal.noteBackup(backup)
       journal.mark('backup', backup === undefined ? 'skipped' : 'done',
         backup === undefined ? 'no database exists yet, so there is nothing to back up' : `database backed up to ${backup}`)
 
@@ -210,11 +224,14 @@ export class UpdateEngine {
       currentBytes = readPointerBytes(currentPointer(runtimeDir))
       previousBytes = readPointerBytes(previousPointer(runtimeDir))
       const baseline = current ?? previous ?? null
-      if (baseline !== null) writeDescriptorFile(previousPointer(runtimeDir), baseline)
+      // Only a descriptor that verifies inside the runtime directory can be a rollback target. The packaged runtime's entry
+      // is relative to the package, so recording it would make a later boot reject its own previous pointer.
+      const previousBaseline = baseline !== null && env.verify(baseline).entry !== undefined ? baseline : null
+      if (previousBaseline !== null) writeDescriptorFile(previousPointer(runtimeDir), previousBaseline)
       else removeDescriptorFile(previousPointer(runtimeDir))
       writeDescriptorFile(currentPointer(runtimeDir), target)
       swapped = true
-      journal.mark('swap', 'done', `current=${target.version} previous=${baseline?.version ?? 'none'}`)
+      journal.mark('swap', 'done', `current=${target.version} previous=${previousBaseline?.version ?? 'none'}`)
 
       phase = 'load'
       journal.mark('load', 'started', `loading the ${target.version} runtime`)
@@ -232,7 +249,7 @@ export class UpdateEngine {
       served = true
       loaded = undefined
       try {
-        journal.commit({ current: env.current() ?? target, previous: current ?? previous ?? null })
+        journal.commit({ current: env.current() ?? target, previous: previousBaseline })
       } catch (error) {
         // The runtime is already serving and the phases are on disk; a journal write failure must not undo it. The next
         // boot sees the phases and recovers by verification.

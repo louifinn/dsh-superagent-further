@@ -20,8 +20,8 @@ import { HOST_API } from '../src/runtime-host.ts'
 import { Journal } from '../src/supervisor/journal.ts'
 import { Supervisor } from '../src/supervisor/supervisor.ts'
 import {
-  claimUpdateRequest, readUpdateHistory, readUpdateRequest, updateProcessingPath, updateRequestPath, writeUpdateRequest,
-  writeDescriptorFile,
+  backupDatabase, claimUpdateRequest, readUpdateHistory, readUpdateRequest, updateProcessingPath, updateRequestPath,
+  writeUpdateRequest, writeDescriptorFile,
 } from '../src/supervisor/update-state.ts'
 import { currentPointer, previousPointer, runtimeDirectory } from '../src/supervisor/versions.ts'
 import { applyCommand } from './deploy-runtime.mjs'
@@ -117,6 +117,17 @@ function marker(stateDir) {
   try {
     const row = connection.prepare("SELECT value FROM kv WHERE key = 'marker'").get()
     return row?.value
+  } finally {
+    connection.close()
+  }
+}
+
+function schema(stateDir) {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+  const connection = new DatabaseSync(join(stateDir, 'orchestrator.sqlite'), { readOnly: true })
+  try {
+    const row = connection.prepare("SELECT value FROM kv WHERE key = 'schema'").get()
+    return row?.value === undefined ? undefined : Number(row.value)
   } finally {
     connection.close()
   }
@@ -448,6 +459,63 @@ async function failedInitScenario(base) {
   }
 }
 
+async function schemaBumpCrashScenario(base) {
+  const dir = join(base, 'schema-bump-crash')
+  let supervisor
+  let second
+  try {
+    return await record('schema-bump-crash', async step => {
+      let backup
+      await step('leave a crashed candidate that already migrated the database', () => {
+        database(dir, 25, 'old')
+        const previous = fakeVersion(dir, '1.0.0', {}, true)
+        const target = fakeVersion(dir, '2.0.0', { schema: 26 })
+        backup = backupDatabase(dir, '2.0.0', new Date().toISOString())
+        if (backup === undefined) throw new Error('the drill database was not backed up')
+        // The candidate's migration committed inside its init, then the process died before journal.commit: the database
+        // is now schema 26 while every startable runtime (the journal baseline and the packaged fallback) is schema 25.
+        database(dir, 26, 'new')
+        const journal = journalOf(dir)
+        journal.begin('update', previous, null)
+        for (const name of ['prepare', 'stage', 'backup', 'drain', 'swap', 'load']) journal.mark(name, 'done')
+        journal.mark('init', 'started')
+        journal.noteBackup(backup)
+        writeDescriptorFile(previousPointer(runtimeDirectory(dir)), previous)
+        writeDescriptorFile(currentPointer(runtimeDirectory(dir)), target)
+        request(dir, 'apply', '2.0.0')
+        renameSync(updateRequestPath(dir), updateProcessingPath(dir))
+      })
+      supervisor = await step('start the supervisor', () => serving(dir))
+      await step('recovery restores the schema 25 database and serves the journal baseline', () => {
+        const status = supervisor.versionStatus()
+        if (status?.version !== '1.0.0' || status.source !== 'journal') throw new Error(`started ${status?.version} from ${status?.source}`)
+        if (schema(dir) !== 25 || marker(dir) !== 'old') throw new Error(`database schema ${String(schema(dir))} marker ${String(marker(dir))}`)
+        if (!supervisor.logs.list({ limit: 200 }).some(entry => entry.message.startsWith('update.database-restored phase=init'))) {
+          throw new Error('the ring has no database-restored line')
+        }
+        if (lines(join(runtimeDirectory(dir), '2.0.0', 'started.txt')).length > 0) throw new Error('the schema 26 candidate started')
+        return 'schema=25 marker=old'
+      })
+      await step('the claimed request is cleaned and recorded as interrupted', () => until(() => {
+        if (existsSync(updateProcessingPath(dir))) return false
+        return latest(dir)?.outcome === 'interrupted' && latest(dir)?.phase === 'init'
+      }, 10_000, 'the interrupted history entry'))
+      await step('a second boot keeps serving the restored runtime and database', async () => {
+        await supervisor.stop()
+        second = await serving(dir)
+        const status = second.versionStatus()
+        if (status?.version !== '1.0.0' || status.source !== 'current') throw new Error(`second boot started ${status?.version} from ${status?.source}`)
+        if (schema(dir) !== 25 || marker(dir) !== 'old') throw new Error('the restored database did not persist')
+        if (lines(join(runtimeDirectory(dir), '2.0.0', 'started.txt')).length > 0) throw new Error('the migrated candidate started on the second boot')
+        return 'source=current schema=25'
+      })
+    })
+  } finally {
+    await second?.stop().catch(() => {})
+    await supervisor?.stop().catch(() => {})
+  }
+}
+
 export async function runDrill(options = {}) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const from = resolve(options.from ?? process.cwd())
@@ -465,6 +533,7 @@ export async function runDrill(options = {}) {
   scenarios.push(await stormScenario(base))
   scenarios.push(await downgradeScenario(base))
   scenarios.push(await failedInitScenario(base))
+  scenarios.push(await schemaBumpCrashScenario(base))
   const passed = scenarios.filter(scenario => scenario.ok).length
   const report = {
     api: 1,

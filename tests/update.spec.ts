@@ -121,6 +121,28 @@ function marker(): string | undefined {
     connection.close()
   }
 }
+/** Move the database forward exactly the way a candidate runtime's Store migration would (schema and marker together). */
+function migrateDatabase(schema = 26, value = 'new'): void {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+  const connection = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
+  try {
+    connection.prepare("UPDATE kv SET value = ? WHERE key = 'schema'").run(String(schema))
+    connection.prepare("UPDATE kv SET value = ? WHERE key = 'marker'").run(value)
+  } finally {
+    connection.close()
+  }
+}
+/** The schema marker the supervisor reads at boot, or undefined when the database is missing. */
+function schemaVersion(): number | undefined {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+  const connection = new DatabaseSync(join(directory, 'orchestrator.sqlite'), { readOnly: true })
+  try {
+    const row = connection.prepare("SELECT value FROM kv WHERE key = 'schema'").get() as { value?: string } | undefined
+    return row?.value === undefined ? undefined : Number(row.value)
+  } finally {
+    connection.close()
+  }
+}
 /** Write one operator request atomically, as the deployment CLI does. */
 function request(action: 'apply' | 'rollback', version?: string): void {
   mkdirSync(join(directory, 'updates'), { recursive: true })
@@ -146,20 +168,32 @@ async function until(check: () => boolean, timeout = 10_000): Promise<void> {
 /**
  * Leave the journal and both pointers exactly as a death in `phase` would after the swap wrote them: the journal still runs
  * at that phase with the serving version and the pre-update previous recorded, while `current.json` names the candidate.
+ * `options.backup` records the pre-swap database copy the engine took before the swap, as `noteBackup` does.
  */
-function leaveCrash(phase: 'swap' | 'init' | 'commit', serving: RuntimeDescriptor, previous: RuntimeDescriptor | null,
-  target: RuntimeDescriptor): void {
+function leaveCrash(phase: 'swap' | 'load' | 'init' | 'commit', serving: RuntimeDescriptor, previous: RuntimeDescriptor | null,
+  target: RuntimeDescriptor, options: { backup?: string } = {}): void {
   const crashJournal = new Journal(join(runtimeDirectory(directory), 'journal.json'))
   crashJournal.begin('update', serving, previous)
   for (const name of ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit'] as const) {
     if (name === phase) { crashJournal.mark(name, 'started'); break }
     crashJournal.mark(name, 'done')
   }
+  if (options.backup !== undefined) crashJournal.noteBackup(options.backup)
   writeFileSync(previousPointer(runtimeDirectory(directory)), JSON.stringify(serving))
   writeFileSync(currentPointer(runtimeDirectory(directory)), JSON.stringify(target))
   mkdirSync(join(directory, 'updates'), { recursive: true })
   writeFileSync(updateProcessingPath(directory), JSON.stringify({ api: 1, id: `crash-${phase}`, action: 'apply',
     version: target.version, at: new Date().toISOString(), by: 'operator' }))
+}
+/** Leave a committed update journal, as a death between `journal.commit` and the history write would. */
+function leaveCommitted(serving: RuntimeDescriptor, target: RuntimeDescriptor, backup?: string): void {
+  const committed = new Journal(join(runtimeDirectory(directory), 'journal.json'))
+  committed.begin('update', serving, null)
+  for (const name of ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit'] as const) committed.mark(name, 'done')
+  committed.commit({ current: target, previous: serving })
+  if (backup !== undefined) committed.noteBackup(backup)
+  writeFileSync(previousPointer(runtimeDirectory(directory)), JSON.stringify(serving))
+  writeFileSync(currentPointer(runtimeDirectory(directory)), JSON.stringify(target))
 }
 
 describe('update engine', () => {
@@ -295,6 +329,107 @@ describe('update engine', () => {
     expect(pointer(previousPointer(runtimeDirectory(directory)))?.version).toBe('0.9.0')
     expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
     expect(second.updateStatus()).toMatchObject({ current: { version: '1.0.0' }, previous: { version: '0.9.0' } })
+  })
+
+  it('restores the journaled database backup when a crashed candidate had already migrated the schema', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:00:00.000Z')
+    expect(backup).toBeDefined()
+    expect(backup!.startsWith(updateBackupsDirectory(directory))).toBe(true)
+    // The candidate's Store migration committed inside its init before the process died: the database is now newer than every
+    // startable runtime, so the journal's recorded baseline (schema 25) would be refused by the supervisor and the loader.
+    migrateDatabase(26, 'new')
+    leaveCrash('init', serving, null, staged, { backup })
+    const noPackage = (): never => { throw new Error('this test has no packaged runtime') }
+    const supervisor = newSupervisor({ packaged: noPackage })
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'journal' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restored phase=init schema=25'))).toBe(true)
+    // The pointer reconciliation still runs: the uncommitted schema-26 candidate is never adopted.
+    expect(pointer(currentPointer(runtimeDirectory(directory)))?.version).toBe('1.0.0')
+    expect(lines(join(runtimeDirectory(directory), '2.0.0', 'started.txt'))).toEqual([])
+    await supervisor.stop()
+    const second = newSupervisor({ packaged: noPackage })
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(schemaVersion()).toBe(25)
+    expect(marker()).toBe('old')
+  })
+
+  it('never restores a backup for a committed journal', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const target = deploy('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:05:00.000Z')
+    expect(backup).toBeDefined()
+    migrateDatabase(26, 'new')
+    leaveCommitted(serving, target, backup)
+    const supervisor = newSupervisor()
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '2.0.0', source: 'current' })
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry => entry.message.startsWith('update.database-restored'))).toBe(false)
+  })
+
+  it('fails closed and leaves the migrated database untouched when the journaled backup is missing', async () => {
+    database(25, 'old')
+    const serving = deploy('1.0.0')
+    const staged = stage('2.0.0', { schema: 26 })
+    const backup = backupDatabase(directory, '2.0.0', '2026-11-11T10:10:00.000Z')
+    expect(backup).toBeDefined()
+    migrateDatabase(26, 'new')
+    rmSync(backup!, { force: true })
+    leaveCrash('init', serving, null, staged, { backup })
+    const supervisor = newSupervisor({ packaged: (): never => { throw new Error('this test has no packaged runtime') } })
+    await expect(supervisor.start()).rejects.toThrow(/no candidate runtime could be resolved/)
+    expect(schemaVersion()).toBe(26)
+    expect(marker()).toBe('new')
+    expect(supervisor.logs.list({ limit: 200 }).some(entry => entry.message.startsWith('update.database-restored'))).toBe(false)
+    expect(supervisor.logs.list({ limit: 200 }).some(entry =>
+      entry.message.startsWith('update.database-restore-skipped phase=init'))).toBe(true)
+  })
+
+  it('records an applied history entry when a committed update lost only its history write', async () => {
+    database()
+    const serving = deploy('1.0.0')
+    const target = deploy('2.0.0')
+    leaveCommitted(serving, target)
+    // The process died after journal.commit but before appending history and releasing the claim.
+    mkdirSync(join(directory, 'updates'), { recursive: true })
+    writeFileSync(updateProcessingPath(directory), JSON.stringify({ api: 1, id: 'commit-crash', action: 'apply',
+      version: '2.0.0', at: new Date().toISOString(), by: 'operator' }))
+    const supervisor = newSupervisor()
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '2.0.0', source: 'current' })
+    await until(() => !existsSync(updateProcessingPath(directory)))
+    expect(readUpdateHistory(directory, 5).at(-1)).toMatchObject({ id: 'commit-crash', action: 'apply', outcome: 'applied',
+      version: '2.0.0', from: '1.0.0', phase: 'commit' })
+    expect(readUpdateHistory(directory, 5).at(-1)?.reason).toContain('did not record its history')
+  })
+
+  it('does not record the packaged runtime as the previous pointer after an update', async () => {
+    database()
+    const supervisor = newSupervisor()
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: 'packaged', source: 'packaged' })
+    stage('2.0.0')
+    request('apply', '2.0.0')
+    await until(() => supervisor.versionStatus()?.version === '2.0.0')
+    // The packaged descriptor is relative to the package's lib/, not to <stateDir>/runtime/<version>/: it can never be a
+    // rollback target, so it must not be written as previous.json.
+    expect(pointer(previousPointer(runtimeDirectory(directory)))).toBeUndefined()
+    expect(supervisor.updateStatus()).toMatchObject({ current: { version: '2.0.0' }, previous: null })
+    expect(supervisor.updateStatus().rollback).toMatchObject({ eligible: false, version: null })
+    await supervisor.stop()
+    const second = newSupervisor()
+    await second.start()
+    expect(second.versionStatus()).toMatchObject({ version: '2.0.0', source: 'current' })
   })
 
   it('refuses a malformed request without touching the serving runtime', async () => {

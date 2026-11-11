@@ -11,7 +11,7 @@
  * older deployed or packaged runtime is refused before it can touch a newer database.
  */
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Machine } from '../deployment.ts'
@@ -28,8 +28,8 @@ import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
 import { UpdateEngine, type UpdateEnvironment } from './update.ts'
 import {
-  readUpdateHistory, removeDescriptorFile, UPDATE_POLL_MS, updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry,
-  type UpdateSnapshot,
+  readUpdateHistory, removeDescriptorFile, restoreDatabase, shortReason, UPDATE_POLL_MS, updateBackupsDirectory,
+  updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry, type UpdateSnapshot,
 } from './update-state.ts'
 import {
   currentPointer, databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor,
@@ -215,7 +215,8 @@ export class Supervisor {
           interrupted.operation, interrupted.phase)
         this.reconcileUpdatePointers(runtimeDir, interrupted)
       }
-      const database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+      let database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+      database = this.recoverDatabaseBackup(stateDir, interrupted, database)
       let packaged: PackagedRuntime | undefined
       let packagedProblem: unknown
       try {
@@ -273,6 +274,45 @@ export class Supervisor {
     const line = `update.pointers-reconciled phase=${interrupted.phase} current=${current?.version ?? 'none'} previous=${previous}`
     this.logsRing.record('warn', 'update', line)
     this.log.warn('%s', line)
+  }
+
+  /**
+   * Restore the pre-swap database copy a crashed update recorded when the candidate's `init` migrated the database past the
+   * schema its baseline runtime supports. Without this the journal's baseline is refused as a schema downgrade, the packaged
+   * runtime is older than the database too, and the host cannot start until an operator intervenes (ADR-0007). This fails
+   * closed: no backup, no recorded baseline schema, an unreadable backup or one outside `<stateDir>/runtime/backups/` all
+   * leave the database untouched so the ordinary refusal is reported.
+   */
+  private recoverDatabaseBackup(stateDir: string, interrupted: JournalState | undefined,
+    database: number | undefined): number | undefined {
+    if (interrupted?.operation !== 'update' || !SWAPPED_PHASES.includes(interrupted.phase) || interrupted.backup === undefined) {
+      return database
+    }
+    const baseline = interrupted.current?.schema
+    const skip = (reason: string): number | undefined => {
+      const line = `update.database-restore-skipped phase=${interrupted.phase} reason=${shortReason(reason)}`
+      this.logsRing.record('warn', 'update', line)
+      this.log.warn('%s', line)
+      return database
+    }
+    if (baseline === undefined || database === undefined) return skip('the journal does not record a comparable database schema')
+    if (baseline >= database) return database
+    const backups = resolve(updateBackupsDirectory(stateDir))
+    const backup = resolve(stateDir, interrupted.backup)
+    const inside = relative(backups, backup)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      return skip('the recorded backup is outside the runtime backups directory')
+    }
+    try {
+      restoreDatabase(stateDir, backup)
+    } catch (error) {
+      return skip(`the recorded backup could not be restored: ${shortReason(message(error))}`)
+    }
+    const restored = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+    const line = `update.database-restored phase=${interrupted.phase} schema=${restored ?? 'unknown'} baseline=${baseline} backup=${backup}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+    return restored ?? database
   }
 
   /** Load and initialize one verified candidate. A failure disposes what it created and leaves the lock for the next try. */
