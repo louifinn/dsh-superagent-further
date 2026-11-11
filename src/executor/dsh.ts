@@ -17,6 +17,7 @@ import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
+import type { CaptureLogs } from '../app/logs.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, jobOutputPreview, killJobs, onJobSettled, runningJobs, stopBackground, stopSubagents, until, untilQuiet }
   from './background.ts'
@@ -114,6 +115,8 @@ export interface ExecutorHost {
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
   /** Stored Trigger of the message `trigger` replies to, when it replies to one. */
   repliedTo(trigger: Trigger): Trigger | undefined
+  /** Operational log scoped to the executor; entries carry ids and outcomes, never content. */
+  readonly log: CaptureLogs
 }
 /** Looks up a ticket's origin trigger in Store. */
 export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger | undefined =>
@@ -297,6 +300,8 @@ export class DshExecutor implements Executor {
   private readonly settled = new Map<string, readonly JobSnapshot[]>()
   /** The timers of workers that go on after a passing failure, which dispose clears. */
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
+  /** Per-Ticket start of the worker turn in flight, so `turn/end` can report its duration. */
+  private readonly turns = new Map<string, { turn: number; startedAt: number }>()
   /** Executor activations of Lead-hosted workers, by child Session id. */
   private readonly leads: LeadActivations
   /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
@@ -482,6 +487,7 @@ export class DshExecutor implements Executor {
       this.settling.get(ticket.id)?.abort()
       if (cause === 'report') this.track(ticket.id, this.retire(ticket.id, this.leads.take(sessionId), reason))
       else {
+        this.host.log.info('assignment.preempted ticket=%s assignment=%s cause=%s cancelled=true', ticket.id, assignment.id, String(cause))
         this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
         this.stopWork(ticket.id, reason)
       }
@@ -498,12 +504,15 @@ export class DshExecutor implements Executor {
   private async retire(ticketId: string, activation: Activation | undefined, reason: string): Promise<void> {
     const sessionId = workerSessionId(ticketId)
     const agent = this.host.context.agents.get(sessionId as SessionId)
+    let cancelled = false
     if (agent && agent.status !== 'idle') {
+      this.host.log.info('assignment.retiring ticket=%s graceMs=%d', ticketId, RETIRE_GRACE_MS)
       const idle = await until(agent.whenIdle(), this.host.lifetime, RETIRE_GRACE_MS)
-      if (idle === false) agent.cancel({ kind: 'user' }, { keepInbox: false })
+      if (idle === false) { agent.cancel({ kind: 'user' }, { keepInbox: false }); cancelled = true }
     }
     if (activation) await activation.dispose().catch(() => {})
     await stopBackground(this.host.context, sessionId, reason).catch(() => {})
+    this.host.log.info('assignment.retired ticket=%s cancelled=%s', ticketId, String(cancelled))
   }
   /** Stop what a ticket's worker runs in the background (see `stopBackground`). */
   private stopWork(ticketId: string, reason: string, keepInbox = false): void {
@@ -584,6 +593,8 @@ export class DshExecutor implements Executor {
     const jobs = [...known, snapshot].slice(-JOB_SNAPSHOTS)
     this.rememberJobs(ticketId, jobs)
     this.recordJobs(ticketId, assignment.id, jobs)
+    // Operational metadata only: a job's output and arguments are never logged.
+    this.host.log.debug('job.settled ticket=%s job=%s status=%s cause=%s', ticketId, job.id, job.status, event.cause ?? 'none')
     // A wait collected the end, or a teardown killed the job: the worker already hears of it, or must not.
     if (event.awaited || event.cause === 'teardown') return
     // Only a job that ends while its Assignment still runs wakes the worker; a late end is history the panel keeps.
@@ -699,10 +710,12 @@ export class DshExecutor implements Executor {
   }
   /** Records a `failed` report on the ticket and relays the failure to the main Session in one transaction. */
   private failed(ticketId: string, summary: string): void {
-    this.host.store.atomic(() => {
+    const ended = this.host.store.atomic(() => {
       const updated = this.host.engine.report(ticketId, { state: 'failed', summary })
       this.relay(resultRelay(updated, 'failed', summary))
+      return updated
     })
+    this.host.log.info('report.recorded ticket=%s state=failed outcome=%s', ticketId, ended.ended?.outcome ?? 'none')
   }
   private relay({ id, text }: { id: string; text: string }): void { this.host.sessions.relay(id, text) }
   /** Start an independent reviewer subagent for a live change Ticket, recorded on the Ticket while its verdict waits. */
@@ -791,6 +804,7 @@ export class DshExecutor implements Executor {
         to: 'lead', requestId: assignment.id, ticketId: ticket.id, body: text })
       this.host.store.leads.deliver(dispatch.id)
       this.host.engine.assignmentStarted(ticket.id, assignment.id)
+      this.host.log.info('assignment.launched ticket=%s assignment=%s session=%s', ticket.id, assignment.id, sessionId)
       return
     }
   }
@@ -820,7 +834,27 @@ export class DshExecutor implements Executor {
     // history: a step that claimed it may be cancelled or fail before, which drops it.
     this.disposers.push(ctx.on('session/event', (session, event) => {
       const ticketId = ticketOfSession(session.id)
-      if (event.type !== 'user/message' || ticketId === undefined || this.host.closing()) return
+      if (ticketId === undefined || this.host.closing()) return
+      // Turn boundaries are the worker's operational pulse: ids, reason and duration only, never a prompt or an answer.
+      if (event.type === 'turn/start') {
+        this.turns.set(ticketId, { turn: event.data.turn, startedAt: Date.now() })
+        this.host.log.debug('turn.started ticket=%s turn=%d', ticketId, event.data.turn)
+        return
+      }
+      if (event.type === 'turn/end') {
+        const started = this.turns.get(ticketId)
+        const duration = started?.turn === event.data.turn ? Math.max(0, Date.now() - started.startedAt) : 0
+        this.turns.delete(ticketId)
+        const reason = event.data.reason
+        if (reason.kind === 'aborted') {
+          this.host.log.info('turn.ended ticket=%s turn=%d reason=aborted cancel=%s duration=%dms',
+            ticketId, event.data.turn, reason.reason.kind, duration)
+        } else {
+          this.host.log.info('turn.ended ticket=%s turn=%d reason=%s duration=%dms', ticketId, event.data.turn, reason.kind, duration)
+        }
+        return
+      }
+      if (event.type !== 'user/message') return
       const message = event.data
       void this.background(Promise.resolve().then(() => {
         const text = message.content.map(block => block.type === 'text' ? block.text : '').join('')
@@ -834,10 +868,13 @@ export class DshExecutor implements Executor {
         if (read.length) this.host.engine.inputsRead(ticketId, read)
       }))
     }))
-    this.disposers.push(ctx.on('agent/error', ({ agent, error }) => {
+    this.disposers.push(ctx.on('agent/error', ({ agent, error, turn, step }) => {
       const ticket = this.ticketOf(agent)
       const assignment = ticket && runningAssignment(ticket)
       if (!ticket || !assignment || !liveTicket(ticket) || this.host.closing()) return
+      // Error name, code, turn and step are metadata; the error message and any provider payload are never logged.
+      this.host.log.warn('agent.error ticket=%s name=%s code=%s turn=%s step=%s', ticket.id,
+        error instanceof Error ? error.name : 'Error', String((error as { code?: unknown } | undefined)?.code ?? ''), String(turn), String(step))
       if (this.retries(assignment.id, error)) { this.resumeAfter(ticket.id, assignment.id, error); return }
       void this.background(Promise.resolve().then(() => { this.failed(ticket.id, String(error)) }))
     }))
@@ -1009,5 +1046,7 @@ export class DshExecutor implements Executor {
         this.relay(resultRelay(updated, 'waiting', 'Worker ended without a status report. Use orchestrator_ticket_request_status to request one.'))
       }
     })
+    this.host.log.info('report.recorded ticket=%s state=waiting outcome=%s', ticket.id,
+      this.host.store.tickets.get(ticket.id)?.ended?.outcome ?? 'none')
   }
 }

@@ -1,5 +1,6 @@
 /** Shared polling helpers for subscribed threads, overlap-safe cursors, and timer-friendly delays. */
 import { liveTicket, type Thread } from '../core/index.ts'
+import { redactText } from '../app/logs.ts'
 import type { SourceContext } from './host.ts'
 
 /** How long a subscribed Thread with no live Ticket continues to be polled after its last Trigger or Ticket end. */
@@ -29,12 +30,19 @@ export async function pollThreads(ctx: SourceContext, source: string, stopped: (
   for (const thread of ctx.threads.subscribed(source)) {
     if (stopped()) return
     if (skip(thread) || !polled(ctx, thread)) continue
+    const recovered = thread.meta.pollError !== undefined
     try {
       await poll(thread)
       ctx.threads.patch(thread.key, { pollError: undefined })
+      if (recovered) ctx.log?.info('poll.recovered thread=%s source=%s', thread.key, source)
+      else ctx.log?.debug('poll.succeeded thread=%s source=%s', thread.key, source)
     } catch (error) {
       if (stopped()) return
       ctx.threads.patch(thread.key, { pollError: String(error) })
+      // A single failure is routine (a timeout, a rate limit) and only visible when debug is on; the Thread keeps the detail
+      // for the panel. The rendered text is redacted here because the Host logger also sees these arguments.
+      const detail = error instanceof Error ? error.message : String(error)
+      ctx.log?.debug('poll.failed thread=%s source=%s error=%s', thread.key, source, redactText(detail))
     }
   }
 }

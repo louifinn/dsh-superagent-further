@@ -27,6 +27,13 @@ export interface SourceHost {
   /** Returns the context for one Source kind; its `report` writes only the health entries declared by the kind. */
   context(kind: { kind: string; health: readonly string[] }): SourceContext
 }
+/** A scoped logger a Source may use for operational metadata; the panel shows its entries under the Source's kind. */
+export interface SourceLog {
+  debug(...args: unknown[]): void
+  info(...args: unknown[]): void
+  warn(...args: unknown[]): void
+  error(...args: unknown[]): void
+}
 /** Display label, URL, and facts (`null` removes a fact) that a Source publishes on a Thread. */
 export interface ThreadDescription { label?: string; url?: string; facts?: Record<string, ThreadFact | null> }
 /** Application capabilities exposed to a Source kind for reading state, ingesting triggers, managing threads/tickets, and reporting health. */
@@ -34,6 +41,8 @@ export interface SourceContext {
   readonly deployment: Deployment
   readonly commands: Commands
   readonly ready: Promise<void>
+  /** Optional operational log scoped to this Source; absent when the host attaches no ring. */
+  readonly log?: SourceLog
   /** The projects the operator registered, so a Source can poll each repository and name it in what it says. */
   readonly projects: readonly Project[]
 

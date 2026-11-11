@@ -193,6 +193,10 @@ export const ExecutorConfigSchema = z.object({
   projects: ProjectsSchema.default([]),
   /// How long a finished Ticket's worktree and branch stay for inspection; 0 keeps them.
   worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
+  /// Operational log verbosity: debug also records per-poll and per-turn detail, never message or tool content.
+  logLevel: z.enum(['info', 'debug']).default('info'),
+  /// How many daily JSONL log files the host keeps before pruning the oldest.
+  logRetentionDays: z.number().int().min(1).max(30).default(7),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 /**
@@ -266,6 +270,7 @@ export function fieldTier(block: SettingsSave, path: string): FieldTier {
   if (block === 'eval') return path === 'eval.timeoutSeconds' ? 'A' : 'B'
   if (block === 'executor') {
     if (path === 'executor.worktreeKeepDays') return 'A'
+    if (path === 'executor.logLevel' || path === 'executor.logRetentionDays') return 'C'
     if (path === 'executor.directory' || path === 'executor.prepare' || path.startsWith('executor.blockedCommands')
       || path.startsWith('executor.projects')) return 'C'
     return 'B'

@@ -31,15 +31,20 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - `docs/adr/0001-ticket-end-authority.md` records the ticket-end decision: explicit causes, retirement after the reporting
   turn, immediate external preemption, one notification authority per role, the rejected alternatives and the accepted
   crash-window risk.
-- The panel's log ring now carries the plugin's operational record instead of only rare Runtime failures: `src/app/logs.ts`
-  exposes a per-scope capture factory over the one bounded in-memory ring, Sessions/Setup/Automations/Outbox write their
-  warnings under `session`/`setup`/`automation`/`outbox`, and the Runtime records one `info` entry per lifecycle event
-  (`runtime ready`, `trigger.received`, `ticket.created`, `ticket.ended` with by/cause/outcome, `request.ended`,
-  `assignment.started/ended`) and per outbox delivery, with one `warn` for a reply's first failure and none for its
-  retries. `HealthBoard` reports a real state change only, so an error is one `warn` under the claim's name and its
-  recovery one `info`, while the claims that come up ready are summarized in a single startup line. Entries carry ids,
-  scopes, outcomes and short status text, never a message body, and nothing is written to disk;
-  `tests/operational-log.spec.ts` covers the wiring, retry de-duplication and the 400-entry cap.
+- The panel's Host log now outlives a restart and carries the plugin's full operational record. `src/app/logs.ts` keeps
+  a 2000-entry ring (200 by default) with level and scope filters, keyword search, structured `data`, credential
+  redaction, minimum-level gating and 60-second folding of repeated entries. `src/app/log-files.ts` appends every entry
+  to durable JSONL files under `<stateDir>/logs`: one file per UTC day, rotation to `.N` at 20 MiB, retention pruning at
+  startup and day rollover, a 50 ms unref batch flush, a bounded queue with a dropped count, owner-only ACLs, an 8 KiB
+  line cap, and one `logs` health claim that reports a write failure once without breaking the caller or recursing.
+  Sessions, Setup, Automations and the Outbox keep writing their scoped warnings, and the Runtime records the lifecycle,
+  outbox delivery, health-transition, `policy.changed` and `decision.recorded` entries. The Executor and Sources add
+  metadata-only scopes: launch/retire/preempt, turn start/end, background-job settlement, report state/outcome and agent
+  errors under `executor`, and per-poll success/failure/recovery under each Source kind. The Execution settings block
+  gains `logLevel` (`info` or `debug`) and `logRetentionDays` (1–30), which apply without a restart; the panel exposes
+  both in a Logs group. `tests/log-files.spec.ts` and `tests/operational-log.spec.ts` cover the sink, redaction, folding,
+  level gating and every new scope; nothing records a message body, tool argument or result, report summary, setting
+  value, or model content.
 
 ### Changed
 

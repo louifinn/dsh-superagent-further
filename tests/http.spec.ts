@@ -379,11 +379,11 @@ it('serves the Host log page with level and scope filtering', async () => {
   const asked: unknown[] = []
   const logs = { list: (query: unknown) => { asked.push(query); return entries } }
   const call = serve({ logs })
-  expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '' } })
-  expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 120 })
+  expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '', q: '' } })
+  expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 200, q: '' })
   expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5'))
-    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu' } })
-  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5 })
+    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu', q: '' } })
+  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5, q: '' })
   // An unknown level falls back to all instead of failing the page.
   expect((await call('GET', 'logs?level=nonsense')).body).toMatchObject({ level: 'all' })
   // Only the panel's same-origin header reaches the route.

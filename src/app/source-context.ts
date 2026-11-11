@@ -3,7 +3,7 @@ import type { EngineForSources, ReceiveResult, Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { SetupProblem } from '../setup.ts'
-import type { SourceContext } from '../sources/host.ts'
+import type { SourceContext, SourceLog } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Outbox } from './outbox.ts'
 import type { Store } from './store.ts'
@@ -24,6 +24,8 @@ export interface SourceContextDeps {
   readonly feishuProblem?: SetupProblem | undefined
   /** Hands a Trigger to the Engine and schedules the pass that assesses it. */
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
+  /** Returns the scoped operational logger for a Source kind, when the Runtime records one. */
+  log?: (kind: string) => SourceLog
 }
 
 /**
@@ -40,6 +42,7 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
   get requests() { return deps.store.requests.list() },
     commands: deps.commands,
     ready: deps.ready,
+    ...(deps.log === undefined ? {} : { log: deps.log(kind.kind) }),
     configured: () => deps.configured(),
     get problem() { return [deps.feishuProblem, deps.setupProblem].find(problem => problem?.place === kind.kind) },
     config: <C extends Record<string, unknown>>(id: string) => {

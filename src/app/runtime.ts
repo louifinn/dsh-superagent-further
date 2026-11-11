@@ -30,6 +30,7 @@ import { Store } from './store.ts'
 import { evalsHealth, type DeliveryFailure, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { captureLogs, captureScopes, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
+import { LogFileSink } from './log-files.ts'
 import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
@@ -110,6 +111,9 @@ export class Runtime extends Service implements SourceHost {
   private readonly sourceLinks = new TextCache(200_000)
   /** Bounded in-memory log of the plugin host's own messages; the panel reads it through `GET logs`. */
   readonly logs = new Logs()
+  /** The durable JSONL files' health: a failed write reports here once, and its recovery reports ready. */
+  private readonly logsHealth = this.board.claim('logs', { state: 'ready', detail: '' })
+  private logsSink?: LogFileSink
   private readonly log: CaptureLogs
   /** Creates a capture logger per scope over the same ring and Host logger. */
   private readonly capture: (scope: string) => CaptureLogs
@@ -187,9 +191,18 @@ export class Runtime extends Service implements SourceHost {
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
+      // The durable sink is attached once settings exist, so its retention and the ring's minimum level apply from the first
+      // entry the panel would show. Entries recorded before this point stay in the ring only.
+      this.logsSink = new LogFileSink({
+        stateDir: machine.stateDir,
+        retentionDays: () => store.settings().executor.logRetentionDays,
+        onState: (state, detail) => { this.logsHealth.set({ state, detail }) },
+      })
+      this.logs.attach(this.logsSink)
+      this.logs.setMinLevel(() => store.settings().executor.logLevel)
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
-        repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+        repliedTo: trigger => repliedTo({ store, sources }, trigger), log: this.capture('executor') })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
@@ -317,9 +330,10 @@ export class Runtime extends Service implements SourceHost {
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
-        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
+        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger),
+        log: kind => this.capture(kind) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        automations: this.automations,
+        automations: this.automations, log: this.capture('executor'),
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
@@ -560,6 +574,7 @@ export class Runtime extends Service implements SourceHost {
       try {
         const updated = this.engine.report(ticket.id, { state: 'waiting',
           summary: `Worker idle since ${since} on Assignment ${assignment.id}.`, question })
+        this.logs.record('info', 'executor', `report.recorded ticket=${ticket.id} state=waiting outcome=${updated.ended?.outcome ?? 'none'}`)
         const reportAt = runningAssignment(updated)?.report?.at ?? now()
         this.stalled.set(ticket.id, { assignmentId: assignment.id, ...(updated.attention ? { attentionId: updated.attention.id } : {}), reportAt })
         await this.sessions.lead.stalled(updated, assignment, since)
@@ -656,6 +671,12 @@ export class Runtime extends Service implements SourceHost {
       case 'assignment.ended':
         this.logs.record('info', 'assignment', `assignment.ended ticket=${event.data.ticketId} assignment=${event.data.assignmentId} reason=${this.short(event.data.reason)}`)
         return
+      case 'decision.recorded':
+        this.logs.record('info', 'runtime', `decision.recorded decision=${event.data.decisionId} kind=${event.data.kind} thread=${event.data.threadKey}`)
+        return
+      case 'policy.changed':
+        this.logs.record('info', 'runtime', `policy.changed from=${this.short(event.data.from)} to=${this.short(event.data.to)}`)
+        return
       default:
         return
     }
@@ -709,6 +730,13 @@ export class Runtime extends Service implements SourceHost {
     } finally {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
       this.setup.restore()
+      // Flush the durable log before the Store closes: the sink needs no Store, but closing first keeps every shutdown entry
+      // that preceded it on disk. The flush is bounded so a stuck disk cannot hold the host open forever.
+      const sink = this.logsSink
+      if (sink) await Promise.race([sink.close(), new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 10_000)
+        timer.unref?.()
+      })])
       try { this.store.close() } finally {
         const unreleased = (error: unknown) => { this.log.warn('dsh-superagent-further could not release its state directory lock: %s',
           String(error)) }

@@ -141,9 +141,9 @@ export function ExecutionSettings() {
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
-  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), blockedCommands: executor.blockedCommands.join(' ') }
+  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), logRetentionDays: String(executor.logRetentionDays), blockedCommands: executor.blockedCommands.join(' ') }
   const draft = useBlockDraft('executor', saved, blocks.executor.revision,
-    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
+    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), logRetentionDays: numberOf(value.logRetentionDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   const prepare = useRef<HTMLTextAreaElement>(null)
@@ -175,6 +175,19 @@ export function ExecutionSettings() {
         </div>
         <div className="dt-form dt-block">
           <Projects projects={value.projects} onChange={projects => edit({ projects })} />
+        </div>
+        <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('logSettings')}<InfoTip text={t('logSettingsIntro')} /></h2>
+          <Field label={t('logLevelSetting')} hint={t('logLevelSettingHint')}>
+            <select className="dt-select" value={value.logLevel} onChange={event => edit({ logLevel: event.target.value as 'info' | 'debug' })}>
+              <option value="info">{t('logLevel.info')}</option>
+              <option value="debug">{t('logLevel.debug')}</option>
+            </select>
+          </Field>
+          <Field label={t('logRetentionDays')} hint={t('logRetentionDaysHint')}>
+            <Input type="number" min={1} max={30} required value={value.logRetentionDays}
+              onChange={event => edit({ logRetentionDays: event.target.value })} />
+          </Field>
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
