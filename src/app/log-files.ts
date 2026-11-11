@@ -6,8 +6,9 @@
  * no path in this module throws into its caller or writes a log entry itself.
  *
  * `close()` is the one asynchronous path: it stops accepting entries immediately, then writes the last batch with
- * non-blocking appends and resolves once the file is closed, so a shutdown can bound its wait while keeping the event loop
- * free. A stuck disk can leave that promise pending, but it can no longer block the process or re-enter the sink.
+ * non-blocking appends and resolves once the file is closed, so a shutdown can bound its wait while keeping the event
+ * loop free. A stuck disk can leave that promise pending, but the batch no longer blocks the event loop or re-enters the
+ * sink; the synchronous file open itself is still not preempted.
  */
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, write, writeSync } from 'node:fs'
 import { join } from 'node:path'
