@@ -56,8 +56,12 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
      history line.
 
 4. **A failure after the backup or the swap restores everything.** The engine disposes the failed candidate with a bound,
-   copies the database backup over `orchestrator.sqlite` (removing stale `-wal`/`-shm` files first), restores both
-   pointers byte-for-byte as they were, reloads the previous runtime (else the packaged one) with the same bounded loader
+   restores the database backup over `orchestrator.sqlite` through the WAL-safe sequence — the backup is copied to
+   `<db>.restoring.tmp`, fsynced and verified as a readable SQLite database, published as the complete-copy marker
+   `<db>.restoring`, and only then are the failed database's `-wal`/`-shm` files removed and the marker renamed into
+   place; a failure before the marker leaves the database and its WAL untouched, a complete marker found at boot is
+   finished before the schema is read, and a partial `.restoring.tmp` is discarded. It then restores both pointers
+   byte-for-byte as they were, reloads the previous runtime (else the packaged one) with the same bounded loader
    path, journals `fail('rollback', …)`, appends a `rolledback` or `failed` history entry and logs
    `update.failed phase=… reason=…`. The ring line feeds the `update-failures` incident rule. No exception is rethrown
    into the Cordis fiber; the supervisor stays alive. A failure before the swap only needs the journal and the history.
