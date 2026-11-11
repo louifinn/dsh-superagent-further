@@ -210,7 +210,7 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const LogsQuery = z.object({ level: z.enum(['all', 'warn', 'error']).catch('all'), scope: z.string().default(''),
-  limit: z.coerce.number().int().min(1).max(400).default(120) })
+  limit: z.coerce.number().int().min(1).max(2000).default(200), q: z.string().default('') })
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
   offset: count.default(0), limit: limit(20, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
@@ -342,8 +342,8 @@ function routes(runtime: HttpHost): Routes {
     // Automations share the service the main Session's tools use; the panel is another client of the same code path. A missing
     // Host schedule service is a 503 instead of a broken page, and no route can re-target scope or project.
     'GET logs': ({ query }): LogsView => {
-      const { level, scope, limit } = LogsQuery.parse(query)
-      return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit }), level: level as LogFilter, scope }
+      const { level, scope, limit, q } = LogsQuery.parse(query)
+      return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }
     },
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {

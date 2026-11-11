@@ -214,7 +214,9 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
         "prepare": "",
         "blockedCommands": [],
         "projects": [],
-        "worktreeKeepDays": 7
+        "worktreeKeepDays": 7,
+        "logLevel": "info",
+        "logRetentionDays": 7
       },
       "type": "object",
       "properties": {
@@ -322,6 +324,20 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "type": "integer",
           "minimum": 0,
           "maximum": 365
+        },
+        "logLevel": {
+          "default": "info",
+          "type": "string",
+          "enum": [
+            "info",
+            "debug"
+          ]
+        },
+        "logRetentionDays": {
+          "default": 7,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
         }
       },
       "additionalProperties": false

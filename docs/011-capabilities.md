@@ -899,6 +899,19 @@ carry ids, scopes, outcomes and short status text — never a message body.
 `tests/panel-logs.spec.tsx`. The operational wiring landed in Sprint 37: the scoped capture factory, the lifecycle
 and outbox records, the health-transition listener in `src/infra/health.ts`, and `tests/operational-log.spec.ts`.
 
+**Superseded by Sprint 38 (2026-11-11).** The limits stated above no longer hold. The ring keeps 2000 entries (200
+by default) and every entry is also appended to a durable JSONL file under `<stateDir>/logs` through
+`src/app/log-files.ts` (`LogFileSink`): one file per UTC day, rotation to `.N` at 20 MiB, retention pruning at startup
+and day rollover, a 50 ms unref batch flush, a bounded queue with a dropped count, and owner-only ACLs. A write failure
+is reported once through the `logs` health claim and never breaks the caller or recurses into logging. The ring gains
+keyword search, structured `data`, credential redaction, 60-second folding of repeated entries, and a minimum level
+(info or debug). `GET logs` keeps its level/scope filters and widens the limit to 2000. The Execution settings block
+adds `logLevel` and `logRetentionDays`, which apply without a restart. The Executor, Sources and Runtime now record
+launch/retire/preempt, turn start/end, background-job settlement, report state/outcome, agent errors, per-poll source
+results and policy/decision changes as metadata only. `tests/log-files.spec.ts` covers the sink and
+`tests/operational-log.spec.ts` the ring, redaction, folding, level gating and the new scopes. Rotation/export, panel
+search/copy/deep links and an audit scope remain M30.
+
 ## Part I — One "needs you" view (approved 2026-11-10, Sprint 29)
 
 **Context.** Waiting work was spread over the Overview (Tickets, Requests, Leads) and the Automations page (orphaned or

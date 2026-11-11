@@ -8,6 +8,7 @@ import { claimPull, readPull } from '../../sources/github-pull.ts'
 import { projectOf, type Project } from '../../projects.ts'
 import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
+import type { CaptureLogs } from '../logs.ts'
 import type { Store } from '../store.ts'
 import { reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { Sessions } from '../sessions.ts'
@@ -23,6 +24,8 @@ export interface ExecutorToolsHost {
   /** The projects this installation works on, so a Ticket's own repository can be read for its PR. */
   readonly projects: () => readonly Project[]
   sendReplies(): Promise<void>
+  /** Operational log scoped to the executor; a report's summary and any question are never logged. */
+  readonly log?: CaptureLogs
 }
 
 /** A PR number the report links in its own summary, when the link is in the Ticket's repository. */
@@ -191,6 +194,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const notification = relay ? 'orchestrator' : 'internal_only'
           return { result: { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }, updated }
         })
+        host.log?.info('report.recorded ticket=%s state=%s outcome=%s', ticketId, args.state, outcome.updated.ended?.outcome ?? 'none')
         // Prompting the Lead is best-effort and outside the transaction: the report is already durable, and a Lead that
         // cannot be woken leaves the request waiting for the next reconciliation or Lead turn.
         await host.sessions.lead.reported(outcome.updated, { state: args.state, summary: args.summary }, requests)

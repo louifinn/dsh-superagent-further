@@ -4,8 +4,10 @@
  * no test reads an absolute timestamp.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { Logs, captureScopes } from '../src/app/logs.ts'
+import { Logs, captureLogs, captureScopes } from '../src/app/logs.ts'
 import { HealthBoard } from '../src/infra/health.ts'
+import { pollThreads } from '../src/sources/poll.ts'
+import type { SourceContext } from '../src/sources/host.ts'
 import { feishu, startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host
@@ -146,4 +148,140 @@ it('captures printf arguments per scope in one bounded ring while the Host logge
   // The two captured entries are the oldest, so they are the ones the cap trims.
   expect(all[0]!.message).toBe('entry 0')
   expect(all.some(entry => entry.message === 'polled ok')).toBe(false)
+})
+
+it('redacts credentials and environment values before the ring', () => {
+  const day = new Date(Date.UTC(2026, 10, 10))
+  const logs = new Logs(() => day, 20)
+  logs.record('info', 'source', 'Authorization: Bearer supersecret token=abc password=hunter2 env FOO=bar')
+  logs.record('info', 'executor', 'report.recorded', { token: 'abc', ticket: 't1', nested: { password: 'x' } })
+
+  const ring = logs.list()
+  expect(ring[0]!.message).toContain('<redacted>')
+  for (const secret of ['supersecret', 'abc', 'hunter2', 'FOO=bar']) expect(ring[0]!.message).not.toContain(secret)
+  expect(ring[1]!.data).toMatchObject({ token: '<redacted>', ticket: 't1', nested: { password: '<redacted>' } })
+})
+
+it('searches by keyword over message, scope and data, case-insensitively, and returns everything by default', () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 20)
+  logs.record('info', 'assignment', 'assignment.launched ticket=t1')
+  logs.record('warn', 'feishu', 'poll failed: timeout')
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 'ticket-42', kind: 'Policy' })
+
+  expect(logs.list({ q: 'LAUNCHED' }).map(entry => entry.message)).toEqual(['assignment.launched ticket=t1'])
+  expect(logs.list({ q: 'feishu' }).map(entry => entry.message)).toEqual(['poll failed: timeout'])
+  // The keyword is only in the structured data, so this proves data is searched too.
+  expect(logs.list({ q: 'POLICY' }).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(logs.list({ q: 'ticket-42' }).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(logs.list({ q: '' })).toHaveLength(3)
+  expect(logs.list({ q: 'nothing matches' })).toHaveLength(0)
+})
+
+it('folds consecutive identical entries inside 60 seconds and summarizes the streak', () => {
+  let clock = Date.UTC(2026, 10, 10, 0, 0, 0)
+  const logs = new Logs(() => new Date(clock), 20)
+  for (let index = 0; index < 3; index += 1) { logs.record('info', 'source', 'poll.succeeded thread=t'); clock += 1000 }
+  logs.record('info', 'source', 'poll.succeeded thread=u')
+  expect(logs.list().map(entry => entry.message)).toEqual([
+    'poll.succeeded thread=t',
+    'poll.succeeded thread=t (repeated 3 times)',
+    'poll.succeeded thread=u',
+  ])
+  clock += 61_000
+  logs.record('info', 'source', 'poll.succeeded thread=u')
+  expect(logs.list().filter(entry => entry.message === 'poll.succeeded thread=u')).toHaveLength(2)
+})
+
+it('drops debug entries while the minimum level is info, and records them when it changes', () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 20)
+  logs.setMinLevel(() => 'info')
+  logs.record('debug', 'host', 'hidden detail')
+  expect(logs.list()).toHaveLength(0)
+  logs.setMinLevel(() => 'debug')
+  logs.record('debug', 'host', 'visible detail')
+  expect(logs.list().map(entry => entry.message)).toEqual(['visible detail'])
+})
+
+it('records source polling success at debug, one failure detail at debug, and recovery at info', async () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 50)
+  const host = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  const log = captureLogs(logs, host, 'feishu')
+  const thread = { key: 'feishu:t1', subscriptions: [], lastAt: new Date().toISOString(), meta: {} as Record<string, unknown> }
+  const ctx = { log, threads: {
+    subscribed: () => [thread],
+    patch: (_key: string, meta: Record<string, unknown>) => { Object.assign(thread.meta, meta) },
+  }, tickets: { get: () => undefined } } as unknown as SourceContext
+
+  await pollThreads(ctx, 'feishu', () => false, async () => {})
+  await pollThreads(ctx, 'feishu', () => false, async () => { throw new Error('lark timeout') })
+  await pollThreads(ctx, 'feishu', () => false, async () => {})
+
+  expect(logs.list({ level: 'all', scope: 'feishu' }).filter(entry => entry.level === 'debug').map(entry => entry.message)).toEqual([
+    'poll.succeeded thread=feishu:t1 source=feishu',
+    'poll.failed thread=feishu:t1 source=feishu error=lark timeout',
+  ])
+  expect(logs.list({ scope: 'feishu' }).filter(entry => entry.level === 'info').map(entry => entry.message))
+    .toEqual(['poll.recovered thread=feishu:t1 source=feishu'])
+})
+
+it('records the executor launch and the end of a turn, without the turn content', async () => {
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('7', '@bot 修一下回归'), 'answer')
+  await h.runtime.idle()
+  expect(messages('info', 'executor').filter(message => message.startsWith('assignment.launched'))).toEqual([
+    expect.stringContaining(`ticket=${ticket.id}`),
+  ])
+
+  h.ctx.emit('session/event', { id: sessionId } as never, { type: 'turn/start', data: { turn: 1 } } as never)
+  h.ctx.emit('session/event', { id: sessionId } as never, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } } as never)
+  expect(messages('info', 'executor').find(message => message.startsWith('turn.ended'))).toMatch(
+    new RegExp(`^turn\\.ended ticket=${ticket.id} turn=1 reason=completed duration=\\d+ms$`))
+})
+
+it('records debug turn and settled-job metadata when debug logging is enabled', async () => {
+  const current = h.runtime.store.settings().executor
+  await h.runtime.settings.save('executor', { ...current, logLevel: 'debug' }, h.runtime.store.blockRevision('executor'), 'panel')
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('8', '@bot 修一下回归'), 'answer')
+
+  h.ctx.emit('session/event', { id: sessionId } as never, { type: 'turn/start', data: { turn: 1 } } as never)
+  expect(messages('debug', 'executor')).toContain(`turn.started ticket=${ticket.id} turn=1`)
+
+  const job = h.jobs.run(sessionId, 'sleep 1')
+  h.jobs.end(job)
+  await vi.waitFor(() => {
+    expect(messages('debug', 'executor')).toContain(`job.settled ticket=${ticket.id} job=${job} status=completed cause=producer`)
+  })
+})
+
+it('records a report outcome without its summary', async () => {
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('9', '@bot 修一下回归'), 'answer')
+  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'the secret answer' })
+  await h.runtime.idle()
+  const report = messages('info', 'executor').filter(message => message.startsWith('report.recorded'))
+  expect(report.some(message => message.includes(`ticket=${ticket.id}`) && message.includes('state=ready')
+    && message.includes('outcome=completed'))).toBe(true)
+  expect(report.join('\n')).not.toContain('the secret answer')
+})
+
+it('records an agent error by name, code, turn and step without its message', async () => {
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('9', '@bot 修一下回归'), 'answer')
+  const error = Object.assign(new Error('provider exploded'), { code: 'E_PROVIDER' })
+  h.ctx.emit('agent/error', { agent: { id: sessionId }, turn: 1, step: 2, error } as never)
+  await vi.waitFor(() => {
+    const entry = messages('warn', 'executor').find(message => message.startsWith('agent.error'))
+    expect(entry).toContain(`ticket=${ticket.id}`)
+    expect(entry).toContain('name=Error')
+    expect(entry).toContain('code=E_PROVIDER')
+    expect(entry).toContain('turn=1 step=2')
+    expect(entry).not.toContain('provider exploded')
+  })
+})
+
+it('records a decision and a policy change as runtime metadata', async () => {
+  await h.acceptedTicket(feishu('8', '@bot 修一下回归'), 'answer')
+  expect(messages('info', 'runtime').some(message => message.startsWith('decision.recorded decision='))).toBe(true)
+
+  const current = h.runtime.store.settings().policy
+  const changed = { ...current, rules: current.rules.map((rule, index) => index === 0 ? { ...rule, enabled: !rule.enabled } : rule) }
+  await h.runtime.settings.save('policy', changed, h.runtime.store.blockRevision('policy'), 'panel')
+  expect(messages('info', 'runtime').some(message => message.startsWith('policy.changed from='))).toBe(true)
 })
