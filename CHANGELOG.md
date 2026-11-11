@@ -8,6 +8,29 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Deterministic operational incidents with durable records, fingerprint dedupe and content-addressed evidence bundles
+  (schema 25, ADR-0004). The Store-owned `incident` table keeps `{ id, fingerprint UNIQUE, rule, scope { project?,
+  ticket?, request?, session? }, severity: 'low' | 'medium' | 'high' | 'critical', status: 'detected' | 'bundled' |
+  'diagnosed' | 'resolved' | 'dismissed', first_at, last_at, occurrences, title, detail, evidence_dir, diagnosis?,
+  resolution?, updated_at }`; schema 24 migrates to 25 on start by creating the empty table, with no backfill.
+  `src/app/incident-detectors.ts` watches what the Runtime already produces — failed or stopped Assignment ends
+  (4 in 10 minutes per project), `agent.error` (3/10), outbox `reply delivery failed` (3/30), consecutive `poll.failed`
+  per Source (3/10, recovered by `poll.recovered`), a health claim entering `error` and the M21 watchdog's stalled
+  Assignment (sharing its existing request) — with zero model calls, no code changes and no automatic fixes;
+  `update-failures` is reserved for the update pipeline. A stable fingerprint over the rule, normalized scope ids and a
+  digit-normalized detail counts repeats instead of duplicating (one-hour cooldown from `last_at`, then reopen), the
+  daily budget (2 per UTC day), the open cap (100) and the minimum severity (`high`) bound the noise, and each first
+  record writes owner-only `config.json`, `health.json`, `related.json`, a 30-minute `log-window.jsonl` and a hashed
+  `manifest.json` under `<workspace>/artifacts/incidents/<id>/` (newest 20 kept, 30 days), leaving the record
+  `detected` and the `incidents` health claim in error when a bundle cannot be written. The tier-C
+  `executor.incidents` setting (`enabled`, `autoDiagnose` reserved for M34, `dailyBudget`, `minimumSeverity`) has
+  controls under Execution settings; the Incidents tab lists and filters records and shows the evidence manifest,
+  Overview adds a "needs you" block while any is open, and `GET incidents` / `GET incidents/<id>` serve the same
+  views. Covered by `tests/incidents.spec.ts`, `tests/incidents-runtime.spec.ts` (a seeded fault yields exactly one
+  incident inside the cooldown, a second after it, a complete bundle, a failed bundle that cannot crash the pass and
+  no model call), the schema 25 migration and properties specs, `tests/panel-incidents.spec.tsx` and the extended
+  panel-overview, panel-panel, panel-settings, http and policy specs, with docs 005, 006, 007, 009, 011, 013 and the
+  ADR synchronized and the generated reference pages refreshed.
 - The self-evolution Issue outlet and the discovery provenance (phase 2 of document 014, schema 24). The store-owned
   `self_report` table keeps `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status:
   'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`; schema 23 migrates to 24 on start by

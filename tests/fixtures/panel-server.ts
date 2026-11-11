@@ -135,6 +135,12 @@ export interface PanelServer {
   selfReports: ApiResponse<'GET overview'>['selfReports']
   /** True when today's self-report filing cap is reached, so the overview explains why a draft stays a draft. */
   selfReportsBlocked: boolean
+  /** The open incidents Overview's "needs you" row shows; each test may replace them. */
+  incidents: ApiResponse<'GET overview'>['incidents']
+  /** Full incident records the Incidents page lists; the routes filter and page them like the host. */
+  incidentRecords: ApiResponse<'GET incidents'>['incidents']
+  /** Evidence summaries by incident id for the detail route; an absent entry reports no bundle. */
+  incidentEvidence?: Record<string, ApiResponse<'GET incidents/:id'>['evidence']>
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
   /** False simulates a Host without the schedule service: the automations routes answer 503. */
@@ -252,6 +258,7 @@ const overviewView = (): ApiResponse<'GET overview'> => {
     automationAttention: server.automationAttention,
     selfReports: server.selfReports,
     selfReportsBlocked: server.selfReportsBlocked,
+    incidents: server.incidents,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -301,7 +308,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, memories: [], proposals: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, incidents: { count: 0, items: [] }, incidentRecords: [], memories: [], proposals: [],
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
@@ -678,6 +685,25 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { parts: { orchestrator: promptParts(body, 'orchestrator', environment, policy), worker: promptParts(body, 'worker', environment) },
       skills: Object.fromEntries(skills),
       orchestrator: composePrompt(body, 'orchestrator'), worker: composePrompt(body, 'worker'), scope: '' }
+  } },
+  // Deterministic incidents (docs/015): the API filters, counts and pages records the same way the host service does.
+  'GET incidents': { query: ['status', 'severity', 'project', 'ticket', 'request', 'session', 'offset', 'limit'], answer: ({ query }) => {
+    const status = (query.status ?? 'open') as ApiResponse<'GET incidents'>['status']
+    const severity = query.severity as ApiResponse<'GET incidents'>['severity']
+    const scopes = ['project', 'ticket', 'request', 'session'] as const
+    const kept = server.incidentRecords.filter(item => (status === 'all'
+      || (status === 'open' ? item.status === 'detected' || item.status === 'bundled' || item.status === 'diagnosed' : item.status === status))
+      && (severity === undefined || item.severity === severity)
+      && scopes.every(name => !query[name] || item.scope[name] === query[name]))
+    const offset = Number(query.offset ?? 0)
+    const limit = Math.min(100, Number(query.limit ?? 20))
+    return { incidents: kept.slice(offset, offset + limit), total: kept.length, status,
+      ...(severity === undefined ? {} : { severity }), offset, limit }
+  } },
+  'GET incidents/:id': { answer: ({ params }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    return { incident, evidence: server.incidentEvidence?.[incident.id] ?? null }
   } },
 }
 

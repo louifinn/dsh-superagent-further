@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Automations } from '../src/app/automations.ts'
-import { migrateTo22, migrateTo23, migrateTo24 } from '../src/app/migration.ts'
+import { migrateTo22, migrateTo23, migrateTo24, migrateTo25 } from '../src/app/migration.ts'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { Engine, MemoryRepositories, key } from '../src/core/index.ts'
 import type { Assessor, Executor, Outcome, Policy, ProjectRequest, Trigger } from '../src/core/index.ts'
@@ -237,7 +237,9 @@ describe('Schema migration', () => {
         migrateTo22(store)
         migrateTo23(store)
         migrateTo24(store)
+        migrateTo25(store)
         expect(JSON.stringify(store.tickets.list())).toBe(before)
+        expect(store.incidents.list()).toEqual([])
       } finally { store.close() }
     }
   })

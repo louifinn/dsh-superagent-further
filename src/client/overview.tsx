@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import { usePoll, type Problem } from './api.ts'
-import { Button, Icon, Input } from './controls.tsx'
+import { Button, Icon, Input, Tag, type TagTone } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
@@ -140,6 +140,25 @@ function SelfReportEntry({ item, blocked, onChanged }: {
     </div>
   </li>
 }
+/** One open deterministic incident in the Overview's "needs you" row, linking to the Incidents page (docs/015). */
+function IncidentEntry({ item }: { item: ApiResponse<'GET overview'>['incidents']['items'][number] }) {
+  const { t, navigate } = usePanel()
+  const tone: TagTone = item.severity === 'critical' ? 'danger' : item.severity === 'high' ? 'warning'
+    : item.severity === 'medium' ? 'info' : 'quiet'
+  return <li className="dt-row dt-link" data-overview-incident={item.id}>
+    <div className="dt-row-main">
+      <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap"
+        onClick={() => navigate({ page: 'incidents', id: item.id })}>{item.title}</button></div>
+      <div className="dt-row-meta">
+        <Tag tone={tone}>{t(`incidentSeverity.${item.severity}` as never)}</Tag>
+        <LabelValue label={t('incidentRule')} value={t(`incidentRule.${item.rule}` as never)} />
+        <LabelValue label={t('incidentOccurrences')} value={String(item.occurrences)} />
+        <LabelValue label={t('incidentLast')} value={when(item.last_at, t('lang'))} />
+      </div>
+    </div>
+  </li>
+}
+
 export function OverviewPage() {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
@@ -157,6 +176,7 @@ export function OverviewPage() {
   const waiting = project ? data.person.filter(ticket => project === '-' ? !ticket.project : ticket.project === project) : data.person
   // The API always sends both fields; test doubles written before the outlet may not.
   const selfReports = data.selfReports ?? []
+  const incidents = data.incidents ?? { count: 0, items: [] }
   const choices = [{ id: '', label: t('projectFilterAll') }, ...data.projects.map(item => ({ id: item.id, label: item.name })),
     ...data.person.some(ticket => !ticket.project) ? [{ id: '-', label: t('projectFilterNone') }] : []]
   return <>
@@ -198,6 +218,10 @@ export function OverviewPage() {
     {/* Open escalations wait for the Orchestrator. It can answer them here, or accept the work into the escalating project's own Ticket from the main Session when the units differ. */}
     {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
       <ul className="dt-list">{data.escalations.map(item => <EscalationEntry key={item.id} item={item} onChanged={reload} />)}</ul>
+    </Section>}
+    {/* Open deterministic incidents are the host's own findings: they need a person, not a second request (docs/015). */}
+    {incidents.count > 0 && <Section title={t('incidentsNeedsYou')} count={incidents.count} action={more({ page: 'incidents' })}>
+      <ul className="dt-list">{incidents.items.map(item => <IncidentEntry key={item.id} item={item} />)}</ul>
     </Section>}
     {/* Observe-mode self report drafts wait for a person; auto mode files directly and accumulates none here. */}
     {selfReports.length > 0 && <Section title={t('selfReportsTitle')} count={selfReports.length}>

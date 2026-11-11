@@ -61,6 +61,8 @@ import { bindLeadApprovals } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
+import { Incidents } from './incidents.ts'
+import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
@@ -104,6 +106,8 @@ export class Runtime extends Service implements SourceHost {
   readonly passes: Passes
   /** The self-evolution Issue outlet's service, shared by the main Session's tool and the Overview's review routes. */
   readonly selfReports: SelfReports
+  /** Deterministic incident records and evidence bundles (docs/015, ADR-0004). */
+  readonly incidents: Incidents
   readonly ready: Promise<void>
   /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
   private starting = true
@@ -130,6 +134,12 @@ export class Runtime extends Service implements SourceHost {
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** The stalled Assignments the watchdog reported, by Ticket: the Assignment, its attention, and the Report that raised it. */
   private readonly stalled = new Map<string, { assignmentId: string; attentionId?: string; reportAt: string }>()
+  /** The pure incident rules; they read events, log entries and health transitions and never call a model. */
+  private readonly detector = new IncidentDetector({ tickets: id => this.store?.tickets.get(id) })
+  /** Detaches the log observer when the Runtime stops. */
+  private detachIncidentLogs?: () => void
+  /** True once the incidents service exists; early health transitions cannot record anything yet. */
+  private incidentsReady = false
   /** Recent file-delivery failures, newest last and bounded, shown by Overview until the ring drops them. */
   private readonly deliveries: DeliveryFailure[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
@@ -221,6 +231,19 @@ export class Runtime extends Service implements SourceHost {
         health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
         record: message => this.log.warn('dsh-superagent-further: %s', message),
       })
+      // Deterministic incident detection (docs/015, ADR-0004): pure rules over events, the log stream and health
+      // transitions; the records service owns the table, the cooldown and the evidence bundle. No model call, no fix.
+      this.incidents = new Incidents({
+        store: { incidents: store.incidents, settings: () => store.settings() },
+        workspace: () => this.setup.workspace?.path || store.settings().workspace.path || this.machine.stateDir,
+        stateDir: this.machine.stateDir,
+        logs: this.logs,
+        health: board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' }),
+        record: message => this.logs.record('info', 'incidents', message),
+        healthSnapshot: () => this.health,
+      })
+      this.detachIncidentLogs = this.logs.observe((entry, at) => this.detect(this.detector.observeLog(entry, at)))
+      this.incidentsReady = true
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger), log: this.capture('executor') })
@@ -233,6 +256,7 @@ export class Runtime extends Service implements SourceHost {
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           this.recordLifecycle(event)
+          this.detect(this.detector.observeEvent(event))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
@@ -622,6 +646,8 @@ export class Runtime extends Service implements SourceHost {
         this.logs.record('info', 'executor', `report.recorded ticket=${ticket.id} state=waiting outcome=${updated.ended?.outcome ?? 'none'}`)
         const reportAt = runningAssignment(updated)?.report?.at ?? now()
         this.stalled.set(ticket.id, { assignmentId: assignment.id, ...(updated.attention ? { attentionId: updated.attention.id } : {}), reportAt })
+        this.detect(this.detector.stalled({ ticketId: ticket.id,
+          ...(ticket.project === undefined || ticket.project === '' ? {} : { project: ticket.project }), assignmentId: assignment.id }))
         await this.sessions.lead.stalled(updated, assignment, since)
       } catch (error) {
         this.log.warn('dsh-superagent-further watchdog could not raise attention for Ticket %s: %s', ticket.id, String(error))
@@ -674,6 +700,8 @@ export class Runtime extends Service implements SourceHost {
    * collected by `logStartupSummary` instead of one entry per claim, and same-state detail updates never reach this.
    */
   private healthChanged(name: string, previous: Health | undefined, next: Health): void {
+    // Only real state changes reach this listener; a claim entering error is itself a deterministic incident trigger.
+    if (name !== 'incidents') this.detect(this.detector.observeHealth(name, previous, next))
     if (next.state === 'error') {
       this.logs.record('warn', name, `${name} is error: ${this.short(next.detail)}`)
       return
@@ -731,12 +759,28 @@ export class Runtime extends Service implements SourceHost {
     const line = value.replace(/\s+/g, ' ').trim()
     return line.length <= max ? line : `${line.slice(0, max - 3)}...`
   }
+  /**
+   * Applies the deterministic rules' signals: a detection is recorded or counted, a recovery resolves its record.
+   * Failures are reported in the operational log and never escape into the pass (a watchdog scan, an Engine emit).
+   */
+  private detect(signals: readonly IncidentSignal[]): void {
+    if (!this.incidentsReady || signals.length === 0) return
+    for (const signal of signals) {
+      try {
+        if (signal.type === 'detect') this.incidents.record(signal.candidate)
+        else this.incidents.recover(signal.fingerprint)
+      } catch (error) {
+        this.logs.record('warn', 'incidents', `incident detection failed: ${this.short(String(error))}`)
+      }
+    }
+  }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
       selfReports: this.selfReports,
+      incidents: this.incidents,
       leadOverview: () => runtime.leadOverview(),
       deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),
@@ -761,7 +805,8 @@ export class Runtime extends Service implements SourceHost {
     })
   }
   private async shutdown(): Promise<void> {
-    this.closingFlag = true; const passes = this.passes.stop(); this.stopped.abort()
+    this.closingFlag = true; this.detachIncidentLogs?.(); this.detachIncidentLogs = undefined; this.incidentsReady = false
+    const passes = this.passes.stop(); this.stopped.abort()
     try {
       this.assessor.stop()
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]

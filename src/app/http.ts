@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { record } from '../kv.ts'
 import { MEMORY_SORTS } from '../memory.ts'
-import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
+import { THREAD_FILTERS, TICKET_FILTERS, INCIDENT_STATUS_FILTERS, INCIDENT_SEVERITY_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
 import { AutomationCreateSchema, AutomationLimitError, AutomationRunRefusedError, AutomationUpdateSchema, UnknownAutomationError, UnknownProjectError,
   type Automations } from './automations.ts'
 import type { AutomationsView } from './views/automations.ts'
@@ -27,6 +27,8 @@ import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import type { LeadRow, DeliveryFailure } from './views/overview.ts'
 import type { SelfReports } from './self-reports.ts'
+import type { Incidents } from './incidents.ts'
+import type { IncidentFilter } from '../core/incidents.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
@@ -61,6 +63,8 @@ export interface HttpHost {
   readonly automations?: Automations
   /** The self-evolution Issue outlet: drafts for the Overview, and the approve/dismiss actions. */
   readonly selfReports: SelfReports
+  /** Deterministic incident records and their evidence bundles (docs/015). */
+  readonly incidents: Incidents
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -229,6 +233,13 @@ const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language', 'workspace']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
 const RestoreRequest = z.object({ revision: z.number().int().nonnegative(), reason: z.string().trim().max(280).optional() })
+const IncidentsQuery = z.object({
+  status: z.enum(INCIDENT_STATUS_FILTERS).catch('open'),
+  severity: z.enum(INCIDENT_SEVERITY_FILTERS).optional().catch(undefined),
+  project: z.string().trim().max(120).default(''), ticket: z.string().trim().max(120).default(''),
+  request: z.string().trim().max(120).default(''), session: z.string().trim().max(120).default(''),
+  offset, limit: limit(20, 100),
+})
 
 function routes(runtime: HttpHost): Routes {
   const { store } = runtime
@@ -395,6 +406,25 @@ function routes(runtime: HttpHost): Routes {
     'GET logs': ({ query }): LogsView => {
       const { level, scope, limit, q } = LogsQuery.parse(query)
       return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }
+    },
+    // Deterministic incidents (docs/015). Detection itself is not exposed here: M34 adds the diagnose/dismiss actions.
+    'GET incidents': ({ query }) => {
+      const parsed = IncidentsQuery.parse(query)
+      const scope: { project?: string; ticket?: string; request?: string; session?: string } = {}
+      for (const name of ['project', 'ticket', 'request', 'session'] as const) {
+        const value = parsed[name]
+        if (value !== '') scope[name] = value
+      }
+      const filter: IncidentFilter = { status: parsed.status, offset: parsed.offset, limit: parsed.limit,
+        ...(parsed.severity === undefined ? {} : { severity: parsed.severity }),
+        ...(Object.keys(scope).length === 0 ? {} : { scope }) }
+      return { incidents: runtime.incidents.list(filter), total: runtime.incidents.total(filter), status: parsed.status,
+        ...(parsed.severity === undefined ? {} : { severity: parsed.severity }), offset: parsed.offset, limit: parsed.limit }
+    },
+    'GET incidents/:id': ({ params }) => {
+      const view = runtime.incidents.detail(params.id)
+      if (view === undefined) throw new RouteError(404, 'Incident not found')
+      return view
     },
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {
