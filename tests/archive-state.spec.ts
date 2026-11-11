@@ -13,12 +13,12 @@ function root() {
   roots.push(directory)
   return directory
 }
-function state(directory: string): string {
-  const database = new DatabaseSync(join(directory, 'state.sqlite'))
+function state(directory: string, name = 'orchestrator.sqlite'): string {
+  const database = new DatabaseSync(join(directory, name))
   database.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
   database.prepare('INSERT INTO kv (key, value) VALUES (?, ?)').run('schema', '22')
   database.close()
-  return join(directory, 'state.sqlite')
+  return join(directory, name)
 }
 afterEach(() => {
   for (const directory of roots.splice(0)) rmSync(directory, { recursive: true, force: true })
@@ -53,5 +53,26 @@ describe('archive state', () => {
     state(directory)
     for (let index = 0; index < 3; index += 1) archive(directory, { keep: 10, now: new Date(2026, 10, 10, 8, 0, index) })
     expect(readdirSync(join(directory, 'archive'))).toHaveLength(3)
+  })
+  it('archives the orchestrator database by default, not the retired state.sqlite name', () => {
+    const directory = root()
+    // A leftover state.sqlite must not be mistaken for the Host's database: the default names orchestrator.sqlite.
+    state(directory, 'state.sqlite')
+    expect(() => archive(directory)).toThrow(/orchestrator\.sqlite/)
+    state(directory)
+    expect(archive(directory, { now: new Date('2026-11-10T08:30:05.042Z') }).file.replaceAll('\\', '/'))
+      .toMatch(/\/archive\/state-2026-11-10T08-30-05-042Z\.sqlite$/)
+  })
+  it('copies the database named by an explicit --database override', () => {
+    const directory = root()
+    const database = state(directory, 'custom.sqlite')
+    const result = archive(directory, { database, now: new Date('2026-11-10T08:30:05.042Z') })
+    expect(result.file.replaceAll('\\', '/')).toMatch(/\/archive\/state-2026-11-10T08-30-05-042Z\.sqlite$/)
+    const copy = new DatabaseSync(result.file, { readOnly: true })
+    try {
+      expect(copy.prepare('SELECT value FROM kv WHERE key = ?').get('schema')).toEqual({ value: '22' })
+    } finally {
+      copy.close()
+    }
   })
 })

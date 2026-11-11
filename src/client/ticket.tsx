@@ -1,7 +1,7 @@
 /** Ticket detail page: stage and actions, Mandate details, undelivered/delivered Inputs, subscribed Threads, and Assignments. */
 import { useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type TicketPageView } from './api.ts'
-import { DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
+import { Button, DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
 import { decisionMark, reportDot, ticketMark } from './marks.ts'
 import { usePanel } from './provider.tsx'
 import { settingsRoute } from './route.ts'
@@ -44,7 +44,7 @@ function Details({ icon, title, open = false, children }: { icon: IconName; titl
   </DisclosureRow>
 }
 function Assignments({ ticket }: { ticket: TicketPageView }) {
-  const { t } = usePanel()
+  const { t, navigate } = usePanel()
   const report = (state: string) => t('assignmentReportShort', { state: valueLabel(t, 'report', state) })
   return <ul className="dt-list">{ticket.assignments.slice().reverse().map((item, index) => <li key={item.id} className="dt-row">
     <Dot state={item.state === 'running' ? reportDot(item.report?.state) : 'idle'} label={valueLabel(t, 'assignment', item.state)} />
@@ -61,8 +61,11 @@ function Assignments({ ticket }: { ticket: TicketPageView }) {
         {item.endedReason && <span>{reasonLabel(t, item.endedReason)}</span>}
       </div>
     </div>
-    {item.ref && item.ref !== ticket.sessionId && <div className="dt-row-actions"><SessionButton variant="outline"
-      sessionId={item.ref} /></div>}
+    <div className="dt-row-actions">
+      <Button variant="ghost" size="sm" icon={<Icon name="history" size={14} />} data-assignment-logs={item.id}
+        onClick={() => navigate({ page: 'logs', query: { q: `assignment=${item.id}` } })}>{t('logsForAssignment')}</Button>
+      {item.ref && item.ref !== ticket.sessionId && <SessionButton variant="outline" sessionId={item.ref} />}
+    </div>
   </li>)}</ul>
 }
 function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: string }) {
@@ -106,7 +109,7 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
 }
 
 export function TicketPage({ id }: { id: string }) {
-  const { t, call } = usePanel()
+  const { t, call, navigate } = usePanel()
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
   const after = async (request: Promise<unknown>) => { await request; await reload() }
   if (!data) return <><PageHead
@@ -127,6 +130,8 @@ export function TicketPage({ id }: { id: string }) {
   const channel = data.channels[0]
   return <>
     <PageHead title={data.title}>
+      <Button variant="outline" size="sm" icon={<Icon name="history" size={14} />}
+        onClick={() => navigate({ page: 'logs', query: { q: `ticket=${id}` } })}>{t('logsForTicket')}</Button>
       {opening?.url && <ActionLink href={opening.url}>{t('openThread', { source: valueLabel(t, 'source', opening.source) })}</ActionLink>}
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}

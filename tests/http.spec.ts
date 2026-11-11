@@ -15,7 +15,7 @@ type Headers = Record<string, string | undefined>
 function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.0.1') {
   let handler: Handler = async () => {}
   const ctx = { webServer: { host, port: 3082, register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
-  registerHttp(ctx as never, { ready: Promise.resolve(), ...runtime } as unknown as HttpHost)
+  registerHttp(ctx as never, { ready: Promise.resolve(), logs: new Logs(), ...runtime } as unknown as HttpHost)
   return async (method: string, path: string, body?: unknown, headers: Headers = {}) => {
     let status = 0, text = ''
     const chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
@@ -407,3 +407,76 @@ it('filters the Host log API by keyword across message, scope and data, case-ins
   expect(await entries('logs')).toHaveLength(3)
   expect(await entries('logs?q=missing')).toHaveLength(0)
 })
+
+it('audits human-triggered domain actions with metadata only, never values or message text', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const call = serve({
+    logs,
+    store: {
+      settings: () => SettingsSchema.parse({ executor: { projects: [{ id: 'default', name: 'Default', workspace: '/w', repository: 'acme/app' }] } }),
+      tickets: { get: (id: string) => id === 't1' ? { id: 't1', title: 'Fix login' } : undefined },
+    },
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: {
+      save: async () => ({ saved: true, revision: 7, restarting: false }),
+      restore: async (...args: unknown[]) => ({ saved: true, revision: 8, policy_changed: false, restarting: false,
+        context_delivery: 'injected', restoredFrom: args[1] }),
+    },
+    engine: { retryTicket: () => {}, stopTicket: () => {} },
+    decideEscalation: async () => ({ id: 'pr-1', project: 'default', status: 'rejected',
+      replies: [{ by: 'orchestrator', at: '2026-11-11T00:00:00.000Z', text: 'SECRET reply' }], tickets: [], reply_delivered: true }),
+    automations: {
+      create: async () => ({ id: 'auto-1' }), edit: async () => ({ id: 'auto-1' }),
+      run: async () => ({ id: 'auto-1' }), remove: async () => ({ id: 'auto-1', deleted: true }),
+    },
+  })
+  const settingsValue = { blockedCommands: ['gh-personal'], secretToken: 'SECRET setting value' }
+  expect((await call('PUT', 'settings/executor', { value: settingsValue, revision: 0 })).status).toBe(200)
+  expect((await call('POST', 'settings/eval/restore', { revision: 3, reason: 'SECRET reason' })).status).toBe(200)
+  expect((await call('POST', 'tickets/t1/retry')).status).toBe(200)
+  expect((await call('POST', 'tickets/t1/stop')).status).toBe(200)
+  expect((await call('POST', 'escalations/pr-1/decide', { decision: 'reject', reply: 'SECRET reply' })).status).toBe(200)
+  const automation = { title: 'SECRET automation title', instruction: 'SECRET instruction',
+    rrule: 'DTSTART:20261111T090000Z\nRRULE:FREQ=DAILY', project: 'default' }
+  expect((await call('POST', 'automations', automation)).status).toBe(200)
+  expect((await call('PUT', 'automations/auto-1', { title: 'SECRET changed' })).status).toBe(200)
+  expect((await call('POST', 'automations/auto-1/run')).status).toBe(200)
+  expect((await call('DELETE', 'automations/auto-1')).status).toBe(200)
+
+  const { body } = await call('GET', 'logs?scope=audit')
+  const audit = body.entries as { at: string; level: string; scope: string; message: string; data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message.split(' ')[0])).toEqual(['settings.save', 'settings.restore', 'ticket.retry',
+    'ticket.stop', 'escalation.decide', 'automation.create', 'automation.edit', 'automation.run', 'automation.delete'])
+  for (const entry of audit) {
+    expect(entry.level).toBe('info')
+    expect(entry.scope).toBe('audit')
+    expect(entry.message).toContain('actor=operator')
+    expect(entry.data?.actor).toBe('operator')
+  }
+  expect(audit[0]!.message).toContain('block=executor')
+  expect(audit[0]!.message).toContain('revision=7')
+  expect(audit[1]!.message).toContain('block=eval')
+  expect(audit[1]!.message).toContain('restoredFrom=3')
+  expect(audit[2]!.message).toContain('ticket=t1')
+  expect(audit[4]!.message).toContain('request=pr-1')
+  // Settings values, the restore reason, the reply text and an automation's instruction never reach the audit log.
+  const text = JSON.stringify(audit)
+  for (const secret of ['SECRET setting value', 'secretToken', 'gh-personal', 'SECRET reason', 'SECRET reply',
+    'SECRET automation title', 'SECRET instruction', 'SECRET changed']) expect(text).not.toContain(secret)
+})
+
+it('does not audit automatic system events or human actions that fail', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 't1' })
+  const call = serve({
+    logs,
+    store: { settings: () => SettingsSchema.parse({}), blockRevision: () => 0 },
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: { save: async () => { throw new SettingsConflict('Settings changed. Reload before saving.') } },
+  })
+  expect((await call('GET', 'logs')).status).toBe(200)
+  expect((await call('PUT', 'settings/executor', { value: {}, revision: 0 })).status).toBe(409)
+  const { body } = await call('GET', 'logs?scope=audit')
+  expect(body.entries).toEqual([])
+})
+

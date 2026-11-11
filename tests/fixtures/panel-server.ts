@@ -396,13 +396,16 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
       offset, limit, config: server.settings.memory }
   } },
-  'GET logs': { query: ['level', 'scope', 'limit'], answer: ({ query }) => {
+  'GET logs': { query: ['level', 'scope', 'limit', 'q'], answer: ({ query }) => {
     const level = query.level ?? 'all'
     const scope = query.scope ?? ''
+    const q = query.q ?? ''
+    const needle = q.toLowerCase()
     const limit = Number(query.limit ?? 120)
     const kept = server.logs.filter(entry => (scope === '' || entry.scope === scope)
-      && (level === 'all' || (level === 'warn' ? entry.level === 'warn' || entry.level === 'error' : entry.level === 'error')))
-    return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope }
+      && (level === 'all' || (level === 'warn' ? entry.level === 'warn' || entry.level === 'error' : entry.level === 'error'))
+      && (!needle || `${entry.message} ${entry.scope} ${JSON.stringify(entry.data ?? {})}`.toLowerCase().includes(needle)))
+    return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope, q }
   } },
   'GET automations': { answer: () => {
     if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')

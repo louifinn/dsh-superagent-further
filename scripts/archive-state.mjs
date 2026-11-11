@@ -5,8 +5,10 @@
  * inside the database's own locking and produces a consistent file. Old archives are pruned by count so a regular operator
  * does not fill the disk unnoticed.
  *
- * Usage: `node scripts/archive-state.mjs [--state-dir <dir>] [--keep <n>] [--out <dir>]`
- * Defaults: the profile's state directory is required; `--keep 5`; the output directory is `<stateDir>/archive`.
+ * Usage: `node scripts/archive-state.mjs --state-dir <dir> [--database <path>] [--keep <n>] [--out <dir>]`
+ * Defaults: the profile's state directory is required and its database is `<stateDir>/orchestrator.sqlite`; `--keep 5`;
+ * the output directory is `<stateDir>/archive`. Operational log files under `<stateDir>/logs` are not in the database
+ * snapshot and must be copied separately when they are needed after a move.
  */
 import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -23,11 +25,13 @@ export function archives(directory) {
 }
 
 /**
- * Take one consistent copy of `<stateDir>/state.sqlite` and prune the oldest archives beyond `keep`.
- * @returns the archived file's path.
+ * Take one consistent copy of the state database (`<stateDir>/orchestrator.sqlite` by default) and prune the oldest
+ * archives beyond `keep`.
+ * @returns the archived file's path and the names it pruned.
  */
-export function archive(stateDir, { keep = 5, out = join(stateDir, 'archive'), now = new Date() } = {}) {
-  const source = join(stateDir, 'state.sqlite')
+export function archive(stateDir, { database = join(stateDir, 'orchestrator.sqlite'), keep = 5,
+  out = join(stateDir, 'archive'), now = new Date() } = {}) {
+  const source = database
   const at = statSync(source)
   if (!at.isFile()) throw new Error(`${source} is not a file`)
   mkdirSync(out, { recursive: true })
@@ -35,11 +39,11 @@ export function archive(stateDir, { keep = 5, out = join(stateDir, 'archive'), n
   const stamp = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}T${pad(now.getUTCHours())}`
     + `-${pad(now.getUTCMinutes())}-${pad(now.getUTCSeconds())}-${pad(now.getUTCMilliseconds(), 3)}Z`
   const target = join(out, `state-${stamp}.sqlite`)
-  const database = new DatabaseSync(source, { readOnly: true })
+  const connection = new DatabaseSync(source, { readOnly: true })
   try {
-    database.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`)
+    connection.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`)
   } finally {
-    database.close()
+    connection.close()
   }
   const pruned = []
   for (const name of archives(out).slice(0, Math.max(0, archives(out).length - keep))) {
@@ -57,12 +61,13 @@ function main() {
   }
   const stateDir = option('state-dir')
   if (!stateDir) {
-    console.error('usage: node scripts/archive-state.mjs --state-dir <dir> [--keep <n>] [--out <dir>]')
+    console.error('usage: node scripts/archive-state.mjs --state-dir <dir> [--database <path>] [--keep <n>] [--out <dir>]')
     process.exit(2)
   }
   const keep = option('keep') === undefined ? 5 : Number(option('keep'))
   if (!Number.isInteger(keep) || keep < 0) throw new Error('--keep must be a non-negative integer')
-  const result = archive(stateDir, { keep, ...(option('out') ? { out: option('out') } : {}) })
+  const result = archive(stateDir, { keep, ...(option('database') ? { database: option('database') } : {}),
+    ...(option('out') ? { out: option('out') } : {}) })
   console.log(`archived ${result.file}${result.pruned.length ? `, pruned ${result.pruned.length} old archive(s)` : ''}`)
 }
 
