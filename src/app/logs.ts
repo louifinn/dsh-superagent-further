@@ -67,27 +67,49 @@ export class Logs {
   private minimum: () => LogMinLevel = () => 'debug'
   /** The consecutive streak being folded: its first time, its last time, and how many entries it holds. */
   private fold?: { at: number; lastAt: number; level: LogLevel; scope: string; message: string; data?: Record<string, unknown>; count: number }
+  /** Bounded observers of every recorded entry, used by deterministic incident detection (ADR-0004). */
+  private readonly observers = new Set<(entry: LogEntry, at: Date) => void>()
   constructor(private readonly now: () => Date = () => new Date(), private readonly limit = LOG_LIMIT) {}
 
   /** Attaches the durable sink; entries recorded before this call stay in the ring only. */
   attach(sink: LogSink): void { this.sink = sink }
 
+  /**
+   * Observes every entry the host records, including debug entries a settings level would hide from the ring. An
+   * observer runs inside the recording call, so it must stay synchronous and cheap; one that throws is ignored and never
+   * breaks the caller. Returns a function that stops observing.
+   */
+  observe(listener: (entry: LogEntry, at: Date) => void): () => void {
+    this.observers.add(listener)
+    return () => { this.observers.delete(listener) }
+  }
+
   /** Sets the minimum accepted level. The callback is read per entry so settings edits apply immediately. */
   setMinLevel(read: () => LogMinLevel): void { this.minimum = read }
 
   record(level: LogLevel, scope: string, message: string, data?: Record<string, unknown>): void {
-    // Debug is a verbosity opt-in: when it is off, no debug event is created in the ring or on disk.
     let minimum: LogMinLevel = 'debug'
     try { minimum = this.minimum() } catch { minimum = 'info' }
-    if (level === 'debug' && minimum === 'info') return
     const at = this.now()
     const clean = redactText(message)
     const cleanData = data === undefined ? undefined : redactData(data) as Record<string, unknown>
     const entry: LogEntry = { at: at.toISOString(), level, scope, message: clean }
     if (cleanData !== undefined) entry.data = cleanData
+    // Debug is a verbosity opt-in: when it is off, the entry never reaches the ring or disk. Observers still see it, so a
+    // debug poll failure reaches detection even when the ring is set to info; they only inspect entries, never write them.
+    if (level === 'debug' && minimum === 'info') { this.notify(entry, at); return }
     // The sink only enqueues; it must never break a caller or feed a message back into the ring.
     try { this.sink?.append(entry) } catch { /* A log sink never fails its caller. */ }
     this.push(entry, at.getTime())
+    // Observers see the entry after it is in the ring, so an incident's evidence window includes the entry that tripped it.
+    this.notify(entry, at)
+  }
+
+  /** Notifies every observer of one entry; an observer can never fail the caller that logged it. */
+  private notify(entry: LogEntry, at: Date): void {
+    for (const observer of [...this.observers]) {
+      try { observer(entry, at) } catch { /* A log observer never fails its caller. */ }
+    }
   }
 
   /** Newest last, so the panel can render a reversed list without losing the ordering of one millisecond. */

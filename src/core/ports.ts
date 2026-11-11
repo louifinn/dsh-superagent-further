@@ -165,6 +165,8 @@ export interface Repositories {
   projectRequests?: ProjectRequestRepository
   /** Absent from repositories opened before schema 24, such as `MemoryRepositories`; the Issue outlet refuses there. */
   selfReports?: SelfReportRepository
+  /** Absent from repositories opened before schema 25, such as `MemoryRepositories`; detection refuses there. */
+  incidents?: import('./incidents.ts').IncidentRepository
   decisions: {
     get(id: string): Decision | undefined
     save(decision: Decision): void

@@ -23,6 +23,39 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
    Host writes no artifact log; use the Logs tab and the JSONL files below instead.
 4. Run `node scripts/verify-install --state-dir <dir>`; it prints the schema version, the enabled blocks and the
    Source setup problems, and exits non-zero while setup is incomplete.
+5. Open the **Incidents** tab and work through any open record. The host creates and dedupes them without a model
+   call; the next section says where the evidence lives and what the settings gate controls.
+
+## Incidents
+
+Detection is deterministic and records, but fixes nothing: an incident is a durable finding, not a repair. The host
+watches four signals it already has — failed or stopped Assignment ends, the operational log (`agent.error`,
+`reply delivery failed`, consecutive `poll.failed` per Source and its `poll.recovered`), a health claim flipping to
+`error` and back, and the M21 watchdog's stalled Assignment — and dedupes them by fingerprint.
+
+- **Where to look**: the **Incidents** tab, or `GET incidents` / `GET incidents/<id>` on the management API. The list
+  starts at open records (`detected`, `bundled`, `diagnosed`) and filters by any status, severity and scope id
+  (`project`, `ticket`, `request`, `session`). A record shows the rule, severity, scope ids, first and last seen times,
+  `occurrences`, a short ids-and-counts detail and the fingerprint. Overview adds a "needs you" block while any record
+  is open.
+- **Evidence**: each record writes a bundle under `<workspace>/artifacts/incidents/<id>/` — its directory is shown on
+  the detail. The bundle holds `config.json` (the redacted settings block and the plugin version), `health.json`, the
+  related scope ids and a 30-minute `log-window.jsonl` gathered from the ring and the durable files, and
+  `manifest.json` hashes every file. The directories and files are owner-only. The newest 20 bundles and those under
+  30 days are kept; a record whose bundle could not be written stays `detected` with no evidence, and the `incidents`
+  health claim turns to `error` — a detection failure never breaks a pass.
+- **Noise controls**: **Execution → Settings → Incident detection** (tier C, panel or API only) sets `enabled`, the
+  daily budget of new records (default 2), the minimum severity (default `high`) and the reserved `autoDiagnose`
+  switch. Repeats of one condition count occurrences and do not use the budget; a resolved or dismissed record stays
+  quiet for a one-hour cooldown and then reopens. A health flip and a stalled Assignment are recorded at high severity
+  even after the daily budget is spent; fingerprint dedupe, the cooldown and the open-record cap still apply to them.
+- **What is not there yet**: detection makes no model call and changes no code or Ticket, and this release has no
+  diagnose or dismiss buttons. The reserved `autoDiagnose` setting is consumed by M34's read-only diagnoser, and the
+  `update-failures` rule by M36.
+- **Schema**: records live in the `incident` table of schema 25. A schema 24 database migrates on start with the
+  table created empty; no backfill invents historical incidents. The table is not part of `archive-state` beyond the
+  database copy, and the evidence bundles live outside the database, so copy `<workspace>/artifacts/incidents`
+  separately when a backup must include them.
 
 ## State and backups
 

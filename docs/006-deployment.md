@@ -374,7 +374,7 @@ The operator normally saves settings in the panel or through the management API.
 | --- | --- | --- |
 | A — direct | `pause`; `eval.timeoutSeconds`; `executor.worktreeKeepDays`; a Source's `pollSeconds`, `failuresBeforeError`, `observeIssues`, `observePulls`, `observeComments`, `observeCi`, `readPageSize`, `linkTimeoutMs` and `digestHour` | The panel, the API, or the main Session's tools with a reason |
 | B — confirmation | `eval.mode`, `eval.model`; `executor.model`, `executor.maxWorkers`, `executor.projectWorkers`; every `policy.rules` and `policy.sources` change; every `memory.*`; `language.default`; a Source's `enabled`, `chats`, `directMessages`, `otherChats` and `digestChat` | The panel or the API; a tool save is refused with `approvalRequired`, and the tool's `orchestrator_settings_propose` records a proposal for the panel to apply |
-| C — panel only | `executor.directory`, `executor.prepare`, `executor.blockedCommands`, `executor.projects`; `github.cli`, `feishu.cli`; anything that restarts the application | The panel or the API; a tool save keeps the existing `panelOnly…` refusal |
+| C — panel only | `executor.directory`, `executor.prepare`, `executor.blockedCommands`, `executor.projects`; `executor.incidents.enabled`, `executor.incidents.autoDiagnose`, `executor.incidents.dailyBudget`, `executor.incidents.minimumSeverity`; `github.cli`, `feishu.cli`; anything that restarts the application | The panel or the API; a tool save keeps the existing `panelOnly…` refusal |
 
 A B change is proposed, not saved, by the Agent: `orchestrator_settings_propose` validates it, records the person's reason and the block's base revision, and the panel's Settings page lists it with a per-field diff. **Apply** runs the same path as a panel save, so guards, account checks, Policy effects and restart decisions behave exactly as they do for a manual save; **Reject** closes it without writing settings. One proposal per block is pending at a time (a newer one supersedes the older), and a pending proposal expires after 7 days or when the block revision moves. Tier-A changes still apply without a restart. Pending proposals appear above the settings group they change, with the block, the requester's reason and Session, the expiry and the old → new value of each changed field; the count is the badge on Settings, and it appears on every settings group. An applied proposal's history row names the proposal, its actor and reason.
 
@@ -430,6 +430,8 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
+| `GET incidents` | The incident records of schema 25, filtered by `status` (`open`, one status or `all`), `severity` and any scope id (`project`, `ticket`, `request`, `session`) and paged with `offset` and `limit`; `incidents`, `total`, the applied filters and the window |
+| `GET incidents/<id>` | One incident and its evidence summary: the `dir` under `<workspace>/artifacts/incidents/`, and the content-addressed manifest with its version, files, sizes and hashes; 404 for an unknown id |
 
 The panel shows the reply queue while messages wait: how many, how many failed at least once, the oldest wait and the
 next attempt. A polling Source shows its next check beside its last message, so a quiet Source and a stuck one look
@@ -446,6 +448,7 @@ Health entries are grouped by responsibility:
 | `assessment`, `launch`, `delivery`, `relay`, `notice`, `reply` | Stored work described in [003 Execution](003-execution.md); delivery counts waiting work, while reply covers Channel messages |
 | `worker` | Executor Session event handling; appears after its first failure |
 | `github`, `feishu`, `history`, `digest` | Source polling, events, history recovery and the daily digest |
+| `incidents` | Deterministic incident detection: ready while the detector records incidents, error when a recorded incident's evidence bundle could not be written |
 | `sync:<source id>` | Allowed-list synchronization |
 
 A refusal has a status and `error`, its English text:
@@ -460,7 +463,7 @@ The blocks:
 - `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the watched repositories and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, `otherChats` as `"none"` or `"mentions"`, and `digestChat` (empty for no digest) with `digestHour` (local hour, default 9). The repositories are not part of this config: the first project under Execution → Projects supplies the primary one, and the rest are derived from the projects.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
-- `executor`: `model`, `maxWorkers`, `projectWorkers`, `directory`, `prepare`, `blockedCommands`, `projects` and `worktreeKeepDays`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `executor`: `model`, `maxWorkers`, `projectWorkers`, `directory`, `prepare`, `blockedCommands`, `projects`, `worktreeKeepDays`, `logLevel`, `logRetentionDays` and `incidents` (`enabled`, `autoDiagnose`, `dailyBudget` and `minimumSeverity`; `autoDiagnose` is reserved for the read-only diagnoser and changes no behavior in this schema). The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
 Changing a CLI, or the first project, runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
@@ -499,8 +502,8 @@ and starts a replacement with a recovery note.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
 5. If the installation predates workspace identity, it starts paused at `workspaceRequired`: open the panel and finish the workspace step of the setup wizard (or save the workspace block on **Execution → Settings**). The host registers the new DSH workspace and creates a new master Session; the old master Session is archived and readable, and the main conversation does not continue. An installation that already has a workspace skips this step. Selecting a previously used workspace later unarchives and resumes that workspace's own master Session.
-6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 24 (current)`, or
-   `schema 23 migrates to 24 on start` when the next start is the one that upgrades the database.
+6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 25 (current)`, or
+   `schema 24 migrates to 25 on start` when the next start is the one that upgrades the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
 settings and from their history, and setup derives the primary repository from the first project under **Execution →

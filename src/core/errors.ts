@@ -60,6 +60,9 @@ export const USER_ERRORS = {
   selfReportNotDraft: ['refused', 'Only a draft self report can be approved or dismissed'],
   selfReportLimit: ['refused', 'At most {limit} self reports may be filed per day; this finding stays a draft'],
   selfReportFileFailed: ['refused', 'Filing the self report failed: {error}'],
+  incidentInvalid: ['refused', 'The incident record is not valid: {reason}'],
+  incidentTransition: ['refused', 'An incident cannot change from {from} to {to}'],
+  incidentUnknown: ['missing', 'Unknown incident: {incident}'],
 } as const satisfies Record<string, readonly ['missing' | 'refused', string]>
 export type UserErrorCode = keyof typeof USER_ERRORS
 

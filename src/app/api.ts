@@ -16,9 +16,20 @@ import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
+import type { IncidentDetailView, IncidentListView } from './incidents.ts'
+import type { IncidentSeverity, IncidentStatus } from '../core/incidents.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
+/** The Incidents page's status filter: `open` means the three unfinished states, `all` means every record. */
+export const INCIDENT_STATUS_FILTERS = ['open', 'detected', 'bundled', 'diagnosed', 'resolved', 'dismissed', 'all'] as const
+/** Literal so the panel bundle never imports `core/incidents.ts` (it uses node:crypto for fingerprints). */
+export const INCIDENT_SEVERITY_FILTERS = ['low', 'medium', 'high', 'critical'] as const
+export const INCIDENT_SCOPE_FILTERS = ['project', 'ticket', 'request', 'session'] as const
+export type IncidentStatusFilter = typeof INCIDENT_STATUS_FILTERS[number]
+export type IncidentSeverityFilter = typeof INCIDENT_SEVERITY_FILTERS[number]
+export type IncidentScopeFilter = typeof INCIDENT_SCOPE_FILTERS[number]
+export type IncidentStatusValue = IncidentStatus
 export type TicketFilter = typeof TICKET_FILTERS[number]
 export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }
@@ -83,6 +94,11 @@ export interface Api {
   'POST self-reports/:id/approve': { response: { status: 'filed' | 'linked'; report_id: string; issue_number: number } }
   /** Dismiss one draft self report from the Overview without filing it. */
   'POST self-reports/:id/dismiss': { response: { status: 'dismissed'; id: string } }
+  /** Deterministic incidents, newest first, with the gate's filters and paging (docs/006-deployment.md). */
+  'GET incidents': { query?: Paged & { status?: IncidentStatusFilter; severity?: IncidentSeverity; project?: string
+    ; ticket?: string; request?: string; session?: string }; response: IncidentListView }
+  /** One incident with its evidence manifest summary, or 404 when the record does not exist. */
+  'GET incidents/:id': { response: IncidentDetailView }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

@@ -6,7 +6,7 @@ import { LIMITS } from './limits.ts'
 import { z } from 'zod'
 import { ADMISSION_DEFAULTS, type Admission, type AdmissionCell, type AdmissionRow } from './admission.ts'
 import { key, type AssessmentOutcome, type Mandate, type Policy, type PolicyEffect, type SourceScope, type Strength, type Thread, type Ticket,
-  type Trigger, type ActorRef, type GateResult } from './core/index.ts'
+  type Trigger, type ActorRef, type GateResult, INCIDENT_DAILY_BUDGET_MAX, INCIDENT_SEVERITIES } from './core/index.ts'
 import { sameName } from './infra/text.ts'
 import { WORKER_COMMANDS } from './infra/environment.ts'
 import { isAbsolutePath } from './infra/paths.ts'
@@ -185,6 +185,18 @@ export const EvalConfigSchema = z.object({
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
+/**
+ * Deterministic incident detection (ADR-0004, ADR-0004): `enabled` is the gate for the detectors, `autoDiagnose` is
+ * reserved for the read-only diagnoser (M34), `dailyBudget` caps new records a day, and `minimumSeverity` keeps quiet
+ * conditions out of the record. Detection makes no model call and changes no code.
+ */
+export const IncidentsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  autoDiagnose: z.boolean().default(true),
+  dailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
+  minimumSeverity: z.enum(INCIDENT_SEVERITIES).default('high'),
+}).strict()
+export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>
 /** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, blocked commands, and the registered projects. */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
@@ -202,6 +214,8 @@ export const ExecutorConfigSchema = z.object({
   logLevel: z.enum(['info', 'debug']).default('info'),
   /// How many daily JSONL log files the host keeps before pruning the oldest.
   logRetentionDays: z.number().int().min(1).max(30).default(7),
+  /// Deterministic incident detection (ADR-0004); no model call and no automatic fix.
+  incidents: IncidentsConfigSchema.default(() => IncidentsConfigSchema.parse({})),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 /**
@@ -289,6 +303,8 @@ export function fieldTier(block: SettingsSave, path: string): FieldTier {
     if (path === 'executor.logLevel' || path === 'executor.logRetentionDays') return 'C'
     if (path === 'executor.directory' || path === 'executor.prepare' || path.startsWith('executor.blockedCommands')
       || path.startsWith('executor.projects')) return 'C'
+    // Incident detection and its budget are operator-only: the detectors decide what the panel records (ADR-0004).
+    if (path === 'executor.incidents' || path.startsWith('executor.incidents.')) return 'C'
     return 'B'
   }
   // Memory and language are operator preferences. Anything else is a block with no assigned tier, so panel-only.

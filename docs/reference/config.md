@@ -226,7 +226,13 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
         "projects": [],
         "worktreeKeepDays": 7,
         "logLevel": "info",
-        "logRetentionDays": 7
+        "logRetentionDays": 7,
+        "incidents": {
+          "enabled": true,
+          "autoDiagnose": true,
+          "dailyBudget": 2,
+          "minimumSeverity": "high"
+        }
       },
       "type": "object",
       "properties": {
@@ -348,6 +354,42 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "type": "integer",
           "minimum": 1,
           "maximum": 30
+        },
+        "incidents": {
+          "default": {
+            "enabled": true,
+            "autoDiagnose": true,
+            "dailyBudget": 2,
+            "minimumSeverity": "high"
+          },
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "autoDiagnose": {
+              "default": true,
+              "type": "boolean"
+            },
+            "dailyBudget": {
+              "default": 2,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "minimumSeverity": {
+              "default": "high",
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -770,7 +770,7 @@ it('creates the project_request table and keeps its records when migrating to sc
   created.close()
 })
 
-it('migrates a schema 23 database to 24 by creating the empty self_report table and keeping the Tickets', () => {
+it('migrates a schema 23 database to the current schema by creating the empty self_report table and keeping the Tickets', () => {
   const path = join(directory, 'self-reports.sqlite')
   const at = '2026-11-10T09:00:00.000Z'
   const seeded = new Store(path)
@@ -786,7 +786,7 @@ it('migrates a schema 23 database to 24 by creating the empty self_report table 
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(24)
+    expect(SCHEMA_VERSION).toBe(25)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.selfReports.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -796,6 +796,41 @@ it('migrates a schema 23 database to 24 by creating the empty self_report table 
     store.selfReports.save(report)
     expect(store.selfReports.get('srep-1')).toEqual(report)
     expect(store.selfReports.list('draft')).toEqual([report])
+  } finally { store.close() }
+})
+
+it('migrates a schema 24 database to 25 by creating the empty incident table and keeping the Records', () => {
+  const path = join(directory, 'incidents.sqlite')
+  const at = '2026-11-10T09:00:00.000Z'
+  const seeded = new Store(path)
+  seeded.tickets.save({
+    id: 't1', title: 'Fix t1', decisionId: 'd-t1',
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' },
+  } as never)
+  // A schema 24 database had no incident table: the Store creates it before migrateTo25 runs, with no backfill.
+  seeded.db.exec('DROP TABLE incident')
+  seeded.db.prepare("UPDATE kv SET value='24' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(SCHEMA_VERSION).toBe(25)
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.incidents.list()).toEqual([])
+    expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
+    const incident = {
+      id: 'inc-1', fingerprint: 'fp-outbox', rule: 'outbox-failures' as const, severity: 'high' as const, status: 'detected' as const,
+      scope: { project: 'p1', ticket: 't1' }, first_at: at, last_at: at, occurrences: 1, title: 'Reply deliveries failing',
+      detail: '3 reply delivery failures in 30 minutes', evidence_dir: '/srv/incidents/inc-1', updated_at: at,
+    }
+    store.incidents.save(incident)
+    expect(store.incidents.get('inc-1')).toEqual(incident)
+    expect(store.incidents.byFingerprint('fp-outbox')).toEqual(incident)
+    expect(store.incidents.list({ status: 'open' })).toEqual([incident])
+    expect(store.incidents.list({ severity: 'low' })).toEqual([])
+    // The fingerprint is unique: a second record with the same fingerprint is refused by SQLite.
+    expect(() => store.incidents.save({ ...incident, id: 'inc-2' })).toThrow()
   } finally { store.close() }
 })
 

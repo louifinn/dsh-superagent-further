@@ -4,7 +4,7 @@ import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import type { Project } from '../projects.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Tag, type TagTone } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Switch, Tag, type TagTone } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel, usePanelData } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -83,6 +83,14 @@ function WorkerJobs() {
 }
 
 const firstSentence = (text: string): string => /^[^。；;.]*(?:[。；;]|\.(?=\s|$))?/.exec(text)?.[0] ?? text
+/** One boolean settings switch with its label and explanation, matching the Memory page's rows. */
+function ToggleField({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean
+  onChange: (next: boolean) => void }) {
+  return <div className="dt-switch-row">
+    <div className="dt-field-head">{label}{hint && <InfoTip text={hint} />}</div>
+    <Switch checked={checked} onChange={onChange} label={label} />
+  </div>
+}
 function EnvironmentVariables({ groups, sources,
   onPick }: { groups: SettingsView['environment']['variables']; sources: SourceView[]; onPick: (key: string) => void }) {
   const { t } = usePanel()
@@ -218,6 +226,25 @@ export function ExecutionSettings() {
           <Field label={t('logRetentionDays')} hint={t('logRetentionDaysHint')}>
             <Input type="number" min={1} max={30} required value={value.logRetentionDays}
               onChange={event => edit({ logRetentionDays: event.target.value })} />
+          </Field>
+        </div>
+        <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('incidentSettings')}<InfoTip text={t('incidentSettingsIntro')} /></h2>
+          <ToggleField label={t('incidentEnabled')} hint={t('incidentEnabledHint')} checked={value.incidents.enabled}
+            onChange={enabled => edit({ incidents: { ...value.incidents, enabled } })} />
+          <ToggleField label={t('incidentAutoDiagnose')} hint={t('incidentAutoDiagnoseHint')} checked={value.incidents.autoDiagnose}
+            onChange={autoDiagnose => edit({ incidents: { ...value.incidents, autoDiagnose } })} />
+          <Field label={t('incidentDailyBudget')} hint={t('incidentDailyBudgetHint')}>
+            <Input type="number" min={0} max={24} required value={String(value.incidents.dailyBudget)}
+              onChange={event => edit({ incidents: { ...value.incidents, dailyBudget: numberOf(event.target.value) ?? 0 } })} />
+          </Field>
+          <Field label={t('incidentMinimumSeverity')} hint={t('incidentMinimumSeverityHint')}>
+            <select className="dt-select" value={value.incidents.minimumSeverity}
+              onChange={event => edit({ incidents: { ...value.incidents,
+                minimumSeverity: event.target.value as 'low' | 'medium' | 'high' | 'critical' } })}>
+              {(['low', 'medium', 'high', 'critical'] as const).map(severity => <option key={severity}
+                value={severity}>{t(`incidentSeverity.${severity}` as never)}</option>)}
+            </select>
           </Field>
         </div>
         <div className="dt-form dt-block">
