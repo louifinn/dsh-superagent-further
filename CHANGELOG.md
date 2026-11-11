@@ -284,6 +284,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A quiet GitHub stream no longer fails when its ETag matches. Since the stable supervisor split the domain runtime
+  into its own self-contained bundle (`lib/runtime-entry.js`, ADR-0006), a `CliError` thrown by the runtime's `Commands`
+  is no longer the GitHub watcher bundle's `CliError` class, so the `instanceof CliError` check in the 304 handler
+  rethrew every "not modified" response and each poll reported all 24 reads failed across eight repositories. `CliError`
+  now carries a shared global brand (`Symbol.for('dsh-superagent-further.cliError')`) and `src/infra/commands.ts`
+  exports `isCliError`, which the GitHub Source's 304/404/410 handling and the GitHub/Feishu channel `gone` checks use
+  instead of `instanceof`; covered by `tests/commands.spec.ts` and `tests/sources.spec.ts`.
 - One direct answer stays one message. When the Orchestrator answered a whitelisted person's explicit message itself (for
   example a status question it resolved from its own records), the subsequent `ignore` Decision still queued the
   "request was not taken up" notice, so the person received the answer and a second message repeating that it was not

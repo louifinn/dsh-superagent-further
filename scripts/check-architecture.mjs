@@ -10,6 +10,8 @@
  * - `src/client/**` may import the client and the HTTP contract (`src/app/api.ts`), never another server module or a Node
  * built-in; the browser bundle cannot carry the database or the filesystem.
  * - `src/**` may import neither `tests/` nor `scripts/`; those are development-only.
+ * - A bare `instanceof CliError` is bundle-local, because the versioned runtime is its own bundle; classify a CLI
+ *   failure that may come from the runtime's Commands with `isCliError` instead.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -57,6 +59,9 @@ export function violations(files) {
   for (const [file, text] of files) {
     const lines = text.split(/\r?\n/)
     for (const [index, line] of lines.entries()) {
+      if (file !== 'src/infra/commands.ts' && /\binstanceof\s+CliError\b/.test(line)) {
+        found.push({ file, line: index + 1, imported: 'CliError', rule: 'instanceof CliError is bundle-local; classify CLI failures with isCliError' })
+      }
       IMPORT.lastIndex = 0
       const match = IMPORT.exec(line)
       if (!match) continue
@@ -72,7 +77,7 @@ function main() {
   const files = sourceFiles(root)
   const found = violations(files)
   if (found.length) {
-    for (const violation of found) console.error(`${violation.file}:${violation.line} imports ${violation.imported} — ${violation.rule}`)
+    for (const violation of found) console.error(`${violation.file}:${violation.line} ${violation.imported} — ${violation.rule}`)
     console.error(`\n${found.length} architecture violation(s)`)
     process.exit(1)
   }

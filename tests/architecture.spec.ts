@@ -27,4 +27,10 @@ describe('architecture', () => {
     expect(check('src/app/runtime.ts', "import { boot } from '../tests/fixtures/host.ts'").map((item: { rule: string }) => item.rule))
       .toEqual(['src imports development tooling'])
   })
+  it('reports a bare instanceof CliError outside its own module', () => {
+    expect(check('src/sources/github.ts', 'if (!(error instanceof CliError)) throw error')).toEqual([
+      { file: 'src/sources/github.ts', line: 1, imported: 'CliError', rule: 'instanceof CliError is bundle-local; classify CLI failures with isCliError' },
+    ])
+    expect(check('src/infra/commands.ts', 'return error instanceof CliError')).toEqual([])
+  })
 })

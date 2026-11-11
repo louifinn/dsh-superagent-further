@@ -1460,6 +1460,28 @@ describe('observing the GitHub repository', () => {
     expect(h.receive).not.toHaveBeenCalled()
     h.store.close()
   })
+  it('reads a list in full when the runtime build threw the 304, although its CliError class differs from this bundle\'s', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    // The deployed runtime is its own bundle, so its CliError is not this bundle's class; the shared brand identifies it.
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"same"', verifiedAt: at(1) })
+    const foreign = Object.assign(new Error('gh: HTTP 304'), { code: 304, [Symbol.for('dsh-superagent-further.cliError')]: true })
+    const calls: string[][] = []
+    vi.spyOn(h.commands, 'run').mockImplementation(async (_program, args) => {
+      calls.push(args)
+      const bare = args[1]!.replace(/^repos\/acme\/widgets\/?/, '').split('?')[0]!
+      if (bare === 'notifications') return 'HTTP/2.0 200 OK\r\n\r\n[]'
+      if (args.includes('If-None-Match: "same"')) throw foreign
+      return `HTTP/2.0 200 OK\r\nETag: "same"\r\n\r\n${JSON.stringify([issue(4, { created_at: at(2), updated_at: at(2) })])}`
+    })
+    await pollRound(h)
+    const list = calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))
+    expect(list).toHaveLength(2)
+    expect(list[1]).not.toContain('If-None-Match: "same"')
+    expect(h.receive.mock.calls.map(([trigger]) => trigger.meta.number)).toEqual([4])
+    h.store.close()
+  })
   it('repairs saved stream ETags once so a list skipped by an earlier read is listed again', async () => {
     const h = host()
     observe(h, { observeIssues: true })
