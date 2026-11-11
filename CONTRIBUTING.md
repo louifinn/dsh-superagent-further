@@ -66,7 +66,7 @@ are **not** a SuperAgent role and must not assume its authority:
   with the global `superagent_submit` tool (the `session` Source): the main Session applies Policy and admission and always
   replies to your Session. State the workspace, the title and the instruction; do not invent a project.
 - Do not read or copy the Host's state directory, credentials or sessions; keep to the repository.
-- Read-only by default: do not change `state.sqlite`, policy, settings or another person's Ticket. If a change needs the
+- Read-only by default: do not change `orchestrator.sqlite`, policy, settings or another person's Ticket. If a change needs the
   operator's confirmation, put it in a proposal or a pull request, not in the state.
 
 ## SuperAgent members

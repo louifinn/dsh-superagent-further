@@ -9,7 +9,7 @@ usePanel()
 it('leads the overview with the pending Tickets, then problems, the last day and the Executor, each linking to its stage', async () => {
   await mount()
   expect(tab(zh['tab.overview']).getAttribute('aria-selected')).toBe('true')
-  expect(all('[role="tab"]').map(tab => tab.textContent)).toEqual(['概览', '来源', '触发', '评估', '执行', '记忆', '自动化', '日志', '设置'])
+  expect(all('[role="tab"]').map(tab => tab.textContent)).toEqual(['概览', '来源', '触发', '评估', '执行', '记忆', '自动化', '事件', '更新', '日志', '设置'])
   expect(all('.dt-section-title').map(title => title.textContent)).toEqual(['待处理工单2', '系统问题2', '过去 24 小时详情 ›', '执行器详情 ›'])
   expect(all('.dt-cards .dt-ticket-stage').map(item => item.textContent)).toEqual(['待回答', '待处理失败'])
   expect(all('.dt-cards .dt-att-what').map(item => item.textContent)).toEqual(['飞书 来源异常', '评估未完成：这个文案好奇怪'])
@@ -295,4 +295,31 @@ it('lists open escalations and automations needing attention as work for a perso
   expect(text()).toContain(zh.automationAttentionTitle)
   expect(text()).toContain(zh.automationAttentionTitle)
   expect(text()).toContain('The Host task is missing')
+})
+
+it('shows observe-mode self report drafts and approves or dismisses them from the overview', async () => {
+  server.selfReports = [
+    { id: 'srep-1', title: 'Watcher crashes after a failed poll', target_repo: 'louifinn/dsh-superagent-further',
+      evidence: 'The watcher exits with ENOENT after one failed poll.', createdAt: '2026-11-10T00:00:00.000Z' },
+    { id: 'srep-2', title: 'Label refresh misses a closed pull request', target_repo: 'louifinn/dsh-superagent-further',
+      evidence: 'Labels stay stale after a pull request closes.', createdAt: '2026-11-10T01:00:00.000Z' }]
+  server.selfReportsBlocked = true
+  await mount()
+  expect(text()).toContain(zh.selfReportsTitle)
+  const row = document.querySelector<HTMLElement>('[data-self-report="srep-1"]')!
+  expect(row.textContent).toContain('Watcher crashes after a failed poll')
+  expect(row.textContent).toContain('louifinn/dsh-superagent-further')
+  expect(row.textContent).toContain('ENOENT')
+  expect(row.textContent).toContain(zh.selfReportBlocked)
+  await click([...row.querySelectorAll('button')].find(button => button.textContent === zh.selfReportApprove)!)
+  expect(server.selfReports.map(item => item.id)).toEqual(['srep-2'])
+  await click([...document.querySelector('[data-self-report="srep-2"]')!.querySelectorAll('button')]
+    .find(button => button.textContent === zh.selfReportDismiss)!)
+  expect(server.selfReports).toEqual([])
+  expect(text()).not.toContain(zh.selfReportsTitle)
+  // The buttons must reach the documented routes with no body; the fixture answers only registered requests.
+  expect(server.requests.filter(request => request.path.startsWith('self-reports/'))
+    .map(request => ({ method: request.method, path: request.path, body: request.body }))).toEqual([
+    { method: 'POST', path: 'self-reports/srep-1/approve', body: undefined },
+    { method: 'POST', path: 'self-reports/srep-2/dismiss', body: undefined }])
 })

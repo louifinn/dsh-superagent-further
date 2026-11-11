@@ -359,3 +359,27 @@
                   headChars: 4096
                   tailChars: 1024
 
+
+    # The agent preset an incident diagnosis runs in (DIAGNOSTICIAN_PRESET in src/app/sessions.ts). ADR-0005 bounds it by
+    # mechanism, not prompt: only file reading is mounted, with writing and editing off, and there is no shell, job,
+    # subagent/delegation, scheduling, goal, plan, web, todo, question or plugin-manager tool to change the installation.
+    # No fs-search or skill tool either: the diagnosis reads the evidence files it is pointed at and returns JSON.
+    - id: dsh-superagent-further-diagnostician-preset
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: dsh-superagent-further-diagnostician
+        name: dsh-superagent-further 诊断者
+        description: dsh-superagent-further 的只读事故诊断 Session 专用，不供手动选择。只能读取证据文件并返回结构化诊断，不能写文件、运行命令或启动工作。
+        order: 95
+        plugins:
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              write: false
+              edit: false

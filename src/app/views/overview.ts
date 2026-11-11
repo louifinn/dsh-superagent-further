@@ -1,5 +1,6 @@
 /** Overview view: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow. */
-import { projectRequestOpen, reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
+import { filedSelfReportsToday, projectRequestOpen, reasonText, ticketStage, SELF_REPORT_DAILY_LIMIT, type Decision, type SelfReport, type Thread }
+  from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
@@ -7,6 +8,7 @@ import type { Store } from '../store.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
+import type { UpdateAttention } from '../updates.ts'
 
 /** One project's Lead in the panel: its Session, and the executors and messages the project holds. */
 export interface LeadRow { project: string; name: string; session: string; status: string; running: number; waiting: number
@@ -16,6 +18,11 @@ export interface LeadRow { project: string; name: string; session: string; statu
 export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
 /** One file delivery `Runtime.sendFile` could not complete: what was sent where, the Source's reason, and when. */
 export interface DeliveryFailure { path: string; chat: string; reason: string; at: string }
+/** One observe-mode self report awaiting a person: its title, target repository, evidence preview and age (docs/014 D5). */
+export interface SelfReportRow { id: string; title: string; target_repo: string; evidence: string; createdAt: string }
+/** One open incident in the Overview's "needs you" row: what fired, how severe it is and when it last repeated (docs/005-panel.md). */
+export interface IncidentRow { id: string; rule: string; severity: string; title: string; occurrences: number; last_at: string
+  scope: { project?: string; ticket?: string; request?: string; session?: string } }
 import { preview } from './text.ts'
 
 /** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
@@ -48,7 +55,11 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   /** One row per registered project, so the panel can show each Lead and what it holds. */
   leads: LeadRow[] = [],
   /** Recent failed file deliveries, newest last, each shown as a problem with the Source's own reason. */
-  deliveries: readonly DeliveryFailure[] = []) {
+  deliveries: readonly DeliveryFailure[] = [],
+  /** The self-evolution outlet's drafts; only drafts need a person, filed Issues live in the remote repository. */
+  selfReports: readonly SelfReport[] = [],
+  /** The update pipeline's needs-attention state; absent when the runtime has no update surface. */
+  updates?: UpdateAttention) {
   const { store, sources } = host
   const view = snapshot(host)
   const settings = store.settings()
@@ -98,6 +109,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   const stats = Object.values(store.read.triggerStats(since))
   const received = stats.reduce((sum, item) => sum + item.received, 0), filtered = stats.reduce((sum, item) => sum + item.filtered, 0)
   const judgement = store.read.flow(since)
+  // Open deterministic incidents: only the newest few ride with the overview; the Incidents page owns the full list.
+  const openIncidents = store.incidents.list({ status: 'open', limit: 5 })
   return {
     problems,
     person: open.filter(ticket => ticketStage(ticket).stage === 'person').map(ticket => ticketRow(view, ticket)),
@@ -113,6 +126,16 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     requests: openRequests,
     escalations,
     automationAttention: { count: automationAttention.length, items: automationAttention.slice(0, 5) },
+    selfReports: selfReports.filter(report => report.status === 'draft').map((report): SelfReportRow => ({ id: report.id,
+      title: report.title, target_repo: report.target_repo, evidence: preview(report.evidence), createdAt: report.created_at })),
+    /** True when today's daily cap is reached, so the panel says why approving will keep a draft instead of filing it. */
+    selfReportsBlocked: filedSelfReportsToday(store.selfReports.list('filed'), now).length >= SELF_REPORT_DAILY_LIMIT,
+    /** One "needs you" entry per rule-created incident still awaiting attention (docs/005-panel.md); M34 adds diagnosis actions. */
+    incidents: { count: store.incidents.openCount(), items: openIncidents.map((incident): IncidentRow => ({ id: incident.id,
+      rule: incident.rule, severity: incident.severity, title: incident.title, occurrences: incident.occurrences,
+      last_at: incident.last_at, scope: incident.scope })) },
+    /** A pending request, a running update or a failure the engine could not roll back raises one "needs you" row. */
+    update: updates ?? { pending: false, failed: false, version: null, phase: null, reason: null },
   }
 }
 export type OverviewView = ReturnType<typeof overview>

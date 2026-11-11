@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import { Runtime } from '../../src/app/runtime.ts'
+import { Runtime, type RuntimeOptions } from '../../src/app/runtime.ts'
+import { Logs } from '../../src/app/logs.ts'
 import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
@@ -16,8 +17,12 @@ import { githubKind } from '../../src/sources/github.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
+import type { Machine } from '../../src/deployment.ts'
 import type { JobEvent, JobView } from '../../src/executor/background.ts'
+import { buildRuntimeHost } from '../../src/supervisor/host.ts'
+import { VERSION } from '../../src/version.ts'
 import { testMachine } from './deployment.ts'
+import { fakeWorkspaces, workspaceDirectory, type FakeWorkspaces } from './workspaces.ts'
 
 export const MEMBER = 'ou_alice'
 export const CHAT = 'oc_team'
@@ -32,9 +37,11 @@ export function feishu(id: string, text: string, overrides: Record<string, unkno
 }
 
 type RegisteredTool = { name: string; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
-type FakeAgent = {
+export type FakeAgent = {
   id: string; status: string; inbox: { nextTurn: UserMessage[]; nextStep: UserMessage[] }
   cancel: Mock; inject: Mock<(message: UserMessage) => void>; steer: Mock<(message: UserMessage) => void>; followup: Mock<(message: UserMessage) => void>
+  /** Resolves when the turn ends, which a test controls by setting `status = 'idle'`, as DSH's idle does. */
+  whenIdle: () => Promise<void>
 }
 /** A text message, as DSH's job tools and subagents send their notices. */
 const notice = (id: string, text: string) => ({ id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'tool-jobs', form: 'notice' } }) as unknown as UserMessage
@@ -128,9 +135,10 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   open?: (id: string, parent: string) => Promise<void>
   deliver?: (id: string, content: unknown) => void
 } = {}) {
-  const children = new Map<string, { parent: string; live: boolean; settled: PromiseWithResolvers<void> }>()
+  const children = new Map<string, { parent: string; delivery: 'parent' | 'caller'; preset: string; live: boolean; settled: PromiseWithResolvers<unknown> }>()
   const closed = new Set<string>()
-  const settle = (id: string, wake = true) => {
+  /** Settle one child, optionally with the result its caller reads (a diagnosis document, or nothing). */
+  const settle = (id: string, wake = true, result?: unknown) => {
     const child = children.get(id)
     if (!child?.live) return
     child.live = false
@@ -139,7 +147,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     if (!wake) parent?.inject(ended)
     else if (parent?.status === 'idle') parent.followup(ended)
     else parent?.steer(ended)
-    child.settled.resolve()
+    child.settled.resolve(result)
   }
   const service = {
     waitForChildren: vi.fn(async (parent: { id: string }) => {
@@ -157,17 +165,26 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     }),
     interrupt: vi.fn((id: string) => { settle(id) }),
     // DSH's spawn provider starts a durable child with the reserved id and reports the same shape the Executor expects.
-    startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string } } }) => {
+    startActivation: vi.fn(async (spec: { childId: string; delivery: 'parent' | 'caller'; request: { parent: { id: string }; agentPreset: string } }) => {
       const parent = spec.request.parent.id
       const id = spec.childId
       // A host with a real subagent service creates the child Session, decorates it and then delivers the activation prompt.
       if (options.open) await options.open(id, parent)
       if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
-      children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+      children.set(id, { parent, delivery: spec.delivery, preset: spec.request.agentPreset, live: true, settled: Promise.withResolvers<unknown>() })
+      if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
       options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
-      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child.
-      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => { children.get(id)!.live = false } }
+      // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
+      // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
+      // has no turn to cancel, which is what the Executor's graceful retirement relies on. The child's inbox is the Session's,
+      // so an in-process restart keeps it for the next Assignment.
+      return { childId: id, result: children.get(id)!.settled.promise, dispose: async () => {
+        const child = children.get(id)
+        if (!child?.live) return
+        const agent = agents.get(id)
+        if (agent && agent.status !== 'idle') agent.cancel({ kind: 'parent' }, { keepInbox: true })
+        child.live = false
+      } }
     }),
     // The Lead's message reaches the child, which this fake records as a follow-up step.
     sendMessage: vi.fn(async (_sender: { id: string }, targetId: string, content: unknown[]) => {
@@ -184,16 +201,41 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   const spawn = (parent: string) => {
     if (closed.has(parent)) throw new Error('DRAINING: the Session admits no new subagents')
     const id = `child-${children.size + 1}`
-    children.set(id, { parent, live: true, settled: Promise.withResolvers<void>() })
-    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } } } as never)
+    children.set(id, { parent, delivery: 'caller', preset: '', live: true, settled: Promise.withResolvers<unknown>() })
+    agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
     return id
   }
-  return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live }
+  return { service, settle, spawn, live: (id: string) => !!children.get(id)?.live,
+    /** The request the fixture started a child with: its Lead, the delivery DSH was asked for, and its preset. */
+    started: (id: string) => {
+      const child = children.get(id)
+      return child === undefined ? undefined : { parent: child.parent, delivery: child.delivery, preset: child.preset }
+    } }
+}
+
+/** State a restart test hands from one start to the next, so a second Runtime opens the first one's database, registry and Sessions. */
+export interface HostOptions {
+  /** The state directory to reopen; a fresh temporary one is created when omitted. */
+  directory?: string
+  /** The workspace this start's settings select; a fresh temporary one is created when omitted. */
+  workspace?: string
+  /** The workspace registry shared across starts, so its registrations and archive set persist. */
+  workspaces?: FakeWorkspaces
+  /** The Session map shared across starts, so a Session an earlier start created resolves instead of being recreated. */
+  agents?: Map<string, FakeAgent>
+  /** Session ids that already exist before the Runtime starts, as an upgrade finds a previous build's master Session. */
+  existingSessions?: readonly string[]
+  /** Keep the state and workspace directories on `stop()`, so a test can start again on the same state. */
+  keep?: boolean
 }
 
 /** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored. */
-export async function startRuntime(seed?: (store: Store) => void) {
-  const directory = mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+export async function startRuntime(seed?: (store: Store) => void, options: HostOptions = {}) {
+  const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+  // An operator's workspace is a directory of its own, never the state directory; the fake registry also holds the state
+  // directory's registration an earlier build would have created, so retirement is exercised on every start.
+  const workspaceRoot = options.workspace ?? workspaceDirectory()
+  const workspaces = options.workspaces ?? fakeWorkspaces(directory)
   const AGENT = join(directory, 'agent-gh'), BOT = join(directory, 'lark-bot')
   const repository = { default_branch: 'master', permissions: { push: true } }
   vi.spyOn(Commands.prototype, 'gh').mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' } : repository)
@@ -220,7 +262,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
     const done = argv[0] === SHELL && hooks.prepare ? hooks.prepare.then(() => exited) : Promise.resolve(exited)
     return { done, collected: { stdout: reader(answers[argv.join(' ')] ?? ''), stderr: reader('') } }
   }) }
-  const agents = new Map<string, FakeAgent>()
+  const agents = options.agents ?? new Map<string, FakeAgent>()
   /** Each Session's next step, which takes the messages that wait for one. */
   const steps = new Map<string, () => void>(), claims = new Map<string, () => void>()
   const tools = new Map<string, Map<string, RegisteredTool>>()
@@ -278,7 +320,8 @@ export async function startRuntime(seed?: (store: Store) => void) {
         turn++
         take(true)
       })
-      const session = { id: sessionId, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
+      // Every Session has a header; an independent child has no parent Session here.
+      const session = { id: sessionId, header: {} as Record<string, unknown>, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
       let status = 'idle'
       const idle: (() => void)[] = []
       // A cancel drops the inbox unless kept, and the turn it stops ends a moment later, which DSH says.
@@ -301,6 +344,11 @@ export async function startRuntime(seed?: (store: Store) => void) {
     prompt: vi.fn(() => { throw new Error('Plugin delivery must not use user RPC') }),
     inspect: vi.fn(async () => ({ events: [] })),
   }
+  // Sessions that predate this start, as a migration finds an earlier build's master: they resolve, so retirement can archive
+  // them, even though no code decorated them yet.
+  for (const sessionId of options.existingSessions ?? []) {
+    await (controller.create as (options: { sessionId: string }) => Promise<void>)({ sessionId })
+  }
   const reader = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
   const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async () => reader) }
   const webServer = { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }
@@ -317,8 +365,10 @@ export async function startRuntime(seed?: (store: Store) => void) {
     deliver: (id, content) => (agents.get(id) as unknown as { followup(message: unknown): void } | undefined)
       ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }),
   })
+  // DSH's permission presets, spied so a test can observe a Session put under read-only (ADR-0005).
+  const permissionPresets = { set: vi.fn((_session: unknown, _preset: string) => {}) }
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
-    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,
+    sessionPersistence: persistence, workspaceRegistry: workspaces.registry, permissionPresets, subprocess, webServer,
     jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
   hostCtx.ctx = ctx
@@ -326,7 +376,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const seeded = new Store(join(directory, 'orchestrator.sqlite'))
   const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT } } }
-  seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), sources }))
+  seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), workspace: { path: workspaceRoot }, sources }))
   seed?.(seeded)
   // Every Ticket runs under a registered project's Lead, so a fixture starts with the deployment repository registered as one.
   const settled = seeded.settings()
@@ -337,7 +387,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   // An answer ticket reads an existing live checkout, so every seeded project needs its workspace directory.
   for (const project of seeded.settings().executor.projects) mkdirSync(project.workspace, { recursive: true })
   seeded.close()
-  const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())
+  const runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), vi.fn())
   await runtime.ready
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
   const settings = runtime.store.settings()
@@ -385,12 +435,34 @@ export async function startRuntime(seed?: (store: Store) => void) {
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
-  async function stop() { await runtime.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) }
+  async function stop() {
+    await runtime.stop(); vi.restoreAllMocks()
+    if (options.keep) return
+    rmSync(directory, { recursive: true, force: true })
+    rmSync(workspaceRoot, { recursive: true, force: true })
+  }
   /** The Session's model takes its next step, which takes the messages steered in since its last. */
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
-    jobs, subagents, step, claim }
+  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
+    jobs, subagents, step, claim, permissionPresets }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>
+
+/**
+ * Start a Runtime over a test host without the supervisor's directory lock, for the unit suites that do not test hosting.
+ * The supervisor's own specs construct a Supervisor; this helper only gives the runtime its frozen host, a no-op restart,
+ * and a sink that closes when the runtime drains.
+ */
+export function startTestRuntime(ctx: Context, machine: Machine, restart: () => void = () => {}, options: RuntimeOptions = {}): Runtime {
+  let built: ReturnType<typeof buildRuntimeHost> | undefined
+  built = buildRuntimeHost({
+    context: ctx, machine, restart, exit: () => {}, version: VERSION, logger: ctx.logger,
+    lifetime: new AbortController().signal,
+    logs: new Logs(),
+    flushLogs: async () => { await built!.logSink.close() },
+    releaseStateLock: async () => {},
+  })
+  return new Runtime(built.host, options)
+}

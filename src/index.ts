@@ -1,8 +1,8 @@
-/** Main plugin entry: mounts the Runtime and provides its restart callback for deployment account changes. */
+/** Main plugin entry: starts the stable supervisor, which resolves and starts the versioned domain runtime. */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
-import { Runtime } from './app/runtime.ts'
-import { Config, machineOf, type DeploymentConfig } from './deployment.ts'
+import { Config, machineOf, type DeploymentConfig } from './supervisor/config.ts'
+import { Supervisor } from './supervisor/supervisor.ts'
 
 export const name = 'dsh-superagent-further'
 export const inject = ['agents', 'sessionController', 'sessionPersistence', 'workspaceRegistry', 'permissionPresets', 'tools', 'systemPrompt', 'skills', 'webServer', 'llm', 'subprocess']
@@ -18,10 +18,11 @@ export async function apply(ctx: Context, config: DeploymentConfig): Promise<voi
   const restart = (): void => {
     ctx.fiber.restart().then(() => { ctx.get('settings')?.describe() }).catch((error: unknown) => { ctx.logger.error('dsh-superagent-further restart failed: %s', String(error)) })
   }
-  const runtime = new Runtime(ctx, machine, restart)
-  ctx.effect(() => async () => { await runtime.stop() })
-  await runtime.ready
-  ctx.logger.info(runtime.configured() ? 'dsh-superagent-further ready; the Superagent sidebar entry opens the management panel' : `dsh-superagent-further is waiting for setup: ${runtime.setupProblem?.detail ?? ''}`)
+  const supervisor = new Supervisor({ context: ctx, machine, restart, exit: code => { process.exit(code) } })
+  ctx.effect(() => async () => { await supervisor.stop() })
+  await supervisor.start()
+  ctx.logger.info(supervisor.configured() ? 'dsh-superagent-further ready; the Superagent sidebar entry opens the management panel' : `dsh-superagent-further is waiting for setup: ${supervisor.setupProblem()?.detail ?? ''}`)
 }
-export type { Deployment, DeploymentConfig } from './deployment.ts'
+export type { Deployment } from './deployment.ts'
+export type { DeploymentConfig } from './supervisor/config.ts'
 export * from './core/index.ts'

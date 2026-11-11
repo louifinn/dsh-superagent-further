@@ -91,7 +91,9 @@ One chokepoint on the main Session, for installations where the self repository 
 - **Fixed target.** The constant `SELF_REPOSITORY = 'louifinn/dsh-superagent-further'` in code, not a setting;
   a fork of this fork changes the constant.
 - **Jurisdiction refusal.** When the self repository *is* registered here, the tool refuses and names the
-  Ticket outlet — the routing rule is enforced by the tool, not left to prompt discipline.
+  Ticket outlet — the routing rule is enforced by the tool, not left to prompt discipline. The same check
+  runs again when a person approves a draft: a draft raised before the repository was registered cannot
+  file either, though it can still be dismissed.
 - **A three-state gate** beside the accept mode on the Eval settings: `off` records nothing; `observe`
   (default) records a draft and files nothing; `auto` files directly within the limits. This mirrors how the
   intake side starts narrow.
@@ -101,8 +103,11 @@ One chokepoint on the main Session, for installations where the self repository 
   and the panel says so.
 - **Content rules.** The body follows the repository's language and conventions, opens with the automated-agent
   disclosure, states evidence, reproduction and the running version, and carries no Feishu content, credentials
-  or private local paths. Labels only ones that already exist, none by default.
-- **Audit record.** Schema 23 adds `self_report`:
+  or private local paths. Feishu content covers chat, message, user, union and app ids; local paths cover
+  drive-letter and UNC paths with Unicode names and the POSIX homes and system roots (`/root`, `/opt`, `/srv`,
+  `/var`, `/tmp`, `/mnt`, `/Volumes`, `/private`); an ordinary URL or a repository-relative path stays valid.
+  Labels only ones that already exist, none by default.
+- **Audit record.** Schema 24 adds `self_report` (schema 23 is the ended-Ticket `cause` backfill):
   `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status: 'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`.
   Drafts are what a person approves; the filed history is the remote repository itself, so no history page is
   built. This is the design's only new domain record: an outward, approvable, deduplicated artefact fits
@@ -151,14 +156,24 @@ gates. Documentation lands with its phase, not in a batch at the end.
 - **Phase 1 — discovery layer (prompts only, no code).** The three prompt sections and the skill text;
   `tests/prompts.spec.ts` pins them. Live proof: one real Ticket records one real superagent finding in flight
   and it becomes a self-fix Ticket through the existing `request_create` or escalation path.
-- **Phase 2 — the Issue outlet and the discovery provenance.** Schema 23 `self_report`, the
+- **Phase 2 — the Issue outlet and the discovery provenance (shipped).** Schema 24 `self_report`, the
   `orchestrator_issue_create` tool (jurisdiction refusal, gate, dedup, rate limit, content rules), the
   discovery provenance on `orchestrator_request_create`, the Eval self-report mode, the Overview draft rows.
   Live proof: a real draft in `observe`, approved and filed as a marked test Issue on
-  `louifinn/dsh-superagent-further`, then closed; the jurisdiction refusal covered by tests.
-- **Phase 3 — scheduled self-inspection.** The switch, the built-in automation's ensure/remove/reconcile and
-  the instruction template. Live proof: toggling works and one `automation_run` inspection routes its findings
-  correctly.
+  `louifinn/dsh-superagent-further`, then closed; the jurisdiction refusal covered by tests. The code and
+  docs shipped here; opening and closing the marked live Issue is the operator's acceptance step.
+- **Phase 3 — scheduled self-inspection (remaining, not in this phase).** The switch, the built-in automation's
+  ensure/remove/reconcile and the instruction template. Live proof: toggling works and one `automation_run`
+  inspection routes its findings correctly.
+- **Incident findings (M34, out of band).** The read-only incident diagnoser ([ADR 0005](adr/0005-read-only-incident-diagnosis.md))
+  reuses this outlet: a diagnosis about this installation, or about a repository that is not registered, is raised
+  through `SelfReports.raise` and keeps Phase 2's three-state gate, dedupe and cap; a diagnosis about a registered
+  project goes through the discovery Request and the Lead's Ticket flow instead, and an operational conclusion
+  creates no Issue at all. M34 changes neither the Phase 3 switch nor the gate: `observe` still keeps a draft and
+  `auto` still files within the same limits, and the diagnosis itself never writes, fixes or merges. The panel's
+  self-report resolution deep-links to the Overview with the named draft row highlighted, and routing requires the
+  current record to still be `diagnosed` with a parsed diagnosis: reopening keeps the old diagnosis text but clears
+  the resolution, so this outlet can never be fed a stale diagnosis.
 - **Phase 4 — documentation sweep.** Updates to [002](002-authorization.md), [004](004-prompts.md),
   [005](005-panel.md), [006](006-deployment.md) and [007](007-architecture.md) for what shipped, with the
   CHANGELOG and README counts.

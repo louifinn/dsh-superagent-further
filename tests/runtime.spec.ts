@@ -7,9 +7,13 @@ import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { hostedElsewhere, Runtime } from '../src/app/runtime.ts'
+import { lockSync } from 'proper-lockfile'
+import { hostedElsewhere, Runtime, type RuntimeOptions } from '../src/app/runtime.ts'
+import { Supervisor } from '../src/supervisor/supervisor.ts'
+import type { RuntimeDescriptor } from '../src/runtime-host.ts'
 import { AUTOMATION_CONTEXT, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
-import { jobRegistry } from './fixtures/host.ts'
+import { jobRegistry, startTestRuntime } from './fixtures/host.ts'
+import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
 import { masterPrompt } from '../src/app/context.ts'
@@ -40,6 +44,9 @@ let runtime: Runtime
 const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
 const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem, [], value.deliveryFailures())
 let directory: string
+/** The operator's mandatory workspace, a sibling directory of the state directory. */
+let workspace: string
+let workspaces: ReturnType<typeof fakeWorkspaces>
 let controller: { create: ReturnType<typeof vi.fn>; selectModel: ReturnType<typeof vi.fn>; resolveAgent: ReturnType<typeof vi.fn>; rename: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn>; inspect: ReturnType<typeof vi.fn> }
 type RegisteredTool = { name: string; output: { render: (args: unknown, result: unknown) => unknown }; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
 let tools: Map<string, Map<string, RegisteredTool>>
@@ -156,15 +163,15 @@ function seed(store: Store, accounts: Accounts = {}): void {
   const projects = settings.executor.projects.some(project => project.id === 'default') ? settings.executor.projects : [{ id: 'default', name: 'Default', workspace: join(directory, 'default'), repository: 'acme/widgets', branch: '' }, ...settings.executor.projects]
   // Answer tickets read an existing live checkout, so every seeded project needs its workspace directory.
   for (const project of projects) mkdirSync(project.workspace, { recursive: true })
-  store.saveSettings(SettingsSchema.parse({ ...settings, executor: { ...settings.executor, projects }, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
+  store.saveSettings(SettingsSchema.parse({ ...settings, workspace: { path: workspace }, executor: { ...settings.executor, projects }, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
 }
 let restarts: ReturnType<typeof vi.fn<() => void>>
-async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}): Promise<Runtime> {
+async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}, options: RuntimeOptions = {}): Promise<Runtime> {
   await runtime.stop()
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store, accounts); store.close()
   const ctx = new Context()
   for (const [name, service] of Object.entries(schedule === undefined ? services : { ...services, schedule })) ctx.reflect.provide(name, service)
-  runtime = new Runtime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
+  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory, ...machine }), restarts, options)
   return runtime
 }
 let deliveries: ReturnType<typeof vi.fn<(request: { sessionId: string; mode: 'queue' | 'steer'; id: string; text: string }) => void>>
@@ -206,6 +213,8 @@ beforeEach(async () => {
   delete process.env.GIT_CONFIG_GLOBAL
   delete process.env.GIT_CONFIG_NOSYSTEM
   directory = mkdtempSync(join(tmpdir(), 'orchestrator-runtime-'))
+  workspace = workspaceDirectory()
+  workspaces = fakeWorkspaces(directory)
   vi.spyOn(Commands.prototype, 'gh').mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' } : args[1]?.includes('/pulls/') ? { state: 'open', user: { login: 'agent-bot' }, html_url: 'https://github.com/acme/widgets/pull/' + args[1].split('/').at(-1), head: { ref: `agent/${String(runtime.store.tickets.list()[0]?.execution?.name)}`, sha: 'head-1', repo: { full_name: 'acme/widgets' } } } : { default_branch: 'master', permissions: { push: true } })
   vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ users: [{ member_id: MEMBER, name: 'Alice' }], has_more: false })
   vi.spyOn(Commands.prototype, 'git').mockResolvedValue('')
@@ -310,18 +319,18 @@ beforeEach(async () => {
     drainDescendants: vi.fn(async () => {}),
   }
   jobs = jobRegistry()
-  services = { agents, subagents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
+  services = { agents, subagents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: workspaces.registry, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
-  runtime = new Runtime(ctx, testMachine({ stateDir: directory }), restarts)
+  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), restarts)
   await runtime.ready
   // Source kinds are normally registered by plugins that are not loaded in unit tests.
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
   runtime.store.saveSettings({ ...runtime.store.settings(), policy: { ...runtime.store.settings().policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } }, eval: { ...runtime.store.settings().eval, mode: 'auto' }, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT() } }, feishu: { enabled: true, config: { cli: BOT(), chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
   deliveries.mockClear()
 })
-afterEach(async () => { expect(controller.prompt).not.toHaveBeenCalled(); await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
+afterEach(async () => { expect(controller.prompt).not.toHaveBeenCalled(); await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }); rmSync(workspace, { recursive: true, force: true }) })
 
 it('relays an explicit member mention as a candidate and creates the ticket, acknowledgement, subscription and worker on accept', async () => {
   const { trigger, ticket, sessionId } = await acceptedTicket()
@@ -492,8 +501,8 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(sections.get(runtime.masterId)?.text({})).not.toContain('## Memory')
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
-  // Its worker's last word was its ready report, so its turn is not cancelled: it ends it itself.
-  expect(agents.get(sessionId)!.cancel).not.toHaveBeenCalled()
+  // The merge ends the Ticket, and a merge end preempts the worker's turn; only a report end retires it gracefully.
+  expect(agents.get(sessionId)!.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
   const notice = runtime.store.receipts.waiting().find(item => item.kind === 'notice')
   expect(notice ?? runtime.store.replyStatus(key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
 })
@@ -578,9 +587,9 @@ it('stops a ticket on a person\'s instruction for good, and resumes an ended one
   await receive(request)
   expect(await route({ kind: 'stop', ticket_id: ticket.id, trigger_id: request.id }))
     .toMatchObject({ decision: 'stop', reason: 'Human asked to stop', ticket: { ticket_id: ticket.id, state: 'stopped' } })
-  // The end says it was a person's stop once: no reason that repeats the outcome, none copied onto the Assignment.
+  // The Eval that recorded the person's stop is the cause; the end itself names the person and the outcome once.
   const stopped = runtime.store.tickets.get(ticket.id)!
-  expect(stopped.ended).toEqual({ at: expect.any(String), by: 'human', outcome: 'stopped' })
+  expect(stopped.ended).toEqual({ at: expect.any(String), by: 'human', cause: 'eval', outcome: 'stopped' })
   expect(stopped.assignments[0]).not.toHaveProperty('endedReason')
   expect(agents.get(sessionId)!.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
   // A stop withdraws the mandate: later messages wait as context, and only new work restarts it.
@@ -592,6 +601,8 @@ it('stops a ticket on a person\'s instruction for good, and resumes an ended one
   // A ticket that ended by itself resumes on a person's message on its thread, whoever sent it.
   const other = await acceptedTicket(feishu('20', '@bot 修另一个'))
   await runTool(other.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'not reproduced' })
+  // The worker's turn ends before the follow-up resumes the Ticket, so its report retirement finishes first.
+  agents.get(other.sessionId)!.status = 'idle'
   expect(runtime.store.tickets.get(other.ticket.id)!.ended).toBeDefined()
   await receive(feishu('21', '我这边还能复现', { mentions: [], root_id: 'om_20', sender_id: 'ou_guest' }))
   await runtime.pump()
@@ -1582,15 +1593,19 @@ it('says which host holds the orchestrator Session, and how to switch, instead o
   expect(hostedElsewhere(other, 'C:/state/superagent', 'orchestrator-1')).toBe(other)
 })
 
-it('refuses a second process on the same state directory before it opens the database, so it migrates nothing', () => {  // A database the running build would read as schema 10 stays as it is.
+it('refuses a second host on the same state directory before it opens the database, so it migrates nothing', async () => {  // A database the running build would read as schema 10 stays as it is.
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='10' WHERE key='schema'").run()
   db.close()
-  const ctx = new Context()
-  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
-  expect(() => new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())).toThrow(/already hosted for/)
-  expect(runtime.store.get(KV.store.schema)).toBe(10)
-  runtime.store.set(KV.store.schema, SCHEMA_VERSION)
+  const release = lockSync(directory)
+  try {
+    const supervisor = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }) })
+    await expect(supervisor.start()).rejects.toThrow(/already hosted for/)
+    expect(runtime.store.get(KV.store.schema)).toBe(10)
+    runtime.store.set(KV.store.schema, SCHEMA_VERSION)
+  } finally {
+    await release()
+  }
 })
 
 it('applies a changed prompt size limit to the next save and request without a restart', async () => {
@@ -1617,20 +1632,42 @@ it('applies a changed prompt size limit to the next save and request without a r
   expect(restarts).not.toHaveBeenCalled()
 })
 
-it('releases the database and the state directory lock when it fails to start, so it can start again in this process', async () => {
+/** A packaged runtime stand-in written in-test, so this spec never needs the built lib/ (the gate may run tests after a build,
+ *  but a clean checkout must pass them too). Its schema matches the Store's, so only the database-version gate can refuse it. */
+function packagedFixture(): { descriptor: RuntimeDescriptor; entry: string } {
+  const version = 'packaged-fixture'
+  const entry = join(directory, `${version}.js`)
+  writeFileSync(entry, `export const HOST_API = 1
+export const SCHEMA_VERSION = ${SCHEMA_VERSION}
+export function createRuntime() {
+  return {
+    ready: Promise.resolve(),
+    drain: async (reason) => ({ reason, startedAt: new Date().toISOString(), durationMs: 0, completed: true, phases: [] }),
+    dispose: async () => {},
+  }
+}
+`)
+  return { descriptor: { version, entry: `${version}.js`, hostApi: 1, sha256: '0'.repeat(64), schema: SCHEMA_VERSION }, entry }
+}
+
+it('releases the database and the state directory lock when a start fails, so it can start again in this process', async () => {
   await runtime.stop()
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='99' WHERE key='schema'").run()
   db.close()
   const context = () => { const ctx = new Context(); for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service); return ctx }
-  expect(() => new Runtime(context(), testMachine({ stateDir: directory }), vi.fn())).toThrow('Unsupported orchestrator database version 99')
+  const failed = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packagedFixture })
+  await expect(failed.start()).rejects.toThrow('Unsupported orchestrator database version 99')
+  // A lock kept by the failed start would make this throw that the lock is already held.
+  const release = lockSync(directory)
+  await release()
   const fixed = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   fixed.prepare('UPDATE kv SET value=? WHERE key=?').run(String(SCHEMA_VERSION), 'schema')
   fixed.close()
-  // A lock kept by the failed start would make this throw that the lock is already held.
-  runtime = new Runtime(context(), testMachine({ stateDir: directory }), vi.fn())
-  await runtime.ready
-  expect(runtime.store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  const next = new Supervisor({ context: context(), machine: testMachine({ stateDir: directory }), packaged: packagedFixture })
+  await next.start()
+  expect(next.versionStatus()).toMatchObject({ source: 'packaged', hostApi: 1 })
+  await next.stop()
 })
 
 it('tells the conversation that the PR merged when work a restart recovered ends with it later', async () => {
@@ -1939,7 +1976,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   expect(agents.has(childId)).toBe(true)
   const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;
     request: { agentPreset: string; maxDepth: number; parent: { id: string } } }
-  expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'parent',
+  expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'caller',
     request: { agentPreset: 'dsh-superagent-further-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
   // The child's report reaches the Ticket through its Lead, and a ready report ends it.
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
@@ -2304,6 +2341,17 @@ it('answers a whitelisted mention the main Session ignores with one notice on it
   expect(runtime.store.receipts.waiting().filter(item => item.kind === 'notice')).toEqual([])
 })
 
+it('leaves the main Session\'s own answer as the only reply when its Decision repeats the outcome', async () => {
+  const asked = feishu('13', '@bot 当前还有哪些未完成的工单？')
+  await receive(asked)
+  expect(await runTool(runtime.masterId, 'orchestrator_reply', { trigger_id: asked.id, purpose: 'answer', text: '共 7 个。' }))
+    .toEqual({ status: 'sent' })
+  await route({ kind: 'ignore', trigger_id: asked.id, reason: '已由编排会话直接答复' })
+  const decision = runtime.store.decisions.byThread(`feishu:${CHAT}:om_13`).at(-1)!
+  // The person already has the list; the "not taken up" notice would repeat it.
+  expect(runtime.store.receipts.get(key('explicit-reply', decision.id, asked.id))).toBeUndefined()
+})
+
 it('reports a completed root project request once through the Channel its chain started in', async () => {
   const { trigger, ticket } = await acceptedTicket(feishu('1', '@bot 修复回归'))
   // The worker gives the task up, which ends the Ticket and its domain Request.
@@ -2333,3 +2381,43 @@ it('reports a completed root project request once through the Channel its chain 
 })
 
 
+
+it('bounds the in-flight wait, still runs the later drain phases, and reports the failure', async () => {
+  await restart({}, {}, { drainInFlightMs: 25 })
+  vi.spyOn(runtime.effects, 'drain').mockReturnValue(new Promise(() => {}))
+  const report = await runtime.stop()
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'failed'], ['dispose', 'done'], ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
+  ])
+  expect(report.phases.find(phase => phase.phase === 'in-flight')).toMatchObject({
+    phase: 'in-flight', status: 'failed', detail: expect.stringContaining('did not finish within 25 ms'),
+  })
+  expect(report.completed).toBe(false)
+  // The store was closed and the lock released, so the directory is free for the next start.
+  expect(await runtime.stop()).toBe(report)
+})
+
+it('still closes the store and releases the lock when the drain is aborted before it starts', async () => {
+  await restart()
+  const controller = new AbortController()
+  controller.abort()
+  const report = await runtime.drain('test abort', controller.signal)
+  // Only intake/cancel/in-flight may be skipped by the abort; the maintenance phases always run.
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'skipped'], ['cancel', 'skipped'], ['in-flight', 'skipped'], ['dispose', 'done'],
+    ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
+  ])
+  expect(report.completed).toBe(false)
+  // The store phase ran, so the database is closed instead of being left open for the fixture's cleanup.
+  expect(() => runtime.store.get(KV.store.schema)).toThrow()
+})
+
+it('reports the drain phases in contract order and returns the first report on a second call', async () => {
+  await restart()
+  await runtime.ready
+  const first = await runtime.stop()
+  expect(first.phases.map(phase => phase.phase)).toEqual(['intake', 'cancel', 'in-flight', 'dispose', 'logs', 'store', 'lock'])
+  expect(first.phases.every(phase => phase.status === 'done')).toBe(true)
+  expect(first.completed).toBe(true)
+  expect(await runtime.stop()).toBe(first)
+})

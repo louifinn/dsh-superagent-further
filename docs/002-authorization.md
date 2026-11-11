@@ -15,7 +15,7 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 - Other human messages use the admission table for their receiving scope.
 - A bot on the Source's bot list can produce an inferred candidate, never an explicit request. Other bots are not admitted.
 
-A whitelisted person who addresses the agent explicitly always learns the outcome. An ignore, unavailable or stop Decision on such an @ mention or direct message sends one notice to that Trigger's Channel, naming the outcome and the recorded reason or next step; accepted requests already promise the acknowledgement and result. The notice is queued once per Decision and Trigger. None is sent when the sender is not whitelisted or the message was not addressed.
+A whitelisted person who addresses the agent explicitly always learns the outcome. An ignore, unavailable or stop Decision on such an @ mention or direct message sends one notice to that Trigger's Channel, naming the outcome and the recorded reason or next step; accepted requests already promise the acknowledgement and result. The notice is queued once per Decision and Trigger. None is sent when the sender is not whitelisted or the message was not addressed, nor when the main Session already answered that message directly on its Channel: the Trigger's disposition records that answer, and the notice would only repeat it.
 
 ### Subscriptions: continuing existing work
 
@@ -49,7 +49,7 @@ Human messages that reach no Ticket, including Threads whose Tickets were stoppe
 
 A project's Lead Session can dispose of work that the admission gate does not carry. A worker raises a project request when its Ticket needs a decision, a new deliverable or another project's work. A project request is a durable record, not a Trigger or a Request, so it takes no Eval and no admission cell. Its project's Lead answers it: every disposition carries a non-empty reply, and a request left unanswered when the Lead stops is reminded at most twice before the host records it as needing attention.
 
-Accepting a work request creates an ordinary domain Request and its staged Tickets under a Mandate whose basis is `{ via: 'lead', project, project_request_id }` with explicit strength. Every Ticket stays confined to that project and its Threads. Accepting an architecture request creates only a standalone design Ticket; the implementation Request and its Tickets exist only after a person approves the proposal on the root Thread (003 Execution describes the round trip). Work that belongs to another project, or that only the Orchestrator may authorize, stays an Orchestrator Request: the Lead escalates instead of widening its own request. An accepted escalation creates an installation-level Request under the Mandate basis `{ via: 'escalation', project, request }`; an installation automation delivery creates one under `{ via: 'installation', automation }`.
+Accepting a work request creates an ordinary domain Request and its staged Tickets under a Mandate whose basis is `{ via: 'lead', project, project_request_id }` with explicit strength. Every Ticket stays confined to that project and its Threads. Accepting an architecture request creates only a standalone design Ticket; the implementation Request and its Tickets exist only after a person approves the proposal on the root Thread (003 Execution describes the round trip). Work that belongs to another project, or that only the Orchestrator may authorize, stays an Orchestrator Request: the Lead escalates instead of widening its own request. An accepted escalation creates an installation-level Request under the Mandate basis `{ via: 'escalation', project, request }`; an installation automation delivery creates one under `{ via: 'installation', automation }`. The Orchestrator's own finding about superagent itself may become work too: `orchestrator_request_create` with `via: 'discovery'` creates an installation-level Request under `{ via: 'discovery' }`, with no Source message and no automation behind it, and its delivery units still name registered projects.
 
 The raising Session receives the Lead's reply, and the worker names the requests it leaves open in its completion report. When the root request and its derived work have ended, the Lead closes it with one aggregate report to the Channels the chain started from.
 
@@ -110,6 +110,20 @@ The accept mode is part of the Policy:
 | `auto` | A positive assessment of an inferred candidate accepts it |
 
 Explicit requests work in every mode. Start in `observe` and switch to `auto` after reviewing the recorded Decisions. Each assessment judges every enabled rule exactly once, whether it matches or not. A proactive accept requires at least one matching rule.
+
+## The self-report gate
+
+A concrete, checkable problem in superagent itself is a self-finding. Inside a project's jurisdiction it becomes work through `orchestrator_request_create` with `via: 'discovery'`; outside every registered project's repository it may leave as a public Issue through `orchestrator_issue_create`. The Issue outlet targets the fixed repository `louifinn/dsh-superagent-further`, and it refuses when that repository is registered here as a project, naming the discovery route instead. Approving a draft runs the same jurisdiction check, so a draft raised before that registration cannot file either (it can still be dismissed).
+
+The Eval settings hold the self-report gate beside the accept mode:
+
+| Mode | Effect |
+| --- | --- |
+| `off` | The outlet records nothing |
+| `observe` (default) | It records a draft and files nothing; a person approves or dismisses the draft in Overview |
+| `auto` | It files an Issue directly, within the limits below |
+
+Before filing, the outlet searches the target repository's open Issues and this installation's filed reports from the last 14 days, and links a hit instead of filing another Issue; it files at most three Issues per installation per day, and a finding beyond the cap stays a draft. The body follows the repository's language and opens with an automated-agent disclosure; it must carry evidence, reproduction steps and the running version, and it may never carry Feishu content (chat, message, user, union or app ids), credentials or private local paths (Unicode drive-letter and UNC paths, and the POSIX homes and system roots), while URLs and repository-relative paths stay valid. Labels are only ones the repository already has, and none by default. The tool only creates Issues — it never closes, edits or merges one — and findings are recorded silently, never sent as messages. The gate is a revisioned tier-B setting: the Agent proposes a change and the operator confirms it.
 
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
 

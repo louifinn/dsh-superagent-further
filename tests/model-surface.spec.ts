@@ -23,6 +23,8 @@ import { SettingsSchema } from '../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { testMachine } from './fixtures/deployment.ts'
+import { startTestRuntime } from './fixtures/host.ts'
+import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
 
 type Role = 'orchestrator' | 'worker'
 interface Surface { where: string; owner: string; role: Role | 'both'; text: string }
@@ -54,7 +56,12 @@ interface Skill { name: string; description: string; content: string }
 // It rose from 43,800 with the worker rules that finish a background job inside its own turn and keep one worktree and cwd
 // per Ticket, about 480 characters of work instructions; the incident stalled an assignment for three hours, so the budget
 // grows with the rules. Deleting the rules would let it drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 68_600, worker: 44_400 }
+// It rose from 68,600 with orchestrator_issue_create and the discovery variant of orchestrator_request_create, which add
+// about 1,770 characters of schemas and descriptions for the self-evolution outlet (docs/014 Phase 2); deleting that
+// outlet would let the budget drop back.
+// It rose from 70,500 with orchestrator_incident, which adds the list/get/diagnose/dismiss/route schema and description
+// for the read-only diagnosis contract (ADR-0005); deleting that tool would let the budget drop back.
+const BUDGET: Record<Role, number> = { orchestrator: 73_000, worker: 44_400 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -86,6 +93,8 @@ const words = (count: number) => Array.from({ length: count }, () => 'word').joi
 /** Start a configured Runtime on a fake DSH host (as in tests/runtime.spec.ts) that records registered tools, prompts, skills, and delivered messages per session. */
 async function start() {
   const directory = mkdtempSync(join(tmpdir(), 'model-surface-'))
+  const workspaceRoot = workspaceDirectory('model-surface-workspace-')
+  const workspaces = fakeWorkspaces(directory)
   const AGENT = join(directory, 'agent-gh'), BOT = join(directory, 'lark-bot')
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const repository = { default_branch: 'master', permissions: { push: true } }
@@ -176,7 +185,7 @@ async function start() {
   const ctx = new Context()
   const history = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
   const services = { agents, llm: { resolveCallConfig: async (value: unknown) => value },
-    workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) },
+    workspaceRegistry: workspaces.registry,
     sessionController: { create, resolveAgent, selectModel: async () => {}, rename: async () => {}, inspect: async () => ({ events: [] }) },
     sessionPersistence: { flush: async () => {}, open: async () => history }, permissionPresets: { set: () => {} }, subprocess,
     webServer: { host: '127.0.0.1', port: 3082, register: () => () => {} }, subagents } as Record<string, unknown>
@@ -185,10 +194,10 @@ async function start() {
   const github = { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }
   const project = { id: 'default', name: 'Default', workspace: directory, repository: 'acme/widgets', branch: '' }
   const seeded = seed.settings()
-  seed.saveSettings(SettingsSchema.parse({ ...seeded, executor: { ...seeded.executor, projects: [project] },
+  seed.saveSettings(SettingsSchema.parse({ ...seeded, workspace: { path: workspaceRoot }, executor: { ...seeded.executor, projects: [project] },
     sources: { github, feishu: { enabled: true, config: { cli: BOT } } } }))
   seed.close()
-  const runtime = new Runtime(ctx, testMachine({ stateDir: directory }), () => {})
+  const runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), () => {})
   await runtime.ready
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
   const settings = runtime.store.settings()
@@ -198,7 +207,7 @@ async function start() {
     sources: { ...settings.sources, feishu: feishuSource } })
   const run = async (sessionId: string, name: string, args: unknown) =>
     await tools.get(sessionId)!.get(name)!.execute(args, { signal: new AbortController().signal }) as Record<string, unknown>
-  const stop = async () => { await runtime.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) }
+  const stop = async () => { await runtime.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }); rmSync(workspaceRoot, { recursive: true, force: true }) }
   return { ctx, runtime, agents, tools, sections, skills, inputs, run, stop }
 }
 type Host = Awaited<ReturnType<typeof start>>
@@ -402,7 +411,7 @@ function failures(): Map<string, string> {
 it('collects both roles\' tools, prompts, skills and inputs', () => {
   expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
     'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'request_create'])
-  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_escalations', 'orchestrator_escalation_decide']))
+  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_incident', 'orchestrator_issue_create', 'orchestrator_escalations', 'orchestrator_escalation_decide']))
   // The one routing tool takes the place of four.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {
     expect(toolsOf('orchestrator').has(name)).toBe(false)

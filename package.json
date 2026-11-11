@@ -46,15 +46,18 @@
     "manifestVersion": 1
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/check-runtime-bundle.mjs --write",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=.artifacts/coverage",
+    "runtime:check": "node scripts/check-runtime-bundle.mjs",
     "pack:check": "node scripts/check-pack.mjs",
     "docs:generate": "node --experimental-transform-types scripts/generate-tool-reference.mjs",
     "docs:check": "node --experimental-transform-types scripts/generate-tool-reference.mjs --check",
     "architecture:check": "node scripts/check-architecture.mjs",
-    "check": "pnpm typecheck && pnpm architecture:check && pnpm test && pnpm build && pnpm pack:check && pnpm docs:check"
+    "deploy": "node --experimental-transform-types scripts/deploy-runtime.mjs",
+    "drill": "node --experimental-transform-types scripts/drill.mjs",
+    "check": "pnpm typecheck && pnpm architecture:check && pnpm build && pnpm test && pnpm runtime:check && pnpm pack:check && pnpm docs:check"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

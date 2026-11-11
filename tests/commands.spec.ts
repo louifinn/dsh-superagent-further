@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import { CliError, Commands, commandError } from '../src/infra/commands.ts'
+import { CliError, Commands, commandError, isCliError } from '../src/infra/commands.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { feishuChannel } from '../src/sources/feishu-trigger.ts'
 import { githubKind } from '../src/sources/github.ts'
@@ -224,6 +224,16 @@ it('reports failures as CliError with the code the CLI names and the exit status
   const commands = new Commands(() => deployment, {}, new AbortController().signal)
   vi.spyOn(commands, 'run').mockResolvedValue(JSON.stringify({ ok: false, error: { code: 231003, message: 'message not found' } }))
   await expect(commands.lark(['im', '+messages-reply'])).rejects.toMatchObject({ message: 'message not found (231003)', code: 231003 })
+})
+
+it('classifies a CLI failure created by the runtime bundle, whose CliError class is not this bundle\'s', () => {
+  const foreign = Object.assign(new Error('gh: HTTP 304'),
+    { code: 304, [Symbol.for('dsh-superagent-further.cliError')]: true })
+  expect(foreign).not.toBeInstanceOf(CliError)
+  expect(isCliError(foreign)).toBe(true)
+  expect(isCliError(new CliError('gh: HTTP 304', 304))).toBe(true)
+  expect(isCliError(new Error('gh: HTTP 304'))).toBe(false)
+  expect(isCliError(undefined)).toBe(false)
 })
 
 it('stops a running command when the signal of its work aborts, or the lifetime, and leaves the other work running', async () => {

@@ -32,7 +32,8 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   const [provider, model] = all('.dt-model input')
   await type(provider as HTMLInputElement, 'worker-provider'); await type(model as HTMLInputElement, 'worker-model')
   await click(zh.save)
-  expect(server.settings.eval).toEqual({ mode: 'auto', timeoutSeconds: 180, model: { provider: 'worker-provider', model: 'worker-model' } })
+  expect(server.settings.eval).toEqual({ mode: 'auto', selfReport: 'observe', timeoutSeconds: 180,
+    model: { provider: 'worker-provider', model: 'worker-model' } })
   await click(find(zh['promptPart.runtime/work'], '.dt-settings-link'))
   await type(field<HTMLInputElement>(zh.maxWorkers), '5')
   // An empty root uses the default directory, which the field names instead of looking set.
@@ -55,6 +56,7 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   await click(zh.save)
   expect(server.settings.executor).toEqual({ maxWorkers: 5, projectWorkers: 2, directory: '/srv/work',
     prepare: 'git worktree add "$DSH_SUPERAGENT_DIR"', blockedCommands: ['gh-personal', 'gh.other'], projects: [], worktreeKeepDays: 7,
+    logLevel: 'info', logRetentionDays: 7, incidents: { enabled: true, autoDiagnose: true, dailyBudget: 2, diagnoseDailyBudget: 2, minimumSeverity: 'high' },
     model: { provider: 'worker-provider', model: 'worker-model', reasoningEffort: 'high' } })
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/eval',
     'settings/executor'])

@@ -60,18 +60,31 @@ function batchInvocation(program: string, args: string[], environment: NodeJS.Pr
   if (expandsInBatch(args, environment)) throw new CliError(`${basename(program)} cannot run on Windows with an argument that names an environment variable (%VAR%) or a line break`)
   return batchArguments(program, args)
 }
+const CLI_ERROR = Symbol.for('dsh-superagent-further.cliError')
 /**
  * Error thrown by Commands when a CLI invocation fails, capturing stderr diagnostics, API error codes, and exit status without echoing command arguments.
  * Source channels and pollers inspect its code to distinguish deleted conversations from retryable failures.
+ *
+ * The runtime ships as its own bundle, so a Source plugin's copy of this class is a different class from the runtime's:
+ * `instanceof` is false for an error the runtime threw. The shared symbol brands every copy of the class, and code that
+ * classifies a failure coming from the runtime's `Commands` must check `isCliError`.
  */
 export class CliError extends Error {
-  constructor(message: string, readonly code?: number, readonly exitCode?: number) { super(message) }
+  constructor(message: string, readonly code?: number, readonly exitCode?: number) {
+    super(message)
+    Object.defineProperty(this, CLI_ERROR, { value: true, enumerable: false })
+  }
+}
+/** True for a CliError, whichever bundle created it. */
+export function isCliError(error: unknown): error is CliError {
+  return error instanceof CliError
+    || (typeof error === 'object' && error !== null && (error as { [CLI_ERROR]?: unknown })[CLI_ERROR] === true)
 }
 /** Extracts a sanitized error from a failed subprocess without echoing argv, which may contain message text. */
 export function commandError(error: unknown, program = 'command'): Error {
   if (error instanceof Error && error.name === 'AbortError') return error
   // Diagnostics raised before a process starts already describe the failure.
-  if (error instanceof CliError) return error
+  if (isCliError(error)) return error
   const exitCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'number' ? error.code : undefined
   if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') {
     const stderr = error.stderr.trim()
@@ -103,7 +116,7 @@ export function validItems<T>(item: z.ZodType<T>, list: readonly unknown[], tall
 }
 /** Rewrites Feishu error 232011 (bot not in chat) with remediation instructions. */
 function membership(error: unknown): unknown {
-  if (!(error instanceof CliError) || error.code !== 232011) return error
+  if (!isCliError(error) || error.code !== 232011) return error
   const hint = 'The Feishu bot is not a member of the chat. Add the bot in the chat settings, then retry.'
   return new CliError(hint, error.code, error.exitCode)
 }

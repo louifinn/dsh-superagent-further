@@ -119,9 +119,9 @@ it.each(RULES)('%s (%s)', (_rule, file, says, gone = []) => {
 })
 
 it('keeps each role\'s own instructions short', () => {
-  // The self-evolution finding rule (014) adds one sentence to the orchestrator's own instructions; the limit moves
-  // with it and not with added rules, as the rename comment below does.
-  expect(masterPrompt.length).toBeLessThan(1500)
+  // The self-evolution finding rule (014) adds one sentence to the orchestrator's own instructions; Phase 2 adds the
+  // discovery-or-Issue routing sentence, so the limit moves to 1,850 and not with added rules, as the rename comment below does.
+  expect(masterPrompt.length).toBeLessThan(1850)
   // The 0.3.0 rename made the worker's registration names 12 characters longer, so the same instructions now
   // measure 1,001; the limit moves with the name and not with added rules.
   expect(workerPrompt.length).toBeLessThan(1010)
@@ -173,12 +173,12 @@ it('shows a ticket card\'s state from a closed set: the open ticket\'s stage, th
     [ticket, 'person/review'], [report('blocked'), 'person/blocked'], [report('failed'), 'person/failed'], [report('waiting'), 'idle'], [report('progress'), 'working'],
     [{ ...ticket, attention: { id: 'q', question: 'Desktop too?' } }, 'person/answer'], [{ ...ticket, delivery: { error: 'gone', at: '' } }, 'person/delivery'],
     [{ ...ticket, assignments: [{ ...ticket.assignments[0]!, state: 'pending', report: undefined }] }, 'working/queued'],
-    [{ ...ticket, ended: { at: 'e', by: 'human', reason: 'Not needed after all', outcome: 'stopped' } }, 'stopped'],
-    [{ ...ticket, ended: { at: 'e', by: 'executor', reason: 'merged', outcome: 'merged' } }, 'merged'],
+    [{ ...ticket, ended: { at: 'e', by: 'human', cause: 'human', reason: 'Not needed after all', outcome: 'stopped' } }, 'stopped'],
+    [{ ...ticket, ended: { at: 'e', by: 'executor', cause: 'merge', reason: 'merged', outcome: 'merged' } }, 'merged'],
   ]
   for (const [item, state] of cases) expect(ticketCard(item).state).toBe(state)
   expect(cases.map(([item]) => ticketCard(item).state).every(state => (TICKET_STATES as readonly string[]).includes(state))).toBe(true)
-  expect(ticketCard(cases[8]![0])).toMatchObject({ ended: { at: 'e', by: 'human', reason: 'Not needed after all' } })
+  expect(ticketCard(cases[8]![0])).toMatchObject({ ended: { at: 'e', by: 'human', cause: 'human', reason: 'Not needed after all' } })
   expect(ticketCard(ticket)).toMatchObject({ ticket_id: 'ticket-1', pr_number: 42, strength: 'explicit' })
   expect(ticketCard(ticket)).not.toHaveProperty('attention')
   expect(ticketCard({ ...ticket, attention: { id: 'q', question: 'Desktop too?' } })).toMatchObject({ attention: { question: 'Desktop too?' } })

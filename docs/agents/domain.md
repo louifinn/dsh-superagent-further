@@ -2,7 +2,7 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-This repository is **single-context**: one glossary and one ADR directory at the root. Neither exists yet; both are created lazily by the domain-modeling work when a term or a decision actually needs recording.
+This repository is **single-context**: one glossary and one ADR directory at the root. `docs/adr/` exists, and a decision that shapes the domain requires an ADR recorded there, as `0001-ticket-end-authority.md` does. `GLOSSARY.md` does not exist yet: the domain-modeling work creates it lazily when a term actually needs recording.
 
 ## Before exploring, read these
 

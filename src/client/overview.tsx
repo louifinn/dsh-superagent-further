@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import { usePoll, type Problem } from './api.ts'
-import { Button, Icon, Input } from './controls.tsx'
+import { Button, Icon, Input, Tag, type TagTone } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
@@ -71,6 +71,8 @@ function RequestEntry({ request }: { request: ApiResponse<'GET overview'>['reque
         onClick={() => setOpen(!open)}>{request.title}</button></div>
       <div className="dt-row-meta">
         <LabelValue label={t('requestTicketsLabel')} value={String(request.tickets.length)} />
+        <Button variant="ghost" size="sm" icon={<Icon name="history" size={14} />} data-request-logs={request.id}
+          onClick={() => navigate({ page: 'logs', query: { q: `request=${request.id}` } })}>{t('logsForRequest')}</Button>
       </div>
       {open && <div className="dt-request-tickets">
         {request.tickets.map(ticket => <Button key={ticket.id} size="sm" variant="outline"
@@ -111,7 +113,60 @@ function EscalationEntry({ item, onChanged }: { item: ApiResponse<'GET overview'
     </div>
   </li>
 }
-export function OverviewPage() {
+/**
+ * One observe-mode self report draft (docs/014 D5): a person approves filing it — within the outlet's deduplication and
+ * daily cap — or dismisses it. Filed history stays in the target repository, so no other surface is added here.
+ */
+function SelfReportEntry({ item, blocked, onChanged, highlight }: {
+  item: ApiResponse<'GET overview'>['selfReports'][number]; blocked: boolean; onChanged: () => Promise<void>
+  /** A self-report resolution deep-linked here: mark the row and bring it into view once. */
+  highlight: boolean
+}) {
+  const { t, call } = usePanel()
+  const action = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
+  const reveal = (element: HTMLLIElement | null) => {
+    if (element === null || !highlight || element.dataset.scrolled === '1') return
+    element.dataset.scrolled = '1'
+    element.scrollIntoView?.({ block: 'center' })
+  }
+  return <li className={`dt-row${highlight ? ' dt-highlight' : ''}`} data-self-report={item.id} ref={reveal}>
+    <div className="dt-row-main">
+      <div className="dt-att-what">{item.title}</div>
+      <div className="dt-row-meta">
+        <LabelValue label={t('selfReportTarget')} value={<span className="dt-mono">{item.target_repo}</span>} />
+        <LabelValue label={t('selfReportAge')} value={when(item.createdAt, t('lang'))} />
+      </div>
+      <p className="dt-hint">{item.evidence}</p>
+      <div className="dt-row-meta dt-row-buttons">
+        <Button size="sm" disabled={action.busy} onClick={() => { void action.run(() =>
+          call('POST self-reports/:id/approve', { id: item.id })) }}>{t('selfReportApprove')}</Button>
+        <Button size="sm" variant="outline" disabled={action.busy} onClick={() => { void action.run(() =>
+          call('POST self-reports/:id/dismiss', { id: item.id })) }}>{t('selfReportDismiss')}</Button>
+      </div>
+      {blocked && <Hint>{t('selfReportBlocked')}</Hint>}
+    </div>
+  </li>
+}
+/** One open deterministic incident in the Overview's "needs you" row, linking to the Incidents page (docs/005-panel.md). */
+function IncidentEntry({ item }: { item: ApiResponse<'GET overview'>['incidents']['items'][number] }) {
+  const { t, navigate } = usePanel()
+  const tone: TagTone = item.severity === 'critical' ? 'danger' : item.severity === 'high' ? 'warning'
+    : item.severity === 'medium' ? 'info' : 'quiet'
+  return <li className="dt-row dt-link" data-overview-incident={item.id}>
+    <div className="dt-row-main">
+      <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap"
+        onClick={() => navigate({ page: 'incidents', id: item.id })}>{item.title}</button></div>
+      <div className="dt-row-meta">
+        <Tag tone={tone}>{t(`incidentSeverity.${item.severity}` as never)}</Tag>
+        <LabelValue label={t('incidentRule')} value={t(`incidentRule.${item.rule}` as never)} />
+        <LabelValue label={t('incidentOccurrences')} value={String(item.occurrences)} />
+        <LabelValue label={t('incidentLast')} value={when(item.last_at, t('lang'))} />
+      </div>
+    </div>
+  </li>
+}
+
+export function OverviewPage({ route }: { route: Extract<Route, { page: 'overview' }> }) {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
   const { data, error, reload } = usePoll(() => call('GET overview'), [])
@@ -126,6 +181,9 @@ export function OverviewPage() {
   const more = (route: Route) => <button type="button" className="dt-textlink dt-more-link"
     onClick={() => navigate(route)}>{t('details')}</button>
   const waiting = project ? data.person.filter(ticket => project === '-' ? !ticket.project : ticket.project === project) : data.person
+  // The API always sends both fields; test doubles written before the outlet may not.
+  const selfReports = data.selfReports ?? []
+  const incidents = data.incidents ?? { count: 0, items: [] }
   const choices = [{ id: '', label: t('projectFilterAll') }, ...data.projects.map(item => ({ id: item.id, label: item.name })),
     ...data.person.some(ticket => !ticket.project) ? [{ id: '-', label: t('projectFilterNone') }] : []]
   return <>
@@ -167,6 +225,29 @@ export function OverviewPage() {
     {/* Open escalations wait for the Orchestrator. It can answer them here, or accept the work into the escalating project's own Ticket from the main Session when the units differ. */}
     {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
       <ul className="dt-list">{data.escalations.map(item => <EscalationEntry key={item.id} item={item} onChanged={reload} />)}</ul>
+    </Section>}
+    {/* Open deterministic incidents are the host's own findings: they need a person, not a second request (docs/005-panel.md). */}
+    {incidents.count > 0 && <Section title={t('incidentsNeedsYou')} count={incidents.count} action={more({ page: 'incidents' })}>
+      <ul className="dt-list">{incidents.items.map(item => <IncidentEntry key={item.id} item={item} />)}</ul>
+    </Section>}
+    {/* A pending or failed runtime update is an operator action: the Updates page shows the journal and the rollback (ADR-0007). */}
+    {(data.update.pending || data.update.failed) && <Section title={t('updatesNeedsYou')} action={more({ page: 'updates' })}>
+      <ul className="dt-list"><li className="dt-row dt-link" data-overview-update>
+        <div className="dt-row-main">
+          <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap"
+            onClick={() => navigate({ page: 'updates' })}>{data.update.failed ? t('updateAttentionFailed') : t('updateAttentionPending')}</button></div>
+          <div className="dt-row-meta">
+            {data.update.version !== null && <LabelValue label={t('updateVersion')} value={data.update.version} />}
+            {data.update.phase !== null && <LabelValue label={t('updatePhase')} value={t(`updatePhase.${data.update.phase}` as never)} />}
+            {data.update.reason !== null && <LabelValue label={t('updateReason')} value={data.update.reason} />}
+          </div>
+        </div>
+      </li></ul>
+    </Section>}
+    {/* Observe-mode self report drafts wait for a person; auto mode files directly and accumulates none here. */}
+    {selfReports.length > 0 && <Section title={t('selfReportsTitle')} count={selfReports.length}>
+      <ul className="dt-list">{selfReports.map(item => <SelfReportEntry key={item.id} item={item}
+        blocked={data.selfReportsBlocked ?? false} onChanged={reload} highlight={route.query?.report === item.id} />)}</ul>
     </Section>}
     {/* Automation records that lost their Host task or failed delivery; the Automations page has their history. */}
     {data.automationAttention.count > 0 && <Section title={t('automationAttentionTitle')} count={data.automationAttention.count}

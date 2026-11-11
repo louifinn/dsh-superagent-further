@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { record } from '../kv.ts'
 import { MEMORY_SORTS } from '../memory.ts'
-import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
+import { THREAD_FILTERS, TICKET_FILTERS, INCIDENT_STATUS_FILTERS, INCIDENT_SEVERITY_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
 import { AutomationCreateSchema, AutomationLimitError, AutomationRunRefusedError, AutomationUpdateSchema, UnknownAutomationError, UnknownProjectError,
   type Automations } from './automations.ts'
 import type { AutomationsView } from './views/automations.ts'
@@ -16,6 +16,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, SettingsRevisionNotFound, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
+import { WorkspaceSetupError } from './workspace-root.ts'
 import { UserError, latestAssignment, runningAssignment, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import { workerSessionId, type DshExecutor } from '../executor/dsh.ts'
@@ -25,6 +26,10 @@ import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import type { LeadRow, DeliveryFailure } from './views/overview.ts'
+import type { SelfReports } from './self-reports.ts'
+import { requireIncident, type Incidents } from './incidents.ts'
+import type { Diagnosis } from './diagnosis.ts'
+import type { IncidentFilter } from '../core/incidents.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
@@ -36,13 +41,14 @@ import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 import type { LogFilter, Logs, LogsView } from './logs.ts'
+import type { Updates } from './updates.ts'
 
 export interface HttpHost {
   readonly store: Store
   /** Feishu message links resolved since startup, used by search to match AppLink URLs. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
-  /** Bounded in-memory log of the plugin host's own messages. */
-  readonly logs: Pick<Logs, 'list'>
+  /** Bounded in-memory log of the plugin host's own messages, plus the audit trail of human-triggered actions. */
+  readonly logs: Pick<Logs, 'list' | 'record'>
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
@@ -57,6 +63,14 @@ export interface HttpHost {
   deliveryFailures(): readonly DeliveryFailure[]
   /** The plugin's automation tasks; absent when the Host's `schedule` service is not installed. */
   readonly automations?: Automations
+  /** The self-evolution Issue outlet: drafts for the Overview, and the approve/dismiss actions. */
+  readonly selfReports: SelfReports
+  /** Deterministic incident records and their evidence bundles (ADR-0004). */
+  readonly incidents: Incidents
+  /** Bounded read-only diagnosis of incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
+  /** The supervisor-owned update pipeline, read from disk: status, operator attention and rollback requests (ADR-0007). */
+  readonly updates: Pick<Updates, 'status' | 'rollback' | 'attention'>
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -66,6 +80,8 @@ export interface HttpHost {
   readonly deployment: Deployment
   readonly setupProblem?: SetupProblem | undefined
   readonly feishuProblem?: SetupProblem | undefined
+  /** The prepared orchestrator workspace, shown by the panel; null until the operator selects one. */
+  readonly workspace?: { path: string; title: string } | null
   configured(): boolean
   links(): LinkTarget
   ticketEnvironment(ticket: Ticket): Variable[]
@@ -105,6 +121,7 @@ function failure(error: unknown): [number, Record<string, unknown>] {
     return [400, { error: `Invalid settings: ${issues.map(issue => issue.path).join(', ')}`, issues }]
   }
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
+  if (error instanceof WorkspaceSetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UnknownProjectError) return [400, { error: error.message, code: 'projectNotRegistered' }]
   if (error instanceof UnknownAutomationError) return [404, { error: error.message }]
@@ -112,6 +129,10 @@ function failure(error: unknown): [number, Record<string, unknown>] {
     return [error.code === 'schedule_not_found' ? 404 : 409, { error: error.message, code: error.code }]
   }
   if (error instanceof AutomationLimitError) return [400, { error: error.message }]
+  // A closed record cannot be dismissed twice; that is a lifecycle conflict, not a malformed body.
+  if (error instanceof UserError && error.code === 'incidentTransition') {
+    return [409, { error: error.message, code: error.code, values: error.values }]
+  }
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
   if (error instanceof SettingsRevisionNotFound) return [404, { error: error.message }]
   if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
@@ -126,6 +147,7 @@ function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
     machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
+    workspace: runtime.workspace ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }
@@ -134,10 +156,14 @@ function setupView(runtime: HttpHost) {
  * A missing record is what makes a first run open the wizard, so it survives panel reloads without touching Settings.
  */
 const WizardRecord = record<{ at: string; skipped: boolean }>('setup-wizard')
-/** First-run state of the setup wizard: it opens while no project is registered and was never finished or skipped. */
+/**
+ * First-run state of the setup wizard: it opens while no workspace is selected, and while no project is registered and the
+ * operator never finished or skipped it. A workspace is mandatory, so an upgrade pauses here until the operator chooses one.
+ */
 function wizardView(runtime: HttpHost) {
   const done = runtime.store.get(WizardRecord)
-  return { firstRun: runtime.store.settings().executor.projects.length === 0 && done === undefined, skipped: done?.skipped ?? false }
+  return { firstRun: runtime.store.settings().workspace.path === '' || (runtime.store.settings().executor.projects.length === 0 && done === undefined),
+    skipped: done?.skipped ?? false }
 }
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent-further status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {
@@ -210,23 +236,38 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const LogsQuery = z.object({ level: z.enum(['all', 'warn', 'error']).catch('all'), scope: z.string().default(''),
-  limit: z.coerce.number().int().min(1).max(400).default(120) })
+  limit: z.coerce.number().int().min(1).max(2000).default(200), q: z.string().default('') })
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
   offset: count.default(0), limit: limit(20, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
-const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language']), SourceBlock])
+const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language', 'workspace']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
 const RestoreRequest = z.object({ revision: z.number().int().nonnegative(), reason: z.string().trim().max(280).optional() })
+const IncidentsQuery = z.object({
+  status: z.enum(INCIDENT_STATUS_FILTERS).catch('open'),
+  severity: z.enum(INCIDENT_SEVERITY_FILTERS).optional().catch(undefined),
+  project: z.string().trim().max(120).default(''), ticket: z.string().trim().max(120).default(''),
+  request: z.string().trim().max(120).default(''), session: z.string().trim().max(120).default(''),
+  offset, limit: limit(20, 100),
+})
 
 function routes(runtime: HttpHost): Routes {
   const { store } = runtime
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
+  /**
+   * Record one human-triggered domain action for the operator audit trail. Only the action name and identifiers are
+   * logged: setting values, replies, reasons, instructions and any other payload text stay out of the log by design.
+   */
+  const audit = (action: string, fields: Record<string, string | number | boolean> = {}): void => {
+    const facts = Object.entries(fields).map(([name, value]) => `${name}=${value}`).join(' ')
+    runtime.logs.record('info', 'audit', `${action}${facts ? ` ${facts}` : ''} actor=operator`, { actor: 'operator', action, ...fields })
+  }
   return {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
       executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.leadOverview(),
-      runtime.deliveryFailures()),
+      runtime.deliveryFailures(), runtime.selfReports.drafts(), runtime.updates.attention()),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
@@ -273,23 +314,36 @@ function routes(runtime: HttpHost): Routes {
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'GET workers': () => workersPage(runtime),
-    'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
-    'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
+    'POST tickets/:id/retry': ({ params }) => {
+      const id = ticket(params.id)
+      runtime.engine.retryTicket(id)
+      audit('ticket.retry', { ticket: id })
+      return { retried: true }
+    },
+    'POST tickets/:id/stop': ({ params }) => {
+      const id = ticket(params.id)
+      runtime.engine.stopTicket(id)
+      audit('ticket.stop', { ticket: id })
+      return { stopped: true }
+    },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)
       const known = !block.startsWith('source:') || runtime.sources.instances().some(instance => `source:${instance.id}` === block)
       if (!known) throw new RouteError(404, 'Source not found')
       const request = SaveRequest.parse(await body())
-      return runtime.settings.save(block, request.value, request.revision, 'panel')
+      const saved = await runtime.settings.save(block, request.value, request.revision, 'panel')
+      audit('settings.save', { block, revision: saved.revision })
+      return saved
     },
-    // Restore one block from a saved revision through the ordinary panel save path (docs/011 A5.3); the history is the audit.
+    // Restore one block from a saved revision through the ordinary panel save path (docs/011 A5.3); the history records the values.
     'POST settings/:block/restore': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)
       const known = !block.startsWith('source:') || runtime.sources.instances().some(instance => `source:${instance.id}` === block)
       if (!known) throw new RouteError(404, 'Source not found')
       const request = RestoreRequest.parse(await body())
       const saved = await runtime.settings.restore(block, request.revision, request.reason ? { reason: request.reason } : {})
+      audit('settings.restore', { block, revision: saved.revision, restoredFrom: saved.restoredFrom })
       return { revision: saved.revision, restarting: saved.restarting, restoredFrom: saved.restoredFrom }
     },
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
@@ -299,6 +353,9 @@ function routes(runtime: HttpHost): Routes {
     // may have skipped it deliberately and can reopen it from the panel header.
     'PUT wizard': async ({ body }) => {
       const { skipped } = z.object({ skipped: z.boolean() }).parse(await body())
+      // A workspace is mandatory: skipping or finishing the wizard before one is selected must fail closed, so a reload
+      // cannot present the first-run state as answered while the host is paused without a workspace.
+      if (store.settings().workspace.path === '') throw new WorkspaceSetupError('workspaceRequired')
       store.set(WizardRecord, { at: new Date().toISOString(), skipped })
       return wizardView(runtime)
     },
@@ -321,7 +378,22 @@ function routes(runtime: HttpHost): Routes {
       for (const [index, unit] of (input.units ?? []).entries()) {
         if (!projects.some(item => item.id === unit.project)) throw new RouteError(400, `Deliverable ${index}: project ${unit.project} is not registered`)
       }
-      return runtime.decideEscalation({ ...input, id: params.id })
+      const result = await runtime.decideEscalation({ ...input, id: params.id })
+      audit('escalation.decide', { request: params.id, decision: input.decision, units: input.units?.length ?? 0 })
+      return result
+    },
+    // The self-evolution outlet's two review actions (docs/014 D5): only a draft is approvable or dismissable, and filing
+    // reuses the outlet's own deduplication, daily cap and label rules rather than a second HTTP path for them.
+    'POST self-reports/:id/approve': async ({ params }) => {
+      const result = await runtime.selfReports.approve(params.id)
+      if (result.status !== 'filed' && result.status !== 'linked') throw new RouteError(409, 'Self report could not be filed')
+      audit('self-report.approve', { report: result.report.id, issue: result.issue_number, status: result.status })
+      return { status: result.status, report_id: result.report.id, issue_number: result.issue_number }
+    },
+    'POST self-reports/:id/dismiss': ({ params }) => {
+      const report = runtime.selfReports.dismiss(params.id)
+      audit('self-report.dismiss', { report: report.id })
+      return { status: 'dismissed', id: report.id }
     },
     'POST memory/forget': async ({ body }) => {
       const { id } = z.object({ id: z.string().min(1) }).parse(await body())
@@ -342,29 +414,97 @@ function routes(runtime: HttpHost): Routes {
     // Automations share the service the main Session's tools use; the panel is another client of the same code path. A missing
     // Host schedule service is a 503 instead of a broken page, and no route can re-target scope or project.
     'GET logs': ({ query }): LogsView => {
-      const { level, scope, limit } = LogsQuery.parse(query)
-      return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit }), level: level as LogFilter, scope }
+      const { level, scope, limit, q } = LogsQuery.parse(query)
+      return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }
+    },
+    // Deterministic incidents (ADR-0004). Detection itself is not exposed here: M34 adds the diagnose/dismiss actions.
+    'GET incidents': ({ query }) => {
+      const parsed = IncidentsQuery.parse(query)
+      const scope: { project?: string; ticket?: string; request?: string; session?: string } = {}
+      for (const name of ['project', 'ticket', 'request', 'session'] as const) {
+        const value = parsed[name]
+        if (value !== '') scope[name] = value
+      }
+      const filter: IncidentFilter = { status: parsed.status, offset: parsed.offset, limit: parsed.limit,
+        ...(parsed.severity === undefined ? {} : { severity: parsed.severity }),
+        ...(Object.keys(scope).length === 0 ? {} : { scope }) }
+      return { incidents: runtime.incidents.list(filter), total: runtime.incidents.total(filter), status: parsed.status,
+        ...(parsed.severity === undefined ? {} : { severity: parsed.severity }), offset: parsed.offset, limit: parsed.limit }
+    },
+    'GET incidents/:id': ({ params }) => {
+      // `requireIncident` raises `incidentUnknown`, which the failure mapper turns into the one missing-record 404.
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      return runtime.incidents.detail(incident.id)!
+    },
+    // The operator's incident actions (ADR-0005). The diagnosis service owns every side effect and every refusal; this layer
+    // only translates them and writes one metadata-only audit line: action, ids and outcome, never the diagnosis text.
+    'POST incidents/:id/diagnose': async ({ params }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      const result = await runtime.diagnosis.diagnose(incident.id)
+      if (result.status === 'refused') {
+        if (result.reason === 'unknown') throw new RouteError(404, 'Incident not found')
+        throw new RouteError(409, `The diagnosis was refused: ${result.reason}`)
+      }
+      audit('incident.diagnose', { incident: incident.id, status: result.incident.status,
+        confidence: result.diagnosis.confidence, target: result.diagnosis.target.kind,
+        ...(result.resolution === undefined ? {} : { resolution: result.resolution }) })
+      return result
+    },
+    'POST incidents/:id/dismiss': async ({ params, body }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      const { reason } = z.object({ reason: z.string().trim().min(1).max(280) }).parse(await body())
+      const dismissed = runtime.incidents.dismiss(incident.id, reason)
+      audit('incident.dismiss', { incident: incident.id, status: dismissed.status })
+      return { incident: dismissed }
+    },
+    // Creating work is a second, explicit step: the diagnosis alone never creates a Request or an Issue for an operator.
+    'POST incidents/:id/route': async ({ params, body }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      z.object({ confirm: z.literal(true) }).parse(await body())
+      const result = await runtime.diagnosis.route(incident.id, { manual: true })
+      if (result.status === 'refused') {
+        if (result.reason === 'unknown') throw new RouteError(404, 'Incident not found')
+        throw new RouteError(409, `The route was refused: ${result.reason}`)
+      }
+      audit('incident.route', { incident: incident.id, resolution: result.resolution, status: result.incident.status })
+      return result
     },
     'GET automations': () => automationsPage(runtime),
+    // The panel never uploads or loads code: it reads the supervisor's status and queues one rollback request (ADR-0007).
+    'GET updates': () => runtime.updates.status(),
+    'POST updates/rollback': async ({ body }) => {
+      z.object({ confirm: z.literal('ROLLBACK') }).parse(await body())
+      const result = runtime.updates.rollback()
+      if (!result.ok) throw new RouteError(409, result.reason)
+      audit('updates.rollback', { request: result.request.id })
+      return { requested: true as const, request: result.request, status: result.status }
+    },
     'POST automations': async ({ body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')
+      const created = await runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')
+      audit('automation.create', { automation: created.id })
+      return created
     },
     'PUT automations/:id': async ({ params, body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
       const update = AutomationUpdateSchema.parse(await body())
       const result = await runtime.automations.edit({ id: params.id, action: 'update', ...update }, 'panel')
       if ('conflict' in result) throw new RouteError(409, result.warning)
+      audit('automation.edit', { automation: result.id })
       return result
     },
     // A manual run never re-targets or edits a task; the Host either admits one delivery or refuses it.
     'POST automations/:id/run': async ({ params }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return { ran: true, automation: await runtime.automations.run(params.id, 'panel') }
+      const automation = await runtime.automations.run(params.id, 'panel')
+      audit('automation.run', { automation: automation.id })
+      return { ran: true, automation }
     },
     'DELETE automations/:id': async ({ params }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
-      return runtime.automations.remove(params.id, 'panel')
+      const result = await runtime.automations.remove(params.id, 'panel')
+      audit('automation.delete', { automation: result.id })
+      return result
     },
   }
 }

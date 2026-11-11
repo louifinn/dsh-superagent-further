@@ -1,5 +1,5 @@
 /** Application composition root and lifecycle manager for dsh-superagent-further. */
-import { Service, type Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -10,12 +10,9 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
-import { mkdirSync } from 'node:fs'
-import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
-import { lockSync } from 'proper-lockfile'
 import { Engine, key, projectRequestOpen, reasonText, runningAssignment, threadKey,
-  type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+  type DomainEvent, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -29,7 +26,8 @@ import { KV } from '../kv.ts'
 import { Store } from './store.ts'
 import { evalsHealth, type DeliveryFailure, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
-import { captureLogs, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
+import { captureLogs, captureScopes, type CaptureLogs, type Logs } from './logs.ts'
+import type { LogFileSink } from './log-files.ts'
 import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
@@ -52,13 +50,22 @@ import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
 import { SOURCE as SESSION_SOURCE, sessionDecisionText, sessionKind, sessionSubmitTool } from '../sources/session.ts'
 import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
+import { registerWorkspace, resumeWorkspaceMaster, retireMaster, type WorkspaceRegistryLike } from './workspace-root.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { bindLeadApprovals } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
+import { SelfReports } from './self-reports.ts'
+import { Incidents } from './incidents.ts'
+import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
+import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
+import { Updates } from './updates.ts'
+import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
+import { bounded } from '../infra/bounded.ts'
+import type { DrainPhase, DrainPhaseReport, DrainReport, RuntimeHandle, RuntimeHost } from '../runtime-host.ts'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
@@ -69,6 +76,14 @@ const WATCHDOG_MS = 60_000
 const STALLED_MS = 10 * 60_000
 /** How many recent file-delivery failures Overview keeps, newest last, until the ring drops them. */
 const DELIVERY_FAILURES = 20
+/** How long the drain waits for in-flight passes, effects, agent turns and diagnosis before failing that phase and continuing. */
+export const DRAIN_IN_FLIGHT_MS = 10_000
+
+/** Test seams for the drain; production uses the module constants. */
+export interface RuntimeOptions {
+  /** Bound for the in-flight phase; the later phases run even when it expires. */
+  readonly drainInFlightMs?: number
+}
 
 /**
  * DSH's session-ownership failure, said as the operator's action: which state directory another host holds, and how to
@@ -85,7 +100,7 @@ export function hostedElsewhere(error: unknown, stateDir: string, masterId: stri
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
  * Locks the state directory before opening SQLite so concurrent processes cannot corrupt or double-migrate state.
  */
-export class Runtime extends Service implements SourceHost {
+export class Runtime implements SourceHost, RuntimeHandle {
   readonly store: Store
   readonly setup: Setup
   readonly prompts: Prompts
@@ -99,63 +114,105 @@ export class Runtime extends Service implements SourceHost {
   readonly outbox: Outbox
   readonly engine: Engine
   readonly passes: Passes
+  /** The self-evolution Issue outlet's service, shared by the main Session's tool and the Overview's review routes. */
+  readonly selfReports: SelfReports
+  /** Deterministic incident records and evidence bundles (ADR-0004). */
+  readonly incidents: Incidents
+  /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
+  /** The supervisor-owned update pipeline as the panel sees it: read-only status plus a rollback request writer (ADR-0007). */
+  readonly updates: Updates
   readonly ready: Promise<void>
-  private readonly board = new HealthBoard()
+  /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
+  private starting = true
+  private readonly board = new HealthBoard((name, previous, next) => this.healthChanged(name, previous, next))
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   readonly masterId: string
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
   private readonly sourceLinks = new TextCache(200_000)
   /** Bounded in-memory log of the plugin host's own messages; the panel reads it through `GET logs`. */
-  readonly logs = new Logs()
+  readonly logs: Logs
+  /** The durable JSONL files' health: a failed write reports here once, and its recovery reports ready. */
+  private readonly logsHealth = this.board.claim('logs', { state: 'ready', detail: '' })
+  /** The durable sink owned by the supervisor; this runtime attaches and flushes it but never closes the state directory. */
+  private readonly logsSink: LogFileSink
   private readonly log: CaptureLogs
+  /** Creates a capture logger per scope over the same ring and Host logger. */
+  private readonly capture: (scope: string) => CaptureLogs
   private readonly stopped = new AbortController()
+  /** Bound for the in-flight drain phase, from the options seam. */
+  private readonly drainInFlightMs: number
   private readonly disposers: (() => void)[] = []
-  private releaseLock?: () => Promise<void>
+  private readonly ctx: Context
+  readonly machine: Machine
+  private readonly exit: (code: number) => void
+  /** Unregisters the `orchestrator` service; set once the constructor has built the runtime. */
+  private unprovide?: () => void
   private closingFlag = false
-  private stopping?: Promise<void>
+  private stopping?: Promise<DrainReport>
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** The stalled Assignments the watchdog reported, by Ticket: the Assignment, its attention, and the Report that raised it. */
   private readonly stalled = new Map<string, { assignmentId: string; attentionId?: string; reportAt: string }>()
+  /** The pure incident rules; they read events, log entries and health transitions and never call a model. */
+  private readonly detector = new IncidentDetector({ tickets: id => this.store?.tickets.get(id) })
+  /** Detaches the log observer when the Runtime stops. */
+  private detachIncidentLogs?: () => void
+  /** True once the incidents service exists; early health transitions cannot record anything yet. */
+  private incidentsReady = false
   /** Recent file-delivery failures, newest last and bounded, shown by Overview until the ring drops them. */
   private readonly deliveries: DeliveryFailure[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
-  constructor(ctx: Context, readonly machine: Machine, restart: () => void,
-    /** Ends the host process once a management shutdown has stopped the runtime (injected so tests can observe it). */
-    private readonly exit: (code: number) => void = code => { process.exit(code) }) {
-    super(ctx, 'orchestrator')
-    this.log = captureLogs(this.logs, ctx.logger as unknown as HostLogger, 'host')
+  /**
+   * Builds the runtime over the stable supervisor's frozen host. The supervisor owns the state-directory lock, the log ring,
+   * the durable sink and the release order; this constructor only opens the database and composes the application.
+   */
+  constructor(private readonly host: RuntimeHost, options: RuntimeOptions = {}) {
+    this.drainInFlightMs = options.drainInFlightMs ?? DRAIN_IN_FLIGHT_MS
+    this.ctx = host.context
+    this.machine = host.machine
+    this.exit = host.exit
+    this.logs = host.logs
+    this.logsSink = host.logSink
+    // The update surface reads the supervisor's files and writes only a rollback request; the engine stays supervisor-side.
+    this.updates = new Updates({ stateDir: host.stateDir, logs: this.logs })
+    const ctx = this.ctx
+    const machine = this.machine
+    this.log = captureLogs(this.logs, host.logger, 'host')
+    this.capture = captureScopes(this.logs, host.logger)
+    // The supervisor aborts its lifetime when the state-directory lock is lost; stop writing before the new writer starts.
+    host.lifetime.addEventListener('abort', () => {
+      this.runtimeHealth.set({ state: 'error', detail: 'The state-directory lock was lost; the runtime stopped to avoid concurrent writes' })
+      this.stopped.abort()
+    }, { once: true })
+    host.onLogState((state, detail) => { this.logsHealth.set({ state, detail }) })
     const runtime = this
-    // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
-    mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
-    // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
-    try { restrictToOwner(machine.stateDir, true) } catch (error) { this.log.warn('dsh-superagent-further: %s', String(error)) }
-    const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
-    let release: (() => unknown) | undefined
-    try {
-      release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
-    } catch (error) {
-      throw new Error(`dsh-superagent-further is already hosted for ${machine.stateDir}. Stop the other host: scripts/dsh-superagent-further stop for the service, or disable the dsh-superagent-further plugin in the profile that runs it, then start this one.`, { cause: error })
-    }
-    this.releaseLock = async () => { await release?.() }
     let opened: Store | undefined
     try {
       const report = (error: unknown) => { this.log.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
+      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart: () => host.restart(), log: this.capture('setup') })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
-      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
-      store.set(KV.runtime.masterId, masterId)
+      // The master Session's identity is derived from the operator's workspace, never from the state directory. When no
+      // workspace is selected the host pauses in that state, so the state-directory placeholder below is only a display
+      // value: it is never published to the database, registered with DSH, or turned into a Session. A stored id is used
+      // only while no workspace is selected yet or when a previous master exists; startup publishes only after the
+      // workspace-derived session exists.
+      const storedMaster = store.get(KV.runtime.masterId)
+      const workspacePath = store.settings().workspace.path
+      const masterId = this.masterId = workspacePath === ''
+        ? storedMaster ?? `orchestrator-${key(machine.stateDir)}`
+        : `orchestrator-${key(workspacePath)}`
       // The schedule service is optional: without it the main Session has no automation tools and the rest of the runtime is
       // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
       const schedule = ctx.get('schedule') as ScheduleService | undefined
       this.automations = schedule === undefined ? undefined : new Automations({ schedule, store: store.automations, masterId,
-        logger: this.log, projects: () => store.settings().executor.projects.map(project => project.id),
+        logger: this.capture('automation'), projects: () => store.settings().executor.projects.map(project => project.id),
         project: id => store.settings().executor.projects.find(project => project.id === id),
         // The Lead Session must exist before the Host task targets it; the closure runs after Sessions is constructed.
         lead: async project => (await runtime.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id })
@@ -174,24 +231,65 @@ export class Runtime extends Service implements SourceHost {
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
-      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
-        lifetime: this.lifetime, automations: this.automations,
+      const sessions = this.sessions = new Sessions({ context: ctx, values: host.values, store, prompts, effects, health: board.claim('models'), masterId,
+        lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
-      this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
+      this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
+      // The supervisor owns the durable sink; this runtime attaches it once settings exist, so its retention and the ring's
+      // minimum level apply from the first entry the panel would show. Entries recorded before this point stay in the ring only.
+      host.setLogRetention(() => store.settings().executor.logRetentionDays)
+      this.logs.attach(this.logsSink)
+      this.logs.setMinLevel(() => store.settings().executor.logLevel)
+      // The self-evolution Issue outlet (docs/014 D3): its gate lives in the Eval settings, its records in schema 24, and a
+      // filing failure reports on its own health entry instead of failing a pass.
+      this.selfReports = new SelfReports({
+        store: { selfReports: store.selfReports, settings: () => store.settings() },
+        commands,
+        projects: () => store.settings().executor.projects,
+        health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
+        record: message => this.log.warn('dsh-superagent-further: %s', message),
+      })
+      // Deterministic incident detection (ADR-0004): pure rules over events, the log stream and health
+      // transitions; the records service owns the table, the cooldown and the evidence bundle. No model call, no fix.
+      const incidentsHealth = board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' })
+      this.incidents = new Incidents({
+        store: { incidents: store.incidents, settings: () => store.settings() },
+        // Evidence lives under the selected Orchestrator workspace; the state directory is never a workspace (ADR-0003).
+        workspace: () => {
+          const path = this.setup.workspace?.path || store.settings().workspace.path
+          if (path === '') throw new Error('The Orchestrator workspace is not selected')
+          return path
+        },
+        stateDir: this.machine.stateDir,
+        logs: this.logs,
+        health: incidentsHealth,
+        record: message => this.logs.record('info', 'incidents', message),
+        healthSnapshot: () => this.health,
+      })
+      this.detachIncidentLogs = this.logs.observe((entry, at) => {
+        // The diagnosis service's own lines are never detector input, so a diagnosis cannot feed itself (ADR-0005).
+        if (entry.scope === DIAGNOSIS_SCOPE || isDiagnosisSession(entry.scope)) return
+        this.detect(withoutDiagnosisSignals(this.detector.observeLog(entry, at)))
+      })
+      this.incidentsReady = true
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
-        repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+        repliedTo: trigger => repliedTo({ store, sources }, trigger), log: this.capture('executor') })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
-      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
+      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(), log: this.capture('outbox') })
       const { assessor, executor } = this
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          this.recordLifecycle(event)
+          // Both detector ingestion paths drop signals scoped to a diagnosis child (ADR-0005 §10), so a diagnosis pass can
+          // never be read as a worker burst. The event payload carries no Session today; the guard is defense in depth.
+          this.detect(withoutDiagnosisSignals(this.detector.observeEvent(event)))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
@@ -293,6 +391,24 @@ export class Runtime extends Service implements SourceHost {
         } })
       // The Lead tools and the reply enforcement act through the Engine; attach it once the composition is complete.
       sessions.attachEngine(engine)
+      // Read-only incident diagnosis (ADR-0005): dispatched off the detector pass, one bounded run at a time, budgeted in the
+      // Store by UTC day and parented to the main Session. A failure leaves the record bundled and a person can retry.
+      this.diagnosis = new Diagnosis({
+        store, engine, selfReports: this.selfReports,
+        workspace: () => {
+          const path = this.setup.workspace?.path || store.settings().workspace.path
+          if (path === '') throw new Error('The Orchestrator workspace is not selected')
+          return path
+        },
+        masterId,
+        parent: () => this.ctx.agents.get(masterId as SessionId),
+        subagents: () => this.ctx.get('subagents') as SubagentService | undefined,
+        child: id => this.ctx.agents.get(id as SessionId),
+        readOnly: agent => { this.ctx.permissionPresets.set(agent.session, 'read-only') },
+        lifetime: this.lifetime,
+        logs: this.logs,
+        health: incidentsHealth,
+      })
       // The approval tools read and write through the same Engine; bind them by the Store the Lead tools are built with.
       bindLeadApprovals(store, {
         raise: input => engine.raiseProjectRequest(input),
@@ -310,9 +426,11 @@ export class Runtime extends Service implements SourceHost {
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
-        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
+        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger),
+        log: kind => this.capture(kind) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        automations: this.automations,
+        selfReports: this.selfReports, incidents: this.incidents, diagnosis: this.diagnosis, automations: this.automations,
+        log: this.capture('executor'),
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
@@ -342,9 +460,10 @@ export class Runtime extends Service implements SourceHost {
         child.effect(() => child.tools.register(sessionSubmitTool(sessionHost)), 'session: submission tool'))
       this.disposers.push(() => { void sessionTool.dispose().catch(() => {}) })
       this.ready = this.initialize()
+      this.unprovide = ctx.provide('orchestrator', this)
     } catch (error) {
-      // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
-      try { opened?.close() } finally { void release?.() }
+      // Release the database if initialization fails; the supervisor releases the state lock and the sink.
+      try { opened?.close() } catch { /* The original failure is the one to report. */ }
       throw error
     }
   }
@@ -440,13 +559,37 @@ export class Runtime extends Service implements SourceHost {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
     }
+    // Setup validated and prepared the mandatory workspace; register exactly that directory, under its explicit title, and
+    // retire a previous master (archived, never deleted) and the state directory's legacy workspace registration. Nothing
+    // in this path hands the state directory to DSH as an agent cwd.
+    const prepared = this.setup.workspace!
+    const registry = this.ctx.workspaceRegistry as unknown as WorkspaceRegistryLike
+    const workspace = await registerWorkspace(registry, prepared)
+    const storedMaster = this.store.get(KV.runtime.masterId)
+    // Retiring a previous master is best-effort history hygiene, never a startup gate (docs/011 Part L): an archive or delete
+    // failure keeps the old Session and its registration intact and readable, logs a warning, and lets startup continue. The
+    // legacy registration's delete runs again on the next start; failing the host over history that already exists would be worse.
+    const retired = await retireMaster({ desired: this.masterId, stored: storedMaster, stateDir: this.machine.stateDir,
+      workspaceId: workspace.id, registry,
+      hasSession: async id => !('error' in await this.ctx.sessionController.resolveAgent(id as SessionId)) })
+      .catch((error: unknown) => { this.log.warn('dsh-superagent-further could not retire the previous master session: %s', String(error)); return { archived: [] } })
+    if (retired.archived.length) this.log.warn('dsh-superagent-further archived the previous master Session: %s', retired.archived.join(', '))
+    // Selecting a workspace that was used before must resume its own master: switching away archived it, and DSH rejects
+    // every step of an archived Session. This happens before Sessions.ensure resolves the id, and only for the desired
+    // workspace-derived id — a legacy stateDir-derived master stays archived as history and is never resumed.
+    if (await resumeWorkspaceMaster({ desired: this.masterId, path: prepared.path, registry })) {
+      this.log.warn('dsh-superagent-further resumed the archived master Session of its workspace: %s', this.masterId)
+    }
     this.sessions.install()
     this.executor.install()
     try {
-      await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent-further orchestrator', 'orchestrator')
+      await this.sessions.ensure(this.masterId, workspace, prepared.title, 'orchestrator')
     } catch (error) {
       throw hostedElsewhere(error, this.machine.stateDir, this.masterId)
     }
+    // Publish only after the new master Session exists: a crash before this point replays the same idempotent retirement and
+    // reuses the same workspace-derived id on the next start, so no session is ever orphaned or deleted.
+    if (storedMaster !== this.masterId) this.store.atomic(() => this.store.set(KV.runtime.masterId, this.masterId))
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
@@ -472,6 +615,7 @@ export class Runtime extends Service implements SourceHost {
     this.passes.start()
     this.effects.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
+    this.logStartupSummary()
     void this.cleanupLoop()
     void this.watchdogLoop()
   }
@@ -552,8 +696,11 @@ export class Runtime extends Service implements SourceHost {
       try {
         const updated = this.engine.report(ticket.id, { state: 'waiting',
           summary: `Worker idle since ${since} on Assignment ${assignment.id}.`, question })
+        this.logs.record('info', 'executor', `report.recorded ticket=${ticket.id} state=waiting outcome=${updated.ended?.outcome ?? 'none'}`)
         const reportAt = runningAssignment(updated)?.report?.at ?? now()
         this.stalled.set(ticket.id, { assignmentId: assignment.id, ...(updated.attention ? { attentionId: updated.attention.id } : {}), reportAt })
+        this.detect(this.detector.stalled({ ticketId: ticket.id,
+          ...(ticket.project === undefined || ticket.project === '' ? {} : { project: ticket.project }), assignmentId: assignment.id }))
         await this.sessions.lead.stalled(updated, assignment, since)
       } catch (error) {
         this.log.warn('dsh-superagent-further watchdog could not raise attention for Ticket %s: %s', ticket.id, String(error))
@@ -601,55 +748,193 @@ export class Runtime extends Service implements SourceHost {
   decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult> {
     return decideEscalation(this.engine, this.store, this.sessions, input)
   }
+  /**
+   * Logs a claim entering error and its recovery; every other state change is a readiness fact. Startup readies are
+   * collected by `logStartupSummary` instead of one entry per claim, and same-state detail updates never reach this.
+   */
+  private healthChanged(name: string, previous: Health | undefined, next: Health): void {
+    // Only real state changes reach this listener; a claim entering error is itself a deterministic incident trigger.
+    if (name !== 'incidents') this.detect(this.detector.observeHealth(name, previous, next))
+    if (next.state === 'error') {
+      this.logs.record('warn', name, `${name} is error: ${this.short(next.detail)}`)
+      return
+    }
+    if (next.state !== 'ready') return
+    if (previous?.state === 'error') {
+      this.logs.record('info', name, `${name} recovered: ready`)
+      return
+    }
+    if (this.starting) return
+    this.logs.record('info', name, `${name} is ready`)
+  }
+  /** One startup entry for the claims that came up ready, so a dozen claims do not each produce a line. */
+  private logStartupSummary(): void {
+    this.starting = false
+    const entries = Object.entries(this.board.all)
+    const ready = entries.filter(([, value]) => value.state === 'ready').map(([name]) => name).sort()
+    const notReady = entries.filter(([, value]) => value.state !== 'ready').map(([name, value]) => `${name}=${value.state}`).sort()
+    this.logs.record('info', 'runtime', `runtime ready: ${ready.length} claims ready (${ready.join(', ')})`
+      + (notReady.length ? `; not ready: ${notReady.join(', ')}` : ''))
+  }
+  /** One short info entry per operational Engine event; it carries ids and outcomes, never a message body. */
+  private recordLifecycle(event: DomainEvent): void {
+    switch (event.type) {
+      case 'trigger.received':
+        this.logs.record('info', 'trigger', `trigger.received trigger=${event.data.triggerId} threads=${event.data.threads.length}`)
+        return
+      case 'ticket.created':
+        this.logs.record('info', 'ticket', `ticket.created ticket=${event.data.ticketId} decision=${event.data.decisionId} strength=${event.data.strength}`)
+        return
+      case 'ticket.ended':
+        this.logs.record('info', 'ticket', `ticket.ended ticket=${event.data.ticketId} by=${event.data.by} cause=${event.data.cause} outcome=${event.data.outcome}`)
+        return
+      case 'request.ended':
+        this.logs.record('info', 'request', `request.ended request=${event.data.requestId} by=${event.data.by} outcome=${event.data.outcome}`)
+        return
+      case 'assignment.started':
+        this.logs.record('info', 'assignment', `assignment.started ticket=${event.data.ticketId} assignment=${event.data.assignmentId}`)
+        return
+      case 'assignment.ended':
+        this.logs.record('info', 'assignment', `assignment.ended ticket=${event.data.ticketId} assignment=${event.data.assignmentId} reason=${this.short(event.data.reason)}`)
+        return
+      case 'decision.recorded':
+        this.logs.record('info', 'runtime', `decision.recorded decision=${event.data.decisionId} kind=${event.data.kind} thread=${event.data.threadKey}`)
+        return
+      case 'policy.changed':
+        this.logs.record('info', 'runtime', `policy.changed from=${this.short(event.data.from)} to=${this.short(event.data.to)}`)
+        return
+      default:
+        return
+    }
+  }
+  /** A one-line excerpt for a log entry; entries stay short and never carry a message or comment body. */
+  private short(value: string, max = 80): string {
+    const line = value.replace(/\s+/g, ' ').trim()
+    return line.length <= max ? line : `${line.slice(0, max - 3)}...`
+  }
+  /**
+   * Applies the deterministic rules' signals: a detection is recorded or counted, a recovery resolves its record.
+   * Failures are reported in the operational log and never escape into the pass (a watchdog scan, an Engine emit).
+   */
+  private detect(signals: readonly IncidentSignal[]): void {
+    if (!this.incidentsReady || signals.length === 0) return
+    for (const signal of signals) {
+      try {
+        if (signal.type === 'detect') {
+          // A diagnosis child Session is not a worker Assignment or a source; its events are never detector input.
+          if (isDiagnosisSession(signal.candidate.scope?.session ?? '')) continue
+          const incident = this.incidents.record(signal.candidate)
+          // Dispatch happens on a later turn (ADR-0005): the detection pass itself stays deterministic and model-free.
+          if (incident !== undefined) this.diagnosis?.consider(incident)
+        } else this.incidents.recover(signal.fingerprint)
+      } catch (error) {
+        this.logs.record('warn', 'incidents', `incident detection failed: ${this.short(String(error))}`)
+      }
+    }
+  }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
+      selfReports: this.selfReports,
+      incidents: this.incidents,
+      diagnosis: this.diagnosis,
+      updates: this.updates,
       leadOverview: () => runtime.leadOverview(),
       deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+      get workspace() { return setup.workspace ?? null },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
       requestShutdown: () => { runtime.requestShutdown() } }
   }
-  /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
-  stop(): Promise<void> { return this.stopping ??= this.shutdown() }
+/** Idempotent drain; concurrent or repeated calls share the same report. */
+  stop(): Promise<DrainReport> { return this.drain('shutdown') }
+  /**
+   * Runs the drain contract once: stop intake, cancel the remaining agents, wait bounded for in-flight work, dispose the
+   * composition, flush the durable log, close the Store and release the state-directory lock. A later call returns the first
+   * report. Only the intake/cancel/in-flight stages may be skipped by an aborted signal; the maintenance phases (dispose,
+   * logs, store, lock) always run. A failed or skipped phase is recorded and the later phases still run; `completed` is true
+   * only when every phase is `done`.
+   */
+  drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    return this.stopping ??= this.shutdown(reason, signal)
+  }
+  /** The `RuntimeHandle` view of `drain`, for a loader that only needs disposal. */
+  async dispose(): Promise<void> { await this.drain('dispose') }
   /**
    * Stops the runtime and then ends the host process. `scripts/dsh-superagent-further stop` requests this over the management API
    * because Windows cannot deliver a graceful signal to a detached process; POSIX stops send SIGINT and never take this path.
    */
   requestShutdown(): void {
     if (this.stopping) return
-    void this.stop().then(() => { this.exit(0) }, (error: unknown) => {
+    void this.drain('request').then(() => { this.exit(0) }, (error: unknown) => {
       this.log.error('dsh-superagent-further shutdown failed: %s', String(error))
       this.exit(1)
     })
   }
-  private async shutdown(): Promise<void> {
-    this.closingFlag = true; const passes = this.passes.stop(); this.stopped.abort()
-    try {
-      this.assessor.stop()
-      const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
-      const agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
-      for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
-      await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle())])
-      // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
-      await this.executor.shutdown()
-      this.executor.dispose()
-      this.sessions.dispose()
-      for (const dispose of this.disposers.reverse()) dispose()
-      await this.ctx.sessionPersistence.flush()
-    } finally {
-      // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
-      this.setup.restore()
-      try { this.store.close() } finally {
-        const unreleased = (error: unknown) => { this.log.warn('dsh-superagent-further could not release its state directory lock: %s',
-          String(error)) }
-        await this.releaseLock?.().catch(unreleased)
+  private async shutdown(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    const startedAt = now(); const began = Date.now()
+    const phases: DrainPhaseReport[] = []
+    const phase = async (name: DrainPhase, run: () => void | Promise<void>, skippable = false): Promise<void> => {
+      const at = now(); const tick = Date.now()
+      if (skippable && signal?.aborted) {
+        phases.push({ phase: name, status: 'skipped', startedAt: at, durationMs: 0, detail: 'the drain signal was already aborted' })
+        return
+      }
+      try {
+        await run()
+        phases.push({ phase: name, status: 'done', startedAt: at, durationMs: Date.now() - tick })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        phases.push({ phase: name, status: 'failed', startedAt: at, durationMs: Date.now() - tick, detail })
+        this.log.warn('dsh-superagent-further drain phase %s failed: %s', name, detail)
       }
     }
+    this.closingFlag = true
+    let passes: Promise<unknown> | undefined
+    await phase('intake', () => {
+      this.detachIncidentLogs?.(); this.detachIncidentLogs = undefined; this.incidentsReady = false
+      passes = this.passes.stop(); this.stopped.abort()
+    }, true)
+    let agents: Agent[] = []
+    await phase('cancel', () => {
+      this.assessor.stop()
+      const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
+      agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
+      for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
+    }, true)
+    await phase('in-flight', async () => {
+      // The lifetime abort ends a waiting diagnosis; its dispatch is disposed and the record stays bundled for a retry.
+      let timedOut: Error | undefined
+      try {
+        await bounded(Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle()), this.diagnosis.idle()]),
+          this.drainInFlightMs, 'the in-flight drain wait')
+      } catch (error) {
+        timedOut = error instanceof Error ? error : new Error(String(error))
+      }
+      // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
+      // The executor's own shutdown is bounded, so a stuck orchestration task still cannot keep the later phases from running.
+      await this.executor.shutdown()
+      if (timedOut !== undefined) throw timedOut
+    }, true)
+    await phase('dispose', async () => {
+      try {
+        this.executor.dispose()
+        this.sessions.dispose()
+        for (const dispose of this.disposers.reverse()) dispose()
+        this.unprovide?.(); this.unprovide = undefined
+        await this.ctx.sessionPersistence.flush()
+      } finally {
+        this.setup.restore()
+      }
+    })
+    await phase('logs', () => this.host.flushLogs())
+    await phase('store', () => { this.store.close() })
+    await phase('lock', () => this.host.releaseStateLock())
+    return { reason, startedAt, durationMs: Date.now() - began, completed: phases.every(item => item.status === 'done'), phases }
   }
 }

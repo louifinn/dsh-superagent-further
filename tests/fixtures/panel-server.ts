@@ -13,14 +13,17 @@ import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, Source
   TicketRow, TicketStage,
   TriggerRow } from '../../src/client/api.ts'
 import { SETUP_FIELDS } from '../../src/deployment.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema } from '../../src/policy.ts'
-import { SetupError, type SetupCode } from '../../src/setup.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, WorkspaceConfigSchema } from '../../src/policy.ts'
+import { SetupError, type SetupCode, type SetupProblem } from '../../src/setup.ts'
 import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
 import { githubChannel } from '../../src/sources/github-trigger.ts'
 import { feishuKind } from '../../src/sources/feishu.ts'
 import { githubKind } from '../../src/sources/github.ts'
+import type { Incident, IncidentDiagnosis } from '../../src/core/incidents.ts'
+import { parseIncidentDiagnosis } from '../../src/core/incidents.ts'
 import type { Health } from '../../src/sources/host.ts'
 import type { SourceKind } from '../../src/sources/kind.ts'
+import type { UpdateRequest, UpdateSnapshot } from '../../src/supervisor/update-state.ts'
 import { testDeployment } from './deployment.ts'
 
 export const MEMBER = 'ou_alice'
@@ -82,6 +85,9 @@ export const problemOf = (code: SetupCode, values: Record<string, string> = {}) 
 const KINDS = [feishuKind, githubKind] as unknown as SourceKind[]
 export const MACHINE = { stateDir: '/srv/dsh-superagent-further', promptMaxChars: 100000, admissionContextMaxPages: 10,
   admissionContextTimeoutMs: 15000 }
+/** The problem the host reports while no Orchestrator workspace is selected; the wizard must not be skipped. */
+export const WORKSPACE_REQUIRED = { place: 'execution', code: 'workspaceRequired', values: {},
+  detail: 'The orchestrator workspace is not selected. Choose an empty directory in the setup wizard before selecting a project.' } as unknown as SetupProblem
 
 type Settings = ReturnType<typeof SettingsSchema.parse>
 export interface PanelServer {
@@ -128,6 +134,20 @@ export interface PanelServer {
   escalations: ApiResponse<'GET overview'>['escalations']
   /** Automation records needing attention in the overview; each test may replace them. */
   automationAttention: ApiResponse<'GET overview'>['automationAttention']
+  /** Observe-mode self report drafts the overview shows; each test may replace them. */
+  selfReports: ApiResponse<'GET overview'>['selfReports']
+  /** True when today's self-report filing cap is reached, so the overview explains why a draft stays a draft. */
+  selfReportsBlocked: boolean
+  /** The open incidents Overview's "needs you" row shows; each test may replace them. */
+  incidents: ApiResponse<'GET overview'>['incidents']
+  /** Full incident records the Incidents page lists; the routes filter and page them like the host. */
+  incidentRecords: ApiResponse<'GET incidents'>['incidents']
+  /** Evidence summaries by incident id for the detail route; an absent entry reports no bundle. */
+  incidentEvidence?: Record<string, ApiResponse<'GET incidents/:id'>['evidence']>
+  /** The update pipeline snapshot the Updates page reads; each test may replace it. */
+  updates: UpdateSnapshot
+  /** The Overview's update needs-attention row; tests seed it to show the deep link. */
+  updateAttention: ApiResponse<'GET overview'>['update']
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
   /** False simulates a Host without the schedule service: the automations routes answer 503. */
@@ -187,8 +207,22 @@ function sourceStatuses(): SourceStatusRow[] {
       dropped: server.dropped.filter(item => item.channel.source === kind.kind && item.dropped.at >= dayAgo()) }
   })
 }
-const stateView = (): StateView => ({
-  setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
+/** The neutral update snapshot: one deployed runtime, no previous version, no request and no history. */
+const emptyUpdates = (): UpdateSnapshot => ({
+  api: 1,
+  stateDir: MACHINE.stateDir,
+  current: { version: '0.4.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'a'.repeat(64), schema: 25 },
+  previous: null,
+  journal: null,
+  pending: null,
+  busy: false,
+  rollback: { eligible: false, version: null, reason: 'No previous runtime is recorded' },
+  deploy: { command: 'node --experimental-transform-types scripts/deploy-runtime.mjs --state-dir "/srv/dsh-superagent-further"',
+    status: ' status', apply: ' apply --version <version>', rollback: ' rollback', watch: ' watch' },
+  history: [],
+  databaseSchema: 25,
+})
+const stateView = (): StateView => ({  setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
   wizard: server.wizard,
   proposals: server.proposals.filter(proposal => proposal.status === 'pending').length,
   masterId: 'master', paused: server.settings.paused,
@@ -201,7 +235,8 @@ const settingsView = (): ApiResponse<'GET settings'> => ({
     eval: { value: server.settings.eval, revision: server.revisions.eval ?? 0 },
     executor: { value: server.settings.executor, revision: server.revisions.executor ?? 0 },
     memory: { value: server.settings.memory, revision: server.revisions.memory ?? 0 },
-    language: { value: server.settings.language, revision: server.revisions.language ?? 0 } },
+    language: { value: server.settings.language, revision: server.revisions.language ?? 0 },
+    workspace: { value: server.settings.workspace, revision: server.revisions.workspace ?? 0 } },
   sources: sourceSettings(),
   environment: { root: '/srv/dsh-superagent-further/work', variables: [
     { owner: 'executor', enabled: true, variables: [{ key: 'DSH_SUPERAGENT_DIR', description: { zh: '工单的执行目录',
@@ -242,6 +277,10 @@ const overviewView = (): ApiResponse<'GET overview'> => {
     requests: server.asks,
     escalations: server.escalations,
     automationAttention: server.automationAttention,
+    selfReports: server.selfReports,
+    selfReportsBlocked: server.selfReportsBlocked,
+    incidents: server.incidents,
+    update: server.updateAttention,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -276,6 +315,7 @@ function threadPage(key: string, { before, around }: { before?: string; around?:
 }
 function initial(): PanelServer {
   const settings = SettingsSchema.parse({
+    workspace: { path: '/srv/agent-home' },
     policy: { sources: { feishu: { allowed: [{ id: 'ou_alice', name: 'Alice' }], syncChat: 'oc_team' },
       github: { allowed: [{ id: 'alice' }] } },
       rules: [{ id: 'copy', name: '文案修改', enabled: true, instruction: '修正明确的文案错误' }] },
@@ -285,19 +325,21 @@ function initial(): PanelServer {
     executor: { blockedCommands: ['gh-personal'] },
   })
   const ended = ticketSummary({ id: 't0', title: '旧工单', state: 'ended', actions: { retry: false, stop: false },
-    ended: { at: '2026-09-21T00:00:00Z', by: 'human', reason: 'Human asked to stop', outcome: 'stopped' } }, { stage: 'ended' })
+    ended: { at: '2026-09-21T00:00:00Z', by: 'human', cause: 'human', reason: 'Human asked to stop', outcome: 'stopped' } }, { stage: 'ended' })
   const reply = { source: 'feishu', url: 'https://applink.feishu.cn/client/chat/open?openChatId=oc_1', label: { zh: '飞书消息',
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, incidents: { count: 0, items: [] }, incidentRecords: [], memories: [], proposals: [],
+    updates: emptyUpdates(), updateAttention: { pending: false, failed: false, version: null, phase: null, reason: null },
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
+      workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
     // Existing panel tests start on a finished installation; wizard tests set `firstRun` themselves.
     wizard: { firstRun: false, skipped: false },
-    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 }, restoreValues: {},
+    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0, workspace: 0 }, restoreValues: {},
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },
       defaults: defaultPrompts(), parts: Object.entries(builtInParts()).map(([key, part]) => ({ key, ...part, base: builtInBase(part.text) })),
@@ -396,13 +438,16 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
       offset, limit, config: server.settings.memory }
   } },
-  'GET logs': { query: ['level', 'scope', 'limit'], answer: ({ query }) => {
+  'GET logs': { query: ['level', 'scope', 'limit', 'q'], answer: ({ query }) => {
     const level = query.level ?? 'all'
     const scope = query.scope ?? ''
+    const q = query.q ?? ''
+    const needle = q.toLowerCase()
     const limit = Number(query.limit ?? 120)
     const kept = server.logs.filter(entry => (scope === '' || entry.scope === scope)
-      && (level === 'all' || (level === 'warn' ? entry.level === 'warn' || entry.level === 'error' : entry.level === 'error')))
-    return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope }
+      && (level === 'all' || (level === 'warn' ? entry.level === 'warn' || entry.level === 'error' : entry.level === 'error'))
+      && (!needle || `${entry.message} ${entry.scope} ${JSON.stringify(entry.data ?? {})}`.toLowerCase().includes(needle)))
+    return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope, q }
   } },
   'GET automations': { answer: () => {
     if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
@@ -440,6 +485,18 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       replies: [{ by: 'orchestrator', text: body.reply, at: new Date().toISOString() }],
       ...body.decision === 'accept' ? { request_id: 'request-escalation' } : {},
       tickets: body.decision === 'accept' ? ['ticket-escalation'] : [], reply_delivered: true }
+  } },
+  'POST self-reports/:id/approve': { answer: ({ params }) => {
+    const index = server.selfReports.findIndex(item => item.id === params.id)
+    if (index < 0) return refuse(404, `Unknown self report ${params.id}`)
+    server.selfReports.splice(index, 1)
+    return { status: 'filed' as const, report_id: params.id, issue_number: 7 }
+  } },
+  'POST self-reports/:id/dismiss': { answer: ({ params }) => {
+    const index = server.selfReports.findIndex(item => item.id === params.id)
+    if (index < 0) return refuse(404, `Unknown self report ${params.id}`)
+    server.selfReports.splice(index, 1)
+    return { status: 'dismissed' as const, id: params.id }
   } },
   'PUT automations/:id': { body: true, answer: ({ params, body }) => {
     const row = server.automations.find(item => item.id === params.id)
@@ -538,7 +595,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'PUT settings/:block': { body: true, answer: ({ params: { block }, body }) => {
     const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
-    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'memory', 'language', 'workspace'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     if (body.revision !== (server.revisions[block] ?? 0)) return refuse(409, 'Settings changed. Reload before saving.')
     let restarting = false
@@ -547,7 +604,19 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(body.value) }
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(body.value) }
     else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(body.value) }
-    else if (source) {
+    else if (block === 'workspace') {
+      const value = WorkspaceConfigSchema.parse(body.value)
+      // As the host does: a selection is an absolute canonical directory and a change restarts setup.
+      if (value.path !== '' && !/^(?:[A-Za-z]:[\\/]|\/)/.test(value.path)) {
+        return refuse(400, 'The workspace path must be absolute.', { setup: { ...WORKSPACE_REQUIRED, code: 'workspaceInvalid',
+          values: { path: value.path, reason: 'a relative path' },
+          detail: 'The workspace path must be an absolute directory.' } })
+      }
+      restarting = value.path !== server.settings.workspace.path
+      server.settings = { ...server.settings, workspace: value }
+      if (value.path !== '') server.setup = { ...server.setup, workspace: { path: value.path,
+        title: `dsh-superagent-further · ${value.path.split(/[\\/]/).filter(Boolean).at(-1) ?? value.path}` } }
+    } else if (source) {
       const { enabled, config: value } = SourceSave.parse(body.value)
       const config = source.schema.parse(value)
       // As on the server, a changed CLI that fails its check refuses the save with the setup problem.
@@ -563,7 +632,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'POST settings/:block/restore': { body: true, answer: ({ params: { block }, body }) => {
     const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
-    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'memory', 'language', 'workspace'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     const snapshot = server.restoreValues[body.revision]
     if (!snapshot) return refuse(404, `No settings revision ${body.revision} is retained`)
@@ -573,6 +642,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'executor') value = snapshot.executor
     else if (block === 'memory') value = snapshot.memory
     else if (block === 'language') value = snapshot.language
+    else if (block === 'workspace') value = snapshot.workspace
     else if (source) value = snapshot.sources[source.kind]
     if (value === undefined) return refuse(404, `Settings revision ${body.revision} does not contain ${block}`)
     let restarting = false
@@ -581,6 +651,11 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(value) }
     else if (block === 'memory') server.settings = { ...server.settings, memory: MemoryConfigSchema.parse(value) }
     else if (block === 'language') server.settings = { ...server.settings, language: LanguageConfigSchema.parse(value) }
+    else if (block === 'workspace') {
+      const workspace = WorkspaceConfigSchema.parse(value)
+      restarting = workspace.path !== server.settings.workspace.path
+      server.settings = { ...server.settings, workspace }
+    }
     else if (source) {
       const { enabled, config: stored } = SourceSave.parse(value)
       const config = source.schema.parse(stored)
@@ -598,6 +673,10 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },
   'POST setup/check': { answer: () => ({ restarting: true }) },
   'PUT wizard': { body: true, answer: ({ body }) => {
+    // A workspace is mandatory, so the wizard cannot answer before one is selected, exactly as the host refuses it.
+    if (server.settings.workspace.path === '') {
+      return refuse(400, WORKSPACE_REQUIRED.detail, { setup: WORKSPACE_REQUIRED })
+    }
     server.wizard = { firstRun: false, skipped: body.skipped }
     return { ...server.wizard }
   } },
@@ -630,6 +709,80 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { parts: { orchestrator: promptParts(body, 'orchestrator', environment, policy), worker: promptParts(body, 'worker', environment) },
       skills: Object.fromEntries(skills),
       orchestrator: composePrompt(body, 'orchestrator'), worker: composePrompt(body, 'worker'), scope: '' }
+  } },
+  // Deterministic incidents (ADR-0004): the API filters, counts and pages records the same way the host service does.
+  'GET incidents': { query: ['status', 'severity', 'project', 'ticket', 'request', 'session', 'offset', 'limit'], answer: ({ query }) => {
+    const status = (query.status ?? 'open') as ApiResponse<'GET incidents'>['status']
+    const severity = query.severity as ApiResponse<'GET incidents'>['severity']
+    const scopes = ['project', 'ticket', 'request', 'session'] as const
+    const kept = server.incidentRecords.filter(item => (status === 'all'
+      || (status === 'open' ? item.status === 'detected' || item.status === 'bundled' || item.status === 'diagnosed' : item.status === status))
+      && (severity === undefined || item.severity === severity)
+      && scopes.every(name => !query[name] || item.scope[name] === query[name]))
+    const offset = Number(query.offset ?? 0)
+    const limit = Math.min(100, Number(query.limit ?? 20))
+    return { incidents: kept.slice(offset, offset + limit), total: kept.length, status,
+      ...(severity === undefined ? {} : { severity }), offset, limit }
+  } },
+  'GET incidents/:id': { answer: ({ params }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    return { incident, evidence: server.incidentEvidence?.[incident.id] ?? null, diagnosis: parseIncidentDiagnosis(incident.diagnosis) }
+  } },
+  // The operator's incident actions (ADR-0005): the panel's Diagnose, Dismiss and Create fix buttons.
+  'POST incidents/:id/diagnose': { answer: ({ params }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    if (incident.status !== 'bundled' && incident.status !== 'detected') {
+      return refuse(409, 'The diagnosis was refused: status', { code: 'incidentDiagnoseRefused' })
+    }
+    const diagnosis: IncidentDiagnosis = { rootCause: 'The outbox retries without a bound.', evidence: [], hypotheses: [],
+      fixPlan: 'Bound the retries and surface the failure.', confidence: 'high', target: { kind: 'operational' }, parsed: true }
+    const diagnosed: Incident = { ...incident, status: 'diagnosed', diagnosis: JSON.stringify(diagnosis), resolution: 'operational',
+      updated_at: '2026-11-11T10:01:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? diagnosed : item)
+    return { status: 'diagnosed' as const, incident: diagnosed, diagnosis }
+  } },
+  'POST incidents/:id/dismiss': { body: true, answer: ({ params, body }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    const reason = body.reason.trim()
+    if (reason === '') return refuse(400, 'A dismissal needs a reason', { code: 'incidentInvalid' })
+    if (incident.status !== 'bundled' && incident.status !== 'diagnosed' && incident.status !== 'detected') {
+      return refuse(409, 'The incident cannot be dismissed from this status', { code: 'incidentTransition' })
+    }
+    const dismissed: Incident = { ...incident, status: 'dismissed', resolution: `Dismissed: ${reason.slice(0, 280)}`,
+      updated_at: '2026-11-11T10:02:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? dismissed : item)
+    return { incident: dismissed }
+  } },
+  'POST incidents/:id/route': { body: true, answer: ({ params, body }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    if (body.confirm !== true) return refuse(400, 'Confirm creating the follow-up work')
+    if (incident.resolution !== undefined) return refuse(409, 'The route was refused: alreadyRouted', { code: 'incidentRouteRefused' })
+    if (incident.status !== 'diagnosed') return refuse(409, 'The route was refused: notDiagnosed', { code: 'incidentRouteRefused' })
+    const diagnosis = parseIncidentDiagnosis(incident.diagnosis)
+    if (diagnosis === null || diagnosis.target.kind === 'none') {
+      return refuse(409, 'The route was refused: notRoutable', { code: 'incidentRouteRefused' })
+    }
+    const resolution = diagnosis.target.kind === 'project' || diagnosis.target.kind === 'self' ? 'request:req-1' : 'operational'
+    const routed: Incident = { ...incident, resolution, updated_at: '2026-11-11T10:03:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? routed : item)
+    return { status: 'routed' as const, incident: routed, resolution }
+  } },
+  'GET updates': { answer: () => server.updates },
+  'POST updates/rollback': { body: true, answer: ({ body }) => {
+    if (body.confirm !== 'ROLLBACK') return refuse(400, 'Confirm the rollback')
+    if (server.updates.busy) return refuse(409, 'An update is already in progress; wait for it to finish before rolling back.')
+    if (server.updates.pending !== null) return refuse(409, 'An update request is already pending; wait for it to be claimed before rolling back.')
+    if (!server.updates.rollback.eligible) {
+      return refuse(409, server.updates.rollback.reason || 'There is no previous runtime to roll back to.')
+    }
+    const request: UpdateRequest = { api: 1, id: 'rollback-1', action: 'rollback', at: new Date().toISOString(), by: 'operator' }
+    server.updates = { ...server.updates, pending: request,
+      rollback: { ...server.updates.rollback, eligible: false, reason: 'An update request is pending' } }
+    return { requested: true as const, request, status: server.updates }
   } },
 }
 

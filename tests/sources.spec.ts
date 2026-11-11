@@ -61,7 +61,10 @@ function host(overrides: Partial<SourceContextDeps> = {}) {
   const parts: SourceContextDeps = { store, engine, outbox: { send: message => { store.receipts.add(message) } }, commands, sources, deployment,
     ready: Promise.resolve(), configured: () => true, receive, ...overrides }
   // The Sources' functions take the context; plugin entries and kind callbacks take the host, which builds each kind's context.
-  const value = { ...parts, context: (kind: { kind: string; health: readonly string[] }) => sourceContextOf(parts, kind) }
+  // `log` is a deps factory, not a context field, so do not let it shadow the context's scoped logger.
+  const { log: _log, ...plain } = parts
+  void _log
+  const value = { ...plain, context: (kind: { kind: string; health: readonly string[] }) => sourceContextOf(parts, kind) }
   const context = sourceContextOf(parts, { kind: 'feishu', health: ['github', 'feishu', 'history'] })
   const health = overrides.sources ? healthOf.get(overrides.sources)!.all : board.all
   return { ...value, ...context, health, store, engine, commands: parts.commands, receive, executor }
@@ -551,7 +554,7 @@ describe('github source', () => {
       lastAt: new Date(Date.now() - 30 * day).toISOString(), subscriptions: ['t1'], correlated: [], pending: [],
       meta: { number: 7, isPr: false, title: 'Login fails' } })
     const ended = (ago: number) => h.store.tickets.save({ ...openTicket('t1'),
-      ended: { at: new Date(Date.now() - ago).toISOString(), by: 'executor', reason: 'merged', outcome: 'merged' } })
+      ended: { at: new Date(Date.now() - ago).toISOString(), by: 'executor', cause: 'merge', reason: 'merged', outcome: 'merged' } })
     const reads = github(h, {})
     ended(3 * day)
     await pollGithubThreads(h)
@@ -1455,6 +1458,28 @@ describe('observing the GitHub repository', () => {
     await pollRound(h)
     expect(calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))).toHaveLength(1)
     expect(h.receive).not.toHaveBeenCalled()
+    h.store.close()
+  })
+  it('reads a list in full when the runtime build threw the 304, although its CliError class differs from this bundle\'s', async () => {
+    const h = host()
+    observe(h, { observeIssues: true })
+    h.store.set('github-since', at(-24))
+    // The deployed runtime is its own bundle, so its CliError is not this bundle's class; the shared brand identifies it.
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) }, etag: '"same"', verifiedAt: at(1) })
+    const foreign = Object.assign(new Error('gh: HTTP 304'), { code: 304, [Symbol.for('dsh-superagent-further.cliError')]: true })
+    const calls: string[][] = []
+    vi.spyOn(h.commands, 'run').mockImplementation(async (_program, args) => {
+      calls.push(args)
+      const bare = args[1]!.replace(/^repos\/acme\/widgets\/?/, '').split('?')[0]!
+      if (bare === 'notifications') return 'HTTP/2.0 200 OK\r\n\r\n[]'
+      if (args.includes('If-None-Match: "same"')) throw foreign
+      return `HTTP/2.0 200 OK\r\nETag: "same"\r\n\r\n${JSON.stringify([issue(4, { created_at: at(2), updated_at: at(2) })])}`
+    })
+    await pollRound(h)
+    const list = calls.filter(args => args[1]!.startsWith('repos/acme/widgets/issues?'))
+    expect(list).toHaveLength(2)
+    expect(list[1]).not.toContain('If-None-Match: "same"')
+    expect(h.receive.mock.calls.map(([trigger]) => trigger.meta.number)).toEqual([4])
     h.store.close()
   })
   it('repairs saved stream ETags once so a list skipped by an earlier read is listed again', async () => {

@@ -59,12 +59,12 @@ worker、Lead 与 Orchestrator 的提示词各加一小段「自进化」内容�
 主会话上的单一出口，服务于自身仓库未登记为项目的装置：
 
 - **目标固定。** 代码常量 `SELF_REPOSITORY = 'louifinn/dsh-superagent-further'`，不做设置；本 fork 的 fork 改常量即可。
-- **管辖拒绝。** 本装置已登记自身仓库时，工具拒绝并指明工单出口——分流规则由工具硬性执行，不依赖提示词自觉。
+- **管辖拒绝。** 本装置已登记自身仓库时，工具拒绝并指明工单出口——分流规则由工具硬性执行，不依赖提示词自觉。人批准草稿时再次执行同一检查：登记前产生的草稿同样不能提交，但仍可驳回。
 - **三档门槛**（Eval 设置里 accept mode 旁）：`off` 不记录不提交；`observe`（默认）只记草稿不提交；`auto` 在限额内直接提交。与流入侧"从窄开始"对称。
 - **去重。** 提交前检索目标仓库开放 Issue（标题与关键词）与本装置近 14 天已提交记录；命中则关联而不重复提交。
 - **限流。** 每装置每日最多提交 3 个 Issue；超出降级为草稿并在面板说明。
-- **内容规范。** 正文遵循仓库语言与约定，首行标注自动代理身份，写明证据、复现步骤与运行版本；不带飞书内容、凭据或私有本地路径。只应用仓库已有标签，默认不打标签。
-- **审计记录。** schema 23 新增 `self_report`：
+- **内容规范。** 正文遵循仓库语言与约定，首行标注自动代理身份，写明证据、复现步骤与运行版本；不带飞书内容、凭据或私有本地路径。飞书内容覆盖 chat、message、user、union 与 app id；本地路径覆盖 Unicode 名称的盘符与 UNC 路径，以及 POSIX 主目录与系统根（`/root`、`/opt`、`/srv`、`/var`、`/tmp`、`/mnt`、`/Volumes`、`/private`）；普通 URL 与仓库相对路径不受影响。只应用仓库已有标签，默认不打标签。
+- **审计记录。** schema 24 新增 `self_report`（schema 23 已被已结束工单 `cause` 的回填占用）：
   `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status: 'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`。
   草稿是人审批的对象；已提交的历史就是远端仓库本身，不再做历史页。这是本设计唯一新增的域记录：一个对外的、可审批的、可去重的产物，既不是 `project_request`（对 Lead 的内向请求）也不是 Outbox（投递回执）。
 
@@ -102,7 +102,7 @@ Overview 的"需要你"视图新增一组 observe 草稿行——标题、目标
 每阶段以 `pnpm check` 全绿、六组合 CI 绿与一次真实运行收尾，承仓库的门禁；文档随阶段落地，不最后补 batch。
 
 - **阶段 1 — 发现层（仅提示词，无代码）。** 三段提示词与技能文本；`tests/prompts.spec.ts` 固定。真实证明：一次真实工单在运行中记录一个真实 superagent 发现，并经现有 `request_create` 或升级路径成为自修工单。
-- **阶段 2 — issue 出口与 discovery 来源。** schema 23 `self_report`、`orchestrator_issue_create`（管辖拒绝、门槛、去重、限流、内容规范）、`orchestrator_request_create` 的 discovery 来源、Eval 的 self-report mode、Overview 草稿行。真实证明：observe 档真实落一张草稿、批准后向 `louifinn/dsh-superagent-further` 提交一个标注测试的 Issue 并关闭；管辖拒绝由测试覆盖。
+- **阶段 2 — issue 出口与 discovery 来源。** schema 24 `self_report`、`orchestrator_issue_create`（管辖拒绝、门槛、去重、限流、内容规范）、`orchestrator_request_create` 的 discovery 来源、Eval 的 self-report mode、Overview 草稿行。真实证明：observe 档真实落一张草稿、批准后向 `louifinn/dsh-superagent-further` 提交一个标注测试的 Issue 并关闭；管辖拒绝由测试覆盖。
 - **阶段 3 — 定时自检。** 开关、内置自动化的确保/移除/对账与指令模板。真实证明：开关切换生效，一次 `automation_run` 巡检正确分流发现。
 - **阶段 4 — 文档收尾。** 同步 [002](002-authorization.md)、[004](004-prompts.md)、[005](005-panel.md)、[006](006-deployment.md) 与 [007](007-architecture.md)，并更新 CHANGELOG 与 README 计数。
 

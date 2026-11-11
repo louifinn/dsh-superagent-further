@@ -1,0 +1,159 @@
+# 0006 — A stable supervisor starts a versioned domain runtime
+
+- **Status:** accepted
+- **Date:** 2026-11-11
+- **Deciders:** the operator (approved plan, M35 brief), implemented by mission M35
+- **Amended by:** [0007 A staged runtime update pipeline](0007-runtime-update-pipeline.md) (the update path that writes the pointers and rolls back)
+
+## Context
+
+The plugin's domain code currently lives in the same module as its Cordis entry: `src/index.ts` constructs `Runtime`
+directly, and that constructor takes the state-directory lock, opens the Store and builds every service. Any change to
+the domain code therefore needs a plugin reload or a host restart, even when the state lives entirely in SQLite and the
+files under the state directory. The approved target is the opposite: the business runtime should be replaceable inside
+the running DeepSeek Harness process, with no human restart, while only host-level changes (a DeepSeek Harness upgrade,
+machine configuration) need a controlled restart. The first step (P2) made that swap structurally possible; the update
+pipeline — staging a deploy, requesting a swap, the database backup and the panel's Updates surface — was built by M36
+on top of it ([0007](0007-runtime-update-pipeline.md)).
+
+That split imposes constraints. DeepSeek Harness loads a plugin from a package, and a versioned runtime has to run with
+the same services, permission model, Sessions and state directory. It may not carry the host's package tree as a runtime
+dependency, because then the "versioned" artifact would only start against one exact host build. It also must not lose
+the state-directory lock while another process could take it during a swap. And a crash at any point in a swap must
+leave a supervisor that can decide what to start, without ever handing a newer database to older code.
+
+## Decision
+
+1. **The supervisor is the stable shell; the domain runtime is a versioned bundle.** `src/index.ts` (the Cordis entry)
+   constructs one `Supervisor` from `src/supervisor/supervisor.ts`. The supervisor owns the machine configuration
+   (`src/supervisor/config.ts`), the state-directory lock, one process-wide `Logs` ring and its `LogFileSink`, version
+   resolution, the crash journal and the drain controller. The ring is created once and shared by every candidate and
+   every version, so entries from a failed start stay visible after the fallback; no attempt creates or replaces it. The
+   supervisor owns nothing domain-specific. It exposes readiness, not a separate health probe: `configured()`/
+   `setupProblem()` report the runtime's settings gate, `versionStatus()` reports what started and from where, and the
+   runtime's own `HealthBoard` remains the health surface. `src/app/runtime.ts` stays the composition root of the domain,
+   but it is now reached only through `src/runtime-entry.ts`'s `createRuntime(host)`.
+
+2. **`RuntimeHost` v1 is a frozen, value-complete interface.** `src/runtime-host.ts` exports `HOST_API = 1`, the host
+   interface, the handle and the `DrainReport`. The supervisor builds the host from the live Cordis context and passes:
+   the live `context` itself as the frozen DSH service channel (the runtime reaches `agents`, `sessionController`,
+   `sessionPersistence`, `workspaceRegistry`, `permissionPresets`, `tools`, `systemPrompt`, `skills`, `webServer`, `llm`,
+   `subprocess`, `settings` and optional services through it, exactly as the plugin does); the DSH values the runtime
+   must not import at runtime (`Service`, `freezeMessage`, `MessageId`, `ReasoningEffortId`, `scopeParentOf`,
+   schemastery); `machine`, the restart callback, the exit callback, the logger, the lifetime `AbortSignal`, the Logs
+   ring, the LogFileSink, the state directory, the log-state listener, the retention setter, `flushLogs()` and
+   `releaseStateLock()`. The host has no separate services object; `context` is the service channel and changing its
+   meaning is a contract change. The runtime registers itself as the Cordis `orchestrator` service and keeps only
+   `import type` declarations for `@deepseek-ai/*`; `scripts/check-runtime-bundle.mjs` fails the build if a value import
+   or a `@deepseek-ai/` specifier reaches the bundle. Changing the shape of a provided field requires `HOST_API = 2`; a
+   loader that sees a descriptor or module with another host API refuses it and falls back, so an old runtime never
+   receives a new contract silently.
+
+3. **The runtime is built as a self-contained ESM entry.** `tsdown.config.ts` has a third entry,
+   `src/runtime-entry.ts` → `lib/runtime-entry.js`, with `zod` (the only third-party dependency the runtime actually
+   imports) bundled and `@deepseek-ai/*` kept type-only. schemastery is not bundled: the runtime receives the live value
+   through `RuntimeHostValues`. A descriptor (`lib/runtime-manifest.json`) records
+   `{version, entry, hostApi, schema, sha256}`; `pnpm build` writes it through
+   `node scripts/check-runtime-bundle.mjs --write`, and `pnpm runtime:check` asserts the invariants without writing:
+   only `node:` static imports, no `@deepseek-ai/` runtime import, `createRuntime` exported, `HOST_API === 1`, an integer
+   `SCHEMA_VERSION`, a size bound and a hash that matches the file and the descriptor. The packaged runtime is exactly
+   these built files: `packagedRuntime()` refuses a source checkout without them and names `pnpm build` instead of
+   falling back to a `.ts` entry that Node's default TypeScript support cannot load.
+
+4. **Version resolution falls back, never crashes.** The supervisor reads `<stateDir>/runtime/current.json`, checks the
+   descriptor's shape, a path-safe `version`, an `entry` that stays inside `<stateDir>/runtime/<version>/`, the file's
+   SHA-256, `hostApi === HOST_API`, and a schema that is not older than the open database. Rejections are logged and
+   skipped. The order is: a recorded interrupted-journal current, `current.json`, `previous.json`, then the packaged
+   runtime. The loader imports the entry through an opaque specifier and additionally checks the module's `HOST_API`,
+   `createRuntime`, integer `SCHEMA_VERSION` and handle shape (`ready` is thenable, `drain` and `dispose` are functions).
+   A load or initialization failure disposes whatever it created, journals that phase (`load` or `init`), and tries
+   the next candidate. Readiness is bounded too (`READY_TIMEOUT_MS = 30 s`): a `ready` that never settles is disposed and
+   treated as an initialization failure, so the fallback can proceed. That dispose is bounded as well
+   (`DISPOSE_MS = 10 s`): a hung `dispose` is warned about and abandoned instead of blocking the next candidate. The
+   packaged runtime is the last resort and is always present in a built package; a broken deployment is therefore a
+   warning and a fallback, never a supervisor that refuses to start. A source checkout that has not been built is a
+   different case: a failure to discover the packaged runtime is logged as a warning and boot continues with the
+   journal/current/previous candidates, and only when no candidate starts does the final error name `pnpm build` as the
+   likely cause.
+
+5. **The drain is a fixed, idempotent contract.** The runtime's `drain(reason, signal?)` records and performs the phases
+   in this order: stop intake (passes, Sources, new HTTP work), cancel the remaining agents as
+   `{kind:'user'}, {keepInbox:true}`, wait for in-flight effects, the outbox and assignments with an unref'd bound
+   (`DRAIN_IN_FLIGHT_MS = 10 s`; on expiry the phase fails and the later phases still run), dispose the
+   components, flush the LogFileSink, close the Store, release the state-directory lock. The abort signal may skip only
+   the intake, cancel and in-flight stages: `dispose`, `logs`, `store` and `lock` always run, so an aborted drain still
+   closes the database and releases the lock instead of leaking them. It returns one report with each phase's status,
+   start and duration, and `completed`, which is true only when every phase is `done`; a failed or skipped phase makes it
+   false. A second call returns the first report and does nothing. Normal shutdown and the update path reuse it; the
+   `update` path calls the runtime handle's `drain('update')` directly so one update journal owns the whole state machine
+   instead of a second `drain` operation overwriting it. The
+   supervisor's `DrainController` writes the journal's `drain` phase, awaits the handle's report, finishes the flush and
+   lock release, and only then commits or fails the journal, so a crash cannot record a clean drain before the lock is
+   released; the runtime never writes the journal and never releases the lock itself. The log flush is bounded by
+   `FLUSH_LOGS_MS = 10 s` and the lock release by `LOCK_RELEASE_MS = 10 s`; both warn and continue, so a stuck sink or a
+   stuck lock cannot keep the journal from being committed or keep the process from exiting. Draining a supervisor that
+   never started (no candidate came up) returns `completed: false` with a skipped intake phase and the reason, but still
+   flushes the sink and releases the lock.
+
+6. **The crash journal makes a swap recoverable at every point.** `<stateDir>/runtime/journal.json` holds
+   `{api:1, status:'running'|'committed'|'failed', operation:'startup'|'drain'|'update', phase, steps, current, previous,
+   recovery}`. Each step is written to a mode-`0600` temporary file, fsynced, renamed over the journal and followed by a
+   best-effort directory fsync, so a torn write is never read as a complete record. Phases are `prepare`, `stage`,
+   `backup`, `drain`, `swap`, `load`, `init`, `commit`, `rollback`. The update pipeline writes `previous.json` and
+   `current.json` around its `swap` phase; `previous.json` therefore names the version a rollback returns to, and the
+   supervisor's startup fallback reads it. An interrupted `update` is repaired as a whole before any version is resolved:
+   the supervisor rewrites both pointers from the record's baseline (ADR-0007 decision 6), so a candidate the swap wrote
+   but never loaded, initialized or committed cannot start. On startup, an interrupted record makes its recorded current
+   the first candidate; if it does not verify, `current.json` and then `previous.json` do; if none verify, the packaged
+   runtime does. The recovery note is written to the journal and the log. No recovery path downgrades the SQLite schema:
+   the supervisor reads the schema version from the database before choosing a runtime, a descriptor whose schema is
+   older is rejected, and the loader refuses a module whose `SCHEMA_VERSION` is below the database. The schema is never
+   migrated down; a newer database can only stop an older bundle, never be rewritten by it.
+
+7. **The split is documented and tested without changing the database.** Schema stays 25. `tests/supervisor.spec.ts`
+   covers valid/missing/invalid/hash-mismatch/host-API-mismatch pointers, escaping entries, schema downgrades, loader
+   import/export failures, the packaged manifest (including a missing/invalid one, which names `pnpm build`), the host
+   descriptor freeze, a bounded readiness timeout with fallback, a bounded hanging dispose, the bounded sink close, the
+   bounded lock release, one ring kept across a failed candidate, packaged discovery failure at boot, an empty drain that
+   is incomplete yet releases everything, crash recovery and one start/swap/drain; `tests/runtime.spec.ts` covers the
+   bounded in-flight phase, the incomplete report after an abort, and a drain aborted before it starts still closing the
+   store and releasing the lock. Both suites inject a packaged runtime, so they never need `lib/` and pass on a clean
+   checkout; `pnpm check` nevertheless builds before it tests (`typecheck && architecture:check && build && test &&
+   runtime:check && pack:check && docs:check`) so the artifact checks always see a fresh bundle.
+   The runtime suites build their host through `tests/fixtures/host.ts` and keep passing. docs/003, 005, 006, 007, 009,
+   011 and 013 describe the visible behavior, and the package's manifest is updated for the new `lib/` files.
+
+## Rejected alternatives
+
+- **Keep the runtime in the shell and restart the plugin for every change.** This is the status quo the operator
+  rejected: it needs a human restart for business changes and loses in-flight work. It cannot be reconciled with the
+  approved no-restart target; only host-level changes keep a controlled restart.
+- **Hot-load the latest source or an arbitrary path.** Unverifiable code, version skew and no rollback: a bad file would
+  leave no known-good runtime to return to. The packaged fallback and the hash/schema/host checks only work because the
+  artifact is a built, described bundle. A source-checkout fallback to `src/runtime-entry.ts` was rejected for the same
+  reason: Node's default TypeScript support cannot load it (parameter properties), so it would only fail later and less
+  clearly than a packaging error naming `pnpm build`.
+- **Hot-swap without a journal.** A crash between "old drained" and "new initialized" would leave an unknown current
+  version and an unrecorded database state. The journal is the only durable account of which version was being started,
+  and therefore what recovery may prefer; it is written before every step, not reconstructed afterwards.
+- **Let the runtime own the lock and the log sink.** Then a swap would release the lock and stop logging exactly while
+  the new runtime loads, and a second process could migrate the same state. The supervisor owns both for its whole life;
+  the runtime only flushes and releases at the end of its drain.
+- **Silent fallback.** A fallback that leaves no trace hides a broken deploy. Every rejection and recovery is a warning
+  in the Logs ring and a journal note, and `versionStatus()` exposes the version actually started and its source.
+- **Direct value imports from `@deepseek-ai/*` in the runtime.** The bundle would then resolve against the host's package
+  tree at load time and could not be versioned independently. Injecting the values through `RuntimeHost` keeps the
+  artifact self-contained and makes the boundary checkable at build time.
+- **A second in-process drain path for updates.** Two shutdown implementations would drift on the ordering that keeps
+   the outbox and lock safe. The update path calls the same handle `drain()` and the same supervisor `DrainController`
+   around its swap, and keeps the state-directory lock instead of releasing it.
+
+## Consequences
+
+The plugin's package gains a third build entry, a generated manifest and a check; `src/app/runtime.ts` loses the lock,
+the log sink creation and its `Service` base, and every domain module that used a DSH value receives it through a host
+interface. The supervisor is now the only place that may create the state-directory lock and the only place that
+resolves which runtime runs. M36 built staging, deploy and rollback on `current.json`, `previous.json`, the journal and
+the drain without changing the runtime contract: `src/supervisor/update.ts` owns the journaled update, a database
+`VACUUM INTO` backup precedes the swap, and a failed swap restores the backup, both pointers and the previous runtime.
+A later contract change is a `HOST_API` bump, not an in-place edit.

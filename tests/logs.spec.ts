@@ -22,6 +22,22 @@ it('keeps entries newest-last, trims to its limit, and filters by level and scop
   expect(logs.list()[0]).toEqual({ at: '2026-11-10T00:00:01.000Z', level: 'warn', scope: 'feishu', message: 'slow' })
 })
 
+it('searches message, scope and structured data case-insensitively, and returns everything with an empty query', () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 20)
+  logs.record('info', 'assignment', 'assignment.launched ticket=t1')
+  logs.record('warn', 'feishu', 'poll failed: timeout')
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 'ticket-42', kind: 'Policy' })
+
+  expect(logs.list({ q: 'LAUNCHED' }).map(entry => entry.message)).toEqual(['assignment.launched ticket=t1'])
+  expect(logs.list({ q: 'feishu' }).map(entry => entry.message)).toEqual(['poll failed: timeout'])
+  // The keyword is only in the structured data, so this proves data is searched too.
+  expect(logs.list({ q: 'POLICY' }).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(logs.list({ q: 'ticket-42' }).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(logs.list({ q: '' })).toHaveLength(3)
+  expect(logs.list({ q: '  ' })).toHaveLength(3)
+  expect(logs.list({ q: 'missing' })).toHaveLength(0)
+})
+
 it('captures printf-style arguments for the panel while still calling the Host logger', () => {
   const logs = new Logs()
   const host = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }

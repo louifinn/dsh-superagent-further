@@ -57,6 +57,11 @@ export interface TriggerDisposition {
   handbacks?: { ticketId: string; reason: string; at: string }[]
   /** The tickets whose Executor acknowledged it or answered it, taking it up as within the ticket. */
   acked?: string[]
+  /**
+   * When the main Session answered it directly on its Channel, outside a ticket. The explicit-decision notice then adds
+   * nothing: the person already has the answer, and a second message would only repeat it.
+   */
+  answered?: string
   at: string
 }
 /** What deciding a follow-up's owners reads: the stored tickets, Threads and dispositions, as the Store and the core keep them. */
@@ -122,6 +127,8 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'lead'; project: string; project_request_id: string; addressed?: 'mention' | 'direct' }
   /** The main Session turned an installation automation delivery's findings into work (docs/012 D12): the Mandate records the automation id and revalidates like a Lead accept, because no Source asked for it. */
   | { via: 'installation'; automation: string; addressed?: 'mention' | 'direct' }
+  /** The main Session turned its own discovery of a problem in superagent itself into work (docs/014 D2, schema 24): no Source message and no automation asked for it, so the basis revalidates like an installation accept. */
+  | { via: 'discovery'; addressed?: 'mention' | 'direct' }
   /** The Orchestrator accepted a project Lead's escalated request: the Mandate records the source project and request, and revalidates like a Lead accept because the Orchestrator decided it (docs/012 D13). */
   | { via: 'escalation'; project: string; request: string; addressed?: 'mention' | 'direct' }
   /** A message of a bot on its Source's bot list: an inferred candidate at most, never an explicit request or a stop. */
@@ -302,6 +309,8 @@ export interface PolicyEffect {
 }
 
 export type TicketEndBy = 'executor' | 'human'
+/** Why a Ticket ended: its worker's own ready/dropped report, a person stopping it, a followed pull request closing, or an Eval. */
+export type TicketEndCause = 'report' | 'human' | 'merge' | 'eval'
 /** How a ticket ended: with its result, with its pull request merged or closed unmerged, with nothing to do, or stopped by a person. */
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
 /**
@@ -493,8 +502,8 @@ export interface Ticket {
   after?: string[]
   /** The Channels of the messages it was accepted from, which its replies go to. */
   channels: ChannelRef[]
-  /** When, by whom, and how the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */
-  ended?: { at: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
+  /** When, by whom, and why the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */
+  ended?: { at: string; by: TicketEndBy; cause: TicketEndCause; outcome: TicketOutcome; reason?: string }
   /** Open question for a person; cleared by the executor or when the ticket ends. */
   attention?: Attention
   assignments: Assignment[]

@@ -152,12 +152,22 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
     "eval": {
       "default": {
         "mode": "observe",
+        "selfReport": "observe",
         "timeoutSeconds": 120,
         "model": null
       },
       "type": "object",
       "properties": {
         "mode": {
+          "default": "observe",
+          "type": "string",
+          "enum": [
+            "off",
+            "observe",
+            "auto"
+          ]
+        },
+        "selfReport": {
           "default": "observe",
           "type": "string",
           "enum": [
@@ -214,7 +224,16 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
         "prepare": "",
         "blockedCommands": [],
         "projects": [],
-        "worktreeKeepDays": 7
+        "worktreeKeepDays": 7,
+        "logLevel": "info",
+        "logRetentionDays": 7,
+        "incidents": {
+          "enabled": true,
+          "autoDiagnose": true,
+          "dailyBudget": 2,
+          "diagnoseDailyBudget": 2,
+          "minimumSeverity": "high"
+        }
       },
       "type": "object",
       "properties": {
@@ -322,6 +341,63 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "type": "integer",
           "minimum": 0,
           "maximum": 365
+        },
+        "logLevel": {
+          "default": "info",
+          "type": "string",
+          "enum": [
+            "info",
+            "debug"
+          ]
+        },
+        "logRetentionDays": {
+          "default": 7,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "incidents": {
+          "default": {
+            "enabled": true,
+            "autoDiagnose": true,
+            "dailyBudget": 2,
+            "diagnoseDailyBudget": 2,
+            "minimumSeverity": "high"
+          },
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "autoDiagnose": {
+              "default": true,
+              "type": "boolean"
+            },
+            "dailyBudget": {
+              "default": 2,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "diagnoseDailyBudget": {
+              "default": 2,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "minimumSeverity": {
+              "default": "high",
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -388,6 +464,19 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "type": "string",
           "minLength": 1,
           "maxLength": 60
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspace": {
+      "default": {
+        "path": ""
+      },
+      "type": "object",
+      "properties": {
+        "path": {
+          "default": "",
+          "type": "string"
         }
       },
       "additionalProperties": false

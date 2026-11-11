@@ -25,13 +25,24 @@ describe('the activation request of a Lead-hosted executor', () => {
     expect(spec.provider).toBe(LEAD_PROVIDER)
     expect(spec.childId).toBe('worker-ticket-1')
     expect(spec.label).toBe('Add a line')
-    expect(spec.delivery).toBe('parent')
+    // Superagent's own Lead messages are the notification authority; DSH must not deliver a second settlement.
+    expect(spec.delivery).toBe('caller')
     expect(spec.request.cwd).toBe('/state/work/app/one')
     expect(spec.request.agentPreset).toBe('dsh-superagent-further-worker')
     expect(spec.request.parent).toBe(lead)
     expect(spec.request.maxDepth).toBe(1)
     expect(spec.request.prompt).toEqual([{ type: 'text', text: '{"ticket_id":"t"}' }])
     expect(spec.signal).toBe(signal)
+  })
+
+  it('starts a reviewer on parent delivery, while a worker keeps the caller default', () => {
+    const reviewer = executorActivation({ childId: 'review-ticket-1', title: 'Review · Add a line', cwd: '/state/work/app/one', text: '{}',
+      lead, signal, preset: 'dsh-superagent-further-reviewer', delivery: 'parent' })
+    // DSH's parent settlement notice is the only channel that carries the reviewer's closing verdict to the Lead model.
+    expect(reviewer.delivery).toBe('parent')
+    // A worker keeps superagent's own Lead messages as the single notification authority.
+    expect(executorActivation({ childId: 'worker-ticket-1', title: 'Add a line', cwd: '/state/work/app/one', text: '{}',
+      lead, signal, preset: 'dsh-superagent-further-worker' }).delivery).toBe('caller')
   })
 })
 

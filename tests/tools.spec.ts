@@ -1,8 +1,9 @@
 /** Session tool registration, role-scoped resource reads, and routing/settings tool contracts. */
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
-import { UserError, key } from '../src/core/index.ts'
+import { SELF_REPOSITORY, UserError, key } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { RESOURCES } from '../src/app/resources.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
@@ -49,6 +50,48 @@ it('registers installation request creation and needs the Host schedule service 
   await expect(h.runTool(h.runtime.masterId, 'orchestrator_request_create', { title: 'Audit', instruction: 'Fix the build',
     automation: 'auto-1', deliverables: [{ project: 'default' }] }))
     .rejects.toThrow('No installation automation service is installed')
+})
+
+it('registers the self-evolution Issue outlet and keeps an observe-mode finding as a draft', async () => {
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_issue_create')).toBe(true)
+  const result = await h.runTool(h.runtime.masterId, 'orchestrator_issue_create', {
+    title: 'Watcher crashes after a failed poll',
+    evidence: 'The watcher exits with ENOENT after one failed poll.',
+    reproduction: 'Run the watcher, then stop polling.',
+    ticket: 't1',
+  })
+  expect(result).toMatchObject({ status: 'draft', reason: 'observe', note: expect.stringMatching(/Overview/) })
+  expect(h.runtime.store.selfReports.list('draft')).toEqual([expect.objectContaining({ title: 'Watcher crashes after a failed poll',
+    raised_by: { session: h.runtime.masterId, ticket: 't1' }, target_repo: SELF_REPOSITORY })])
+})
+
+it('refuses the Issue outlet when superagent itself is a registered project and names the Request route', async () => {
+  const settings = h.runtime.store.settings()
+  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [...settings.executor.projects,
+    { id: 'self', name: 'Self', workspace: join(h.directory, 'self'), repository: SELF_REPOSITORY, branch: '' }] } })
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_issue_create', { title: 'Crash', evidence: 'It crashes',
+    reproduction: 'Run it' })).rejects.toThrow(/registered as a project here/)
+  expect(h.runtime.store.selfReports.list()).toEqual([])
+})
+
+it('creates a discovery Request with its units and records the discovery Mandate basis', async () => {
+  const args = { title: 'Fix the failing self check', instruction: 'Reproduce the failure and fix it.', via: 'discovery',
+    deliverables: [{ project: 'default' }] }
+  const result = await h.runTool(h.runtime.masterId, 'orchestrator_request_create', args)
+  expect(result).toMatchObject({ mandate: 'discovery', request_id: expect.any(String), tickets: [expect.any(String)] })
+  const request = h.runtime.store.requests.get(String(result.request_id))!
+  expect(request.mandate).toMatchObject({ strength: 'explicit', basis: { via: 'discovery' },
+    actor: { source: 'dsh-superagent', id: 'discovery' } })
+  expect(request.channels).toEqual([])
+  // The same finding raised twice returns the open Request instead of a second one.
+  expect((await h.runTool(h.runtime.masterId, 'orchestrator_request_create', args)).request_id).toBe(result.request_id)
+})
+
+it('refuses a request that names both an automation and via discovery, or neither', async () => {
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_request_create', { title: 'Audit', instruction: 'Fix the build',
+    automation: 'auto-1', via: 'discovery', deliverables: [{ project: 'default' }] })).rejects.toThrow(/exactly one/)
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_request_create', { title: 'Audit', instruction: 'Fix the build',
+    deliverables: [{ project: 'default' }] })).rejects.toThrow(/exactly one/)
 })
 
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
@@ -494,8 +537,9 @@ it('relays a worker\'s report with its ticket card and the start of its summary,
     read: `ticket/${ticket.id}/result` })
   expect(String(report.summary)).toBe(summary.slice(0, 600))
   expect(report.ticket).not.toHaveProperty('preview')
-  // The end of the ticket, which the ready report brought, comes with its card.
-  expect(notices().at(-1)).toMatchObject({ ticket_ended: { ticket_id: ticket.id, state: 'completed' } })
+  // The end of the ticket, which the ready report brought, comes with its card and says why it ended.
+  expect(notices().at(-1)).toMatchObject({ ticket_ended: { ticket_id: ticket.id, state: 'completed',
+    ended: expect.objectContaining({ by: 'executor', cause: 'report', reason: 'completed' }) } })
 })
 
 it('tells the main Session of the settings, prompts, requeues and unsubscriptions others made, never of its own', async () => {

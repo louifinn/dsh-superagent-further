@@ -1,9 +1,10 @@
 /** Idempotent message delivery to DSH agents across Session restarts. */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { freezeMessage, MessageId, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type { RuntimeHostValues } from '../runtime-host.ts'
 
 // The source kind predates the 0.3.0 rename. It is a stored wire format: Sessions delivered before the upgrade name it,
 // and recognizing the same kind after the upgrade is what keeps their deliveries idempotent (no second acknowledgement
@@ -15,15 +16,17 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 type Seen = { ids: Set<string>; loaded?: Promise<void> }
+/** The DSH value exports delivery needs: the message-id brand and the message freezer, injected by the host. */
+export type DeliveryValues = Pick<RuntimeHostValues, 'MessageId' | 'freezeMessage'>
 /** The id of the message delivered under `requestId`, the same on every retry. */
-export const messageId = (requestId: string) => MessageId(`dsh-superagent:${requestId}`)
+export const messageId = (values: DeliveryValues, requestId: string) => values.MessageId(`dsh-superagent:${requestId}`)
 /** Extracts the idempotency key from current or legacy plugin message sources. */
-function deliveryId(message: UserMessage): string | undefined {
+function deliveryId(values: DeliveryValues, message: UserMessage): string | undefined {
   // Persisted sources may predate the current producer-specific source map.
   const source: { kind: string; plugin?: unknown; rpcId?: unknown } = message.source
   if (source.kind === 'dsh-superagent' || (source.kind === 'plugin' && source.plugin === 'dsh-superagent')) return message.id
   // Requests admitted by the former user RPC retain their original attribution.
-  if (source.kind === 'user' && 'rpcId' in source && typeof source.rpcId === 'string') return messageId(source.rpcId)
+  if (source.kind === 'user' && 'rpcId' in source && typeof source.rpcId === 'string') return messageId(values, source.rpcId)
 }
 
 /**
@@ -33,10 +36,10 @@ function deliveryId(message: UserMessage): string | undefined {
  */
 export class AgentDelivery {
   private readonly seen = new WeakMap<Session, Seen>()
-  constructor(private readonly ctx: Context) {
+  constructor(private readonly ctx: Context, private readonly values: DeliveryValues) {
     ctx.on('session/event', (session, event) => {
       if (event.type !== 'user/message') return
-      const id = deliveryId(event.data)
+      const id = deliveryId(this.values, event.data)
       if (id) this.seen.get(session)?.ids.add(id)
     })
   }
@@ -53,7 +56,7 @@ export class AgentDelivery {
           if (!events.length) break
           for (const event of events) {
             if (event.type !== 'user/message') continue
-            const id = deliveryId(event.data)
+            const id = deliveryId(this.values, event.data)
             if (id) state.ids.add(id)
           }
           offset += events.length
@@ -66,8 +69,8 @@ export class AgentDelivery {
     return state
   }
   async holds(agent: Agent, requestId: string): Promise<boolean> {
-    const id = messageId(requestId)
-    return (await this.history(agent)).ids.has(id) || [...agent.inbox.nextTurn, ...agent.inbox.nextStep].some(message => deliveryId(message) === id)
+    const id = messageId(this.values, requestId)
+    return (await this.history(agent)).ids.has(id) || [...agent.inbox.nextTurn, ...agent.inbox.nextStep].some(message => deliveryId(this.values, message) === id)
   }
   /** Delivers once to the selected inbox, or injects into history without waking the agent, and flushes Session persistence before acknowledging the producer. */
   async send(agent: Agent, requestId: string, text: string, mode: 'queue' | 'steer' | { inject: string }, signal: AbortSignal, authorize?: () => void,
@@ -77,12 +80,12 @@ export class AgentDelivery {
     signal.throwIfAborted()
     if (this.ctx.agents.get(agent.id) !== agent) throw new Error('Delivery target was disposed')
     authorize?.()
-    const id = messageId(requestId)
-    const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].some(message => deliveryId(message) === id)
+    const id = messageId(this.values, requestId)
+    const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].some(message => deliveryId(this.values, message) === id)
     if (!seen.ids.has(id) && !pending) {
       const source = typeof mode === 'object' ? { kind: 'dsh-superagent' as const, form: 'notice' as const, summary: mode.inject }
         : { kind: 'dsh-superagent' as const, form: 'relay' as const }
-      const message = freezeMessage({ id, role: 'user' as const, content: [{ type: 'text' as const, text }], source })
+      const message = this.values.freezeMessage({ id, role: 'user' as const, content: [{ type: 'text' as const, text }], source })
       if (typeof mode === 'object') { agent.inject(message); seen.ids.add(id) }
       else if (mode === 'steer') agent.steer(message)
       else agent.followup(message)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULES, LEGACY_DEFAULT_RULES, LanguageConfigSchema, MemoryConfigSchema, SettingsSchema, assessmentOutcome, policyEffects,
-  settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
-import type { MandateBasis } from '../src/core/index.ts'
+import { DEFAULT_RULES, LEGACY_DEFAULT_RULES, LanguageConfigSchema, MemoryConfigSchema, SettingsSchema, assessmentOutcome, fieldTier,
+  policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import type { Mandate, MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
@@ -254,10 +254,13 @@ describe('settings migration', () => {
       paused: true,
       sources: { feishu: feishuSource({ chats: [{ chatId: CHAT, listen: 'mentions' }, { chatId: OBSERVED, listen: 'all' }], directMessages: false }), github: { enabled: true, config: { pollSeconds: 120 } } },
       policy: { rules: [], sources: { feishu: { allowed: [{ id: MEMBER, name: 'A' }], admission: {} }, github: { allowed: [{ id: 'a' }], admission: {} } } },
-      eval: { mode: 'auto', timeoutSeconds: 90, model: { provider: 'p', model: 'm' } },
-      executor: { model: null, maxWorkers: 5, projectWorkers: 2, directory: '', prepare: '', blockedCommands: [], projects: [], worktreeKeepDays: 7 },
+      eval: { mode: 'auto', selfReport: 'observe', timeoutSeconds: 90, model: { provider: 'p', model: 'm' } },
+      executor: { model: null, maxWorkers: 5, projectWorkers: 2, directory: '', prepare: '', blockedCommands: [], projects: [],
+        worktreeKeepDays: 7, logLevel: 'info', logRetentionDays: 7,
+        incidents: { enabled: true, autoDiagnose: true, dailyBudget: 2, diagnoseDailyBudget: 2, minimumSeverity: 'high' } },
       memory: MemoryConfigSchema.parse({}),
-    language: LanguageConfigSchema.parse({}),
+      language: LanguageConfigSchema.parse({}),
+      workspace: { path: '' },
     })
     expect(migrateSettings(migrated)).toEqual(migrated)
   })
@@ -553,5 +556,27 @@ describe('bots and events without a sender', () => {
       ['pulls', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
       ['comments', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
       ['ci', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }]])
+  })
+})
+
+describe('self report gate (docs/014 D3)', () => {
+  it('defaults to observe beside the accept mode and refuses an unknown state', () => {
+    expect(SettingsSchema.parse({}).eval.selfReport).toBe('observe')
+    expect(base.eval.selfReport).toBe('observe')
+    expect(SettingsSchema.parse({ eval: { mode: 'auto', selfReport: 'auto' } }).eval.selfReport).toBe('auto')
+    expect(() => SettingsSchema.parse({ eval: { selfReport: 'always' } })).toThrow()
+  })
+  it('is a tier B setting and does not change the Policy version', () => {
+    expect(fieldTier('eval', 'eval.selfReport')).toBe('B')
+    expect(fieldTier('eval', 'eval.timeoutSeconds')).toBe('A')
+    expect(policyVersion({ ...base, eval: { ...base.eval, selfReport: 'off' } })).toBe(policyVersion(base))
+    expect(policyVersion({ ...base, eval: { ...base.eval, selfReport: 'auto' } })).toBe(policyVersion(base))
+  })
+  it('trusts a discovery Mandate on revalidation like an installation Mandate', () => {
+    const mandate = (basis: MandateBasis, scope = 'inspect the self check'): Mandate => ({ strength: 'explicit', policyVersion: 'v1',
+      basis, actor: { source: 'dsh-superagent', id: 'discovery' }, scope })
+    expect(policy.revalidate(mandate({ via: 'discovery' }))).toBe(true)
+    expect(policy.revalidate(mandate({ via: 'installation', automation: 'auto-1' }))).toBe(true)
+    expect(policy.revalidate(mandate({ via: 'discovery' }, 'seen')).valueOf()).toBe(true)
   })
 })

@@ -4,13 +4,13 @@ import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import type { Project } from '../projects.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Tag, type TagTone } from './controls.tsx'
+import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Switch, Tag, type TagTone } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
-import { usePanel } from './provider.tsx'
+import { usePanel, usePanelData } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { localized, valueLabel } from './text.ts'
-import { ClampText, ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead, When } from './widgets.tsx'
+import { ClampText, ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, SetupMessage, StatusHead, When } from './widgets.tsx'
 
 export function ExecutionStatus({ filter: current, state, reload }: {
   filter: TicketFilter; state: StateView; reload: () => Promise<void>
@@ -83,6 +83,14 @@ function WorkerJobs() {
 }
 
 const firstSentence = (text: string): string => /^[^。；;.]*(?:[。；;]|\.(?=\s|$))?/.exec(text)?.[0] ?? text
+/** One boolean settings switch with its label and explanation, matching the Memory page's rows. */
+function ToggleField({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean
+  onChange: (next: boolean) => void }) {
+  return <div className="dt-switch-row">
+    <div className="dt-field-head">{label}{hint && <InfoTip text={hint} />}</div>
+    <Switch checked={checked} onChange={onChange} label={label} />
+  </div>
+}
 function EnvironmentVariables({ groups, sources,
   onPick }: { groups: SettingsView['environment']['variables']; sources: SourceView[]; onPick: (key: string) => void }) {
   const { t } = usePanel()
@@ -136,14 +144,44 @@ function Projects({ projects, onChange }: { projects: Project[]; onChange: (next
     </li>)}</ul> : <Hint>{t('projectsEmpty')}</Hint>}
   </Section>
 }
+/** The name of a workspace directory, as the DSH title ends with it. */
+const workspaceName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+/**
+ * The mandatory Orchestrator workspace: the explicitly titled DSH workspace the main Session runs in, and the settings block
+ * that selects it. The title comes from the running host; before the first save the path's last segment stands in for it.
+ */
+function WorkspaceSettings() {
+  const { t } = usePanel()
+  const { setup } = usePanelData()
+  const { settings } = useSettings()
+  const block = settings.blocks.workspace
+  const draft = useBlockDraft('workspace', block.value, block.revision)
+  const title = setup?.workspace?.title ?? (block.value.path ? `dsh-superagent-further · ${workspaceName(block.value.path)}` : '')
+  return <div className="dt-form dt-block">
+    <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
+      <Fields disabled={draft.busy}>
+        <Section title={t('workspaceSettingsTitle')} hint={t('workspaceSettingsIntro')}>
+          {title !== '' && <LabelValue label={t('workspaceTitleLabel')} value={title} />}
+          <Field label={t('workspacePathLabel')} hint={t('workspacePathHint')}
+            note={block.value.path ? undefined : t('workspacePathEmpty')}>
+            <Input className="dt-mono" required spellCheck={false} value={draft.value.path}
+              placeholder={t('workspacePathPlaceholder')} onChange={event => draft.edit({ path: event.target.value })} />
+          </Field>
+          {setup?.problem?.place === 'execution' && <SetupMessage problem={setup.problem} />}
+        </Section>
+      </Fields>
+      <SaveBar {...draft} onDiscard={draft.discard} />
+    </form>
+  </div>
+}
 export function ExecutionSettings() {
   const { t } = usePanel()
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
-  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), blockedCommands: executor.blockedCommands.join(' ') }
+  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), logRetentionDays: String(executor.logRetentionDays), blockedCommands: executor.blockedCommands.join(' ') }
   const draft = useBlockDraft('executor', saved, blocks.executor.revision,
-    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
+    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), logRetentionDays: numberOf(value.logRetentionDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   const prepare = useRef<HTMLTextAreaElement>(null)
@@ -154,6 +192,7 @@ export function ExecutionSettings() {
     requestAnimationFrame(() => { field?.focus(); const caret = at + key.length + 3; field?.setSelectionRange(caret, caret) })
   }
   return <div className="dt-form">
+    <WorkspaceSettings />
     <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
       <Fields disabled={draft.busy}>
         <div className="dt-form dt-block">
@@ -177,6 +216,42 @@ export function ExecutionSettings() {
           <Projects projects={value.projects} onChange={projects => edit({ projects })} />
         </div>
         <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('logSettings')}<InfoTip text={t('logSettingsIntro')} /></h2>
+          <Field label={t('logLevelSetting')} hint={t('logLevelSettingHint')}>
+            <select className="dt-select" value={value.logLevel} onChange={event => edit({ logLevel: event.target.value as 'info' | 'debug' })}>
+              <option value="info">{t('logLevel.info')}</option>
+              <option value="debug">{t('logLevel.debug')}</option>
+            </select>
+          </Field>
+          <Field label={t('logRetentionDays')} hint={t('logRetentionDaysHint')}>
+            <Input type="number" min={1} max={30} required value={value.logRetentionDays}
+              onChange={event => edit({ logRetentionDays: event.target.value })} />
+          </Field>
+        </div>
+        <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('incidentSettings')}<InfoTip text={t('incidentSettingsIntro')} /></h2>
+          <ToggleField label={t('incidentEnabled')} hint={t('incidentEnabledHint')} checked={value.incidents.enabled}
+            onChange={enabled => edit({ incidents: { ...value.incidents, enabled } })} />
+          <ToggleField label={t('incidentAutoDiagnose')} hint={t('incidentAutoDiagnoseHint')} checked={value.incidents.autoDiagnose}
+            onChange={autoDiagnose => edit({ incidents: { ...value.incidents, autoDiagnose } })} />
+          <Field label={t('incidentDailyBudget')} hint={t('incidentDailyBudgetHint')}>
+            <Input type="number" min={0} max={24} required value={String(value.incidents.dailyBudget)}
+              onChange={event => edit({ incidents: { ...value.incidents, dailyBudget: numberOf(event.target.value) ?? 0 } })} />
+          </Field>
+          <Field label={t('incidentDiagnoseDailyBudget')} hint={t('incidentDiagnoseDailyBudgetHint')}>
+            <Input type="number" min={0} max={24} required value={String(value.incidents.diagnoseDailyBudget)}
+              onChange={event => edit({ incidents: { ...value.incidents, diagnoseDailyBudget: numberOf(event.target.value) ?? 0 } })} />
+          </Field>
+          <Field label={t('incidentMinimumSeverity')} hint={t('incidentMinimumSeverityHint')}>
+            <select className="dt-select" value={value.incidents.minimumSeverity}
+              onChange={event => edit({ incidents: { ...value.incidents,
+                minimumSeverity: event.target.value as 'low' | 'medium' | 'high' | 'critical' } })}>
+              {(['low', 'medium', 'high', 'critical'] as const).map(severity => <option key={severity}
+                value={severity}>{t(`incidentSeverity.${severity}` as never)}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
           <Field label={t('executionDirectory')} hint={t('executionDirectoryHint')} note={value.directory ? undefined
             : t('executionDirectoryDefault', { root: environment.root })}>
@@ -197,6 +272,6 @@ export function ExecutionSettings() {
       </Fields>
       <SaveBar {...draft} onDiscard={draft.discard} />
     </form>
-    <ConfigHistory blocks={['executor', 'pause']} />
+    <ConfigHistory blocks={['workspace', 'executor', 'pause']} />
   </div>
 }

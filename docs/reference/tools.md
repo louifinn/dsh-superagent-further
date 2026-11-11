@@ -1062,7 +1062,7 @@ Parameters:
 
 ### `orchestrator_request_create`
 
-Create one installation-level Request with one Ticket per delivery unit, from work an installation automation delivery asked you to act on: pass the automation id from the delivery marker ([AUTOMATION auto-… · installation]). Use it only for that delivery; project automation findings are raised by their project Lead, and work that needs a person's decision keeps its existing route. Every unit names a registered project. The Request records the automation id as its Mandate provenance and runs without external Channels.
+Create one installation-level Request with one Ticket per delivery unit. Use automation (the id from an installation automation delivery marker) for work that delivery asked you to act on; use via discovery when you found a problem in superagent itself here — that finding belongs in a Ticket, not an Issue. Every unit names a registered project. The Request records that provenance as its Mandate and runs without external Channels.
 
 Parameters:
 
@@ -1084,10 +1084,15 @@ Parameters:
       "description": "The complete work: what to do, where, and how to verify it."
     },
     "automation": {
+      "description": "The installation automation id from the delivery marker; use instead of via.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 200,
-      "description": "The installation automation id from the delivery marker."
+      "maxLength": 200
+    },
+    "via": {
+      "description": "Record that you discovered this yourself; use instead of automation.",
+      "type": "string",
+      "const": "discovery"
     },
     "project": {
       "description": "Default registered project for units that omit one.",
@@ -1134,10 +1139,202 @@ Parameters:
   },
   "required": [
     "title",
-    "instruction",
-    "automation"
+    "instruction"
   ],
   "additionalProperties": false
+}
+```
+
+### `orchestrator_issue_create`
+
+Raise a finding about superagent itself through the self-evolution Issue outlet, whose target repository is fixed. The Eval self-report gate decides: off records nothing, observe keeps a draft a person approves in Overview, auto files within deduplication and a daily cap. When superagent itself is a registered project here, the tool refuses and the finding belongs in a Request through orchestrator_request_create with via discovery instead. It only creates an Issue, never edits or closes one, and must carry evidence, reproduction and no Feishu content, credentials or private local paths.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "A short, specific title for the finding."
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "What you observed, with the concrete version, output or file that shows it."
+    },
+    "reproduction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "Steps a person can follow to see the problem."
+    },
+    "ticket": {
+      "description": "The Ticket whose worker found it, when a ticket found it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "labels": {
+      "description": "Labels to apply only if the target repository already has them; none by default.",
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      }
+    }
+  },
+  "required": [
+    "title",
+    "evidence",
+    "reproduction"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `orchestrator_incident`
+
+List, read and act on operational incidents: deterministic records of detectable trouble in the installation, with a bounded read-only diagnosis. Please use list or get first. diagnose asks the read-only diagnostician Session for a root cause and a fix plan within the daily budget; dismiss closes a record with a reason; route creates the follow-up work once, after diagnosis, and only when you confirm it. Never use this tool to fix anything yourself.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "list"
+        },
+        "status": {
+          "description": "Only incidents in this status; omit or open for the ones still live.",
+          "type": "string",
+          "enum": [
+            "open",
+            "detected",
+            "bundled",
+            "diagnosed",
+            "resolved",
+            "dismissed",
+            "all"
+          ]
+        },
+        "severity": {
+          "description": "Only incidents at this severity.",
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "limit": {
+          "description": "How many records to return (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "get"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "diagnose"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "dismiss"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280,
+          "description": "Why a person decided the record needs no work."
+        }
+      },
+      "required": [
+        "action",
+        "id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "route"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confirm": {
+          "description": "Must be true: creating a Request hands engineering work to a Lead, and filing an Issue reports a superagent finding.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  ]
 }
 ```
 
@@ -2435,4 +2632,4 @@ Parameters:
 
 ## Total
 
-47 distinct tools across 5 groups (54 registrations).
+49 distinct tools across 5 groups (56 registrations).

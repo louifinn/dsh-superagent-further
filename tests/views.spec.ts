@@ -19,7 +19,7 @@ import { feishuLink } from '../src/sources/feishu-channel.ts'
 import { feishuChannel, feishuTriggerId } from '../src/sources/feishu-trigger.ts'
 import { githubLink } from '../src/sources/github-channel.ts'
 import { githubChannel } from '../src/sources/github-trigger.ts'
-import { followupOwners, type ChannelRef } from '../src/core/index.ts'
+import { followupOwners, SELF_REPOSITORY, type ChannelRef, type SelfReport } from '../src/core/index.ts'
 
 let directory: string
 let store: Store
@@ -141,9 +141,9 @@ it('summaries carry the deliverable contract, and only an answer Ticket reads as
     mandate: { strength: 'explicit' as const, policyVersion: 'v', basis: { via: 'listed' as const }, actor: { source: 'feishu',
       id: 'ou_alice' }, scope: '' },
     origin: { triggerId: 'e1', triggerIds: ['e1'] }, assignments: [], inputs: [] }
-  store.tickets.save({ ...base, deliverable: 'answer', ended: { at, by: 'executor' as const, outcome: 'completed' as const } })
+  store.tickets.save({ ...base, deliverable: 'answer', ended: { at, by: 'executor' as const, cause: 'report' as const, outcome: 'completed' as const } })
   expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'answer', answered: true, stage: 'ended' })
-  store.tickets.save({ ...base, deliverable: 'change', ended: { at, by: 'executor' as const, outcome: 'merged' as const } })
+  store.tickets.save({ ...base, deliverable: 'change', ended: { at, by: 'executor' as const, cause: 'merge' as const, outcome: 'merged' as const } })
   expect(ticketSummary(store.tickets.get('t1')!)).toMatchObject({ deliverable: 'change', answered: false })
   expect(ticketSummary(store.tickets.get('t1')!)).not.toMatchObject({ answered: true })
   void host
@@ -329,7 +329,7 @@ it('offers a person to send a follow-up to Eval while a ticket decides it, or on
   const row = () => triggerView(snapshot(host), store.triggers.get('f1')!)
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: true } })
   // A ticket that ended after its worker had it leaves it to nobody: a person may still send it to Eval.
-  store.tickets.save({ ...store.tickets.get('t1')!, ended: { at, by: 'executor', reason: 'done', outcome: 'completed' } })
+  store.tickets.save({ ...store.tickets.get('t1')!, ended: { at, by: 'executor', cause: 'report', reason: 'done', outcome: 'completed' } })
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: false } })
   // Not once its worker acknowledged it, which took it up; a stop on it decided only the ticket's work.
   store.triggers.saveDisposition('f1', { fanout: ['t1'], acked: ['t1'], at })
@@ -395,4 +395,25 @@ it('names the project of a GitHub Thread from its repository, and none for the d
   expect(threadSummary(view, store.threads.get('github:acme/app#1')!).project).toBe('app')
   // A plain Thread id belongs to the deployment's own repository, which the operator registered as a project too.
   expect(threadSummary(view, store.threads.get('github:7')!).project).toBe('primary')
+})
+
+it('shows only draft self reports in the overview, with an evidence preview, and flags a full filing day', () => {
+  const host = views()
+  const at = new Date().toISOString()
+  const stored = (report: Partial<SelfReport> & Pick<SelfReport, 'id' | 'status'>): SelfReport => ({ title: 'Watcher crashes after a failed poll',
+    body: '', evidence: 'The watcher exits with ENOENT in state/watcher.json after one failed poll. '.repeat(10),
+    raised_by: { session: 'master' }, target_repo: SELF_REPOSITORY, created_at: at, ...report })
+  for (let index = 0; index < 3; index++) host.store.selfReports.save(stored({ id: `filed-${index}`, status: 'filed',
+    issue_number: 10 + index, filed_at: at }))
+  const draft = stored({ id: 'draft-1', status: 'draft' })
+  host.store.selfReports.save(draft)
+  const view = overview(host, {}, 'v1', load, undefined, [], [], [draft])
+  expect(view.selfReports).toEqual([{ id: 'draft-1', title: 'Watcher crashes after a failed poll', target_repo: SELF_REPOSITORY,
+    evidence: expect.any(String), createdAt: at }])
+  // The row carries a preview, not the whole evidence body.
+  expect(view.selfReports[0]!.evidence.length).toBe(160)
+  expect(view.selfReports[0]!.evidence).toContain('ENOENT')
+  expect(view.selfReportsBlocked).toBe(true)
+  // Observe mode accumulates drafts; a view with no drafts shows nothing and no cap warning.
+  expect(overview(host, {}, 'v1', load).selfReports).toEqual([])
 })

@@ -2,14 +2,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
-import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
+import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
@@ -22,6 +23,7 @@ import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
 import { memoryTools } from './tools/memory.ts'
 import type { Store } from './store.ts'
+import type { CaptureLogs } from './logs.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
@@ -30,6 +32,8 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
   readonly context: Context
+  /** The DSH value exports this part uses: scope identity, message IDs, and the message freezer. */
+  readonly values: RuntimeHostValues
   readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
@@ -44,6 +48,8 @@ export interface SessionsHost {
   tools(agent: Agent, ticket?: Ticket): Tool[]
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
+  /** A capture logger scoped to this part, so its warnings reach the panel's ring; when absent, only the Host logger sees them. */
+  readonly log?: CaptureLogs
 }
 
 /**
@@ -55,6 +61,8 @@ interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: 
 /** The agent presets Executor Sessions, the main Session and project Lead Sessions are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-further-worker', ROUTER_PRESET = 'dsh-superagent-further-router', LEAD_PRESET = 'dsh-superagent-further-lead'
 export const REVIEWER_PRESET = 'dsh-superagent-further-reviewer'
+/** The read-only Session an incident diagnosis runs in (ADR-0005); its preset's plugin list is the mechanism-enforced bound. */
+export const DIAGNOSTICIAN_PRESET = 'dsh-superagent-further-diagnostician'
 
 /** The runtime-context contribution that carries memories: volatile, so it must not live in the system prompt. */
 export const MEMORY_CONTEXT = 'dsh-superagent-further-memory'
@@ -141,17 +149,23 @@ export class Sessions {
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
     this.ctx = host.context
-    this.agentDelivery = new AgentDelivery(host.context)
+    this.agentDelivery = new AgentDelivery(host.context, host.values)
     this.lead = new LeadDispatch({ store: host.store, engine: () => {
       if (!this.leadEngine) throw new Error('The Engine is not available for the Lead tools yet')
       return this.leadEngine
     }, ensureLead: async project => (await this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id,
     prompt: (sessionId, requestId, text) => this.prompt(sessionId, requestId, text, 'queue'),
     notify: (name, value, summary) => this.notify(name, value, summary),
-    warn: (message, error) => this.ctx.logger.warn('dsh-superagent-further %s: %s', message, String(error)) })
+    warn: (message, error) => this.warn('dsh-superagent-further %s: %s', message, String(error)) })
     // Deliver relays and notices to the main Session in the order they were queued.
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
+  }
+  /** Writes a warning into the Host log ring when the Runtime injected a scoped logger; the Host logger's own output is unchanged. */
+  private warn(format: string, ...args: unknown[]): void {
+    const log = this.host.log
+    if (log) log.warn(format, ...args)
+    else this.ctx.logger.warn(format, ...args)
   }
   /** Gives the Lead dispatch and its tools the Engine's project-request commands once the Runtime has composed it. */
   attachEngine(engine: LeadEngine): void { this.leadEngine = engine }
@@ -190,20 +204,25 @@ export class Sessions {
       if (projectId !== undefined) void this.lead.turnEnded(projectId).catch(() => { /* the durable record stays for recovery */ })
     })
   }
-  /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
-  async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'lead'): Promise<Agent> {
+  /**
+   * Resolves or creates session `id` in a workspace, initializes its role model, decorates it with prompts/skills/tools,
+   * sets `danger-full-access` permissions, and renames it to `title`. The workspace is either a path whose DSH registration
+   * is ensured here (project Leads and their checkouts) or an already-registered workspace (the master Session's user
+   * workspace), which keeps startup from ever registering a path it has not validated.
+   */
+  async ensure(id: string, target: string | { id: string }, title: string, role: 'orchestrator' | 'worker' | 'lead'): Promise<Agent> {
     const ctx = this.ctx
     let result = await ctx.sessionController.resolveAgent(id as SessionId)
     if ('error' in result && result.error.code === 'session/not-found') {
-      const workspace = await ctx.workspaceRegistry.create(cwd)
+      const workspace = typeof target === 'string' ? await ctx.workspaceRegistry.create(target) : target
       // A Session keeps the preset it was created with, one of the bundle's own (cordis.patch.yml).
-      await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id,
+      await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id as WorkspaceId,
         agentPreset: role === 'worker' ? WORKER_PRESET : role === 'lead' ? LEAD_PRESET : ROUTER_PRESET })
       result = await ctx.sessionController.resolveAgent(id as SessionId)
     }
     if ('error' in result) throw result.error
     const settings = this.host.store.settings()
-    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
+    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model, this.host.values)
     await this.decorate(result.agent)
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
@@ -247,7 +266,7 @@ export class Sessions {
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
   /** The id of the message `prompt` delivers under `requestId`, which DSH's inbox events name it by. */
-  promptedId(requestId: string): MessageId { return messageId(key(requestId)) }
+  promptedId(requestId: string): MessageId { return messageId(this.host.values, key(requestId)) }
   /** Enqueues a steering relay to the main Session; relays are durable and retried by `Effects` until delivered, at most once per `requestId`. */
   relay(requestId: string, text: string): void { this.host.effects.enqueue('relay', requestId, { text }) }
   /** Enqueues a durable background notice for injection into the main Session; a new notice with the same `name` replaces a still-waiting notice of that `name`. */
@@ -370,7 +389,7 @@ export class Sessions {
       binding.skills = undefined
       this.bindSkills(binding, host.prompts.current())
     })
-    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.ctx.logger.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
+    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
     await skillScope
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
@@ -432,7 +451,7 @@ export class Sessions {
    */
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     const store = this.host.store
-    const parent = scopeParentOf(agent)
+    const parent = this.host.values.scopeParentOf(agent)
     const ticket = store.tickets.get(ticketId)
     const denied = ticket && canComplete(ticket.deliverable) ? ANSWER_DENIED : []
     const allow = WORK_TOOLS.filter(name => !denied.includes(name) && agent.ctx.tools.get(name, parent))
@@ -490,7 +509,7 @@ export class Sessions {
     this.bindings.delete(agent)
     binding.skills?.dispose()
     for (const dispose of binding.disposers.splice(0).reverse()) {
-      try { dispose() } catch (error) { this.ctx.logger.warn('dsh-superagent-further could not release what it registered for a Session: %s', String(error)) }
+      try { dispose() } catch (error) { this.warn('dsh-superagent-further could not release what it registered for a Session: %s', String(error)) }
     }
   }
   /** Releases prompt sections, skills, and tools registered by `Sessions` across all decorated agents. */

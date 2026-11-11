@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
-import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
+import { UserError, followupOwners, key, reasonText, SELF_REPOSITORY, SELF_REPORT_DAILY_LIMIT, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
@@ -18,6 +18,10 @@ import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 import { automationTools } from './automation.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../../sources/kind.ts'
 import { decideEscalation } from '../escalations.ts'
+import type { SelfReports } from '../self-reports.ts'
+import { requireIncident, type Incidents } from '../incidents.ts'
+import type { Diagnosis } from '../diagnosis.ts'
+import { INCIDENT_SEVERITY_FILTERS, INCIDENT_STATUS_FILTERS } from '../api.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -25,13 +29,19 @@ const RoutingNoteSchema = z.string().trim()
 export interface MainToolsHost {
   readonly context: Context
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'
-    | 'listEscalations' | 'decideEscalation'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads'>
+    | 'raiseDiscoveryRequest' | 'listEscalations' | 'decideEscalation'> & EngineForPeople
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads' | 'incidents'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry' | 'ensureLead' | 'prompt'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync' | 'propose' | 'proposals'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
+  /** The self-evolution Issue outlet: drafts, files and dismisses findings about superagent itself (docs/014 D3). */
+  readonly selfReports: SelfReports
+  /** Deterministic incident records and their evidence bundles (ADR-0004). */
+  readonly incidents: Incidents
+  /** Bounded read-only diagnosis of incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
   /** The registered Execution projects, for validating a request's delivery units. */
@@ -371,11 +381,12 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
     }),
     tool({
       name: 'orchestrator_request_create',
-      description: 'Create one installation-level Request with one Ticket per delivery unit, from work an installation automation delivery asked you to act on: pass the automation id from the delivery marker ([AUTOMATION auto-… · installation]). Use it only for that delivery; project automation findings are raised by their project Lead, and work that needs a person\'s decision keeps its existing route. Every unit names a registered project. The Request records the automation id as its Mandate provenance and runs without external Channels.',
+      description: 'Create one installation-level Request with one Ticket per delivery unit. Use automation (the id from an installation automation delivery marker) for work that delivery asked you to act on; use via discovery when you found a problem in superagent itself here — that finding belongs in a Ticket, not an Issue. Every unit names a registered project. The Request records that provenance as its Mandate and runs without external Channels.',
       schema: z.object({
         title: z.string().trim().min(1).max(200).describe('A short label for the whole Request; the first unit falls back to it as its Ticket title.'),
         instruction: z.string().trim().min(1).max(8000).describe('The complete work: what to do, where, and how to verify it.'),
-        automation: z.string().trim().min(1).max(200).describe('The installation automation id from the delivery marker.'),
+        automation: z.string().trim().min(1).max(200).optional().describe('The installation automation id from the delivery marker; use instead of via.'),
+        via: z.literal('discovery').optional().describe('Record that you discovered this yourself; use instead of automation.'),
         project: z.string().trim().min(1).optional().describe('Default registered project for units that omit one.'),
         deliverable: z.enum(['change', 'answer']).optional().describe('What the Tickets owe (default change); answer is read-only.'),
         deliverables: z.array(z.object({
@@ -383,22 +394,87 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
           title: z.string().trim().min(1).max(200).optional(),
           after: z.array(z.number().int().min(0)).max(7).optional(),
         })).min(1).max(8).optional().describe('One Ticket per unit, in order; after names earlier indexes it waits on.'),
-      }).strict(),
+      }).strict().refine(args => (args.automation === undefined) !== (args.via === undefined),
+        'Name exactly one of automation and via discovery'),
       execute: async args => {
-        if (host.automations === undefined) throw new Error('No installation automation service is installed')
-        const automation = await host.automations.view(args.automation)
-        if (automation.scope !== 'installation') {
-          throw new Error(`Automation ${args.automation} is project-scope; its project Lead raises the work itself`)
-        }
         const units = (args.deliverables ?? [{ project: args.project }]).map(unit => {
           const project = unit.project ?? args.project
           if (project === undefined) throw new Error('Name a registered project for every delivery unit')
           if (!host.projects().some(item => item.id === project)) throw new Error(`Project ${project} is not registered`)
           return { project, ...unit.title ? { title: unit.title } : {}, ...unit.after?.length ? { after: unit.after } : {} }
         })
+        if (args.via === 'discovery') {
+          const request = host.engine.raiseDiscoveryRequest({ title: args.title, instruction: args.instruction,
+            units, ...args.deliverable ? { deliverable: args.deliverable } : {} })
+          return { request_id: request.id, tickets: request.ticketIds, mandate: 'discovery' }
+        }
+        if (host.automations === undefined) throw new Error('No installation automation service is installed')
+        const automation = await host.automations.view(args.automation!)
+        if (automation.scope !== 'installation') {
+          throw new Error(`Automation ${args.automation} is project-scope; its project Lead raises the work itself`)
+        }
         const request = host.engine.raiseInstallationRequest({ title: args.title, instruction: args.instruction,
-          automation: args.automation, units, ...args.deliverable ? { deliverable: args.deliverable } : {} })
+          automation: args.automation!, units, ...args.deliverable ? { deliverable: args.deliverable } : {} })
         return { request_id: request.id, tickets: request.ticketIds, automation: args.automation, mandate: 'installation' }
+      },
+    }),
+    tool({
+      name: 'orchestrator_issue_create',
+      description: 'Raise a finding about superagent itself through the self-evolution Issue outlet, whose target repository is fixed. The Eval self-report gate decides: off records nothing, observe keeps a draft a person approves in Overview, auto files within deduplication and a daily cap. When superagent itself is a registered project here, the tool refuses and the finding belongs in a Request through orchestrator_request_create with via discovery instead. It only creates an Issue, never edits or closes one, and must carry evidence, reproduction and no Feishu content, credentials or private local paths.',
+      schema: z.object({
+        title: z.string().trim().min(1).max(120).describe('A short, specific title for the finding.'),
+        evidence: z.string().trim().min(1).max(8000).describe('What you observed, with the concrete version, output or file that shows it.'),
+        reproduction: z.string().trim().min(1).max(8000).describe('Steps a person can follow to see the problem.'),
+        ticket: z.string().trim().min(1).optional().describe('The Ticket whose worker found it, when a ticket found it.'),
+        labels: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe('Labels to apply only if the target repository already has them; none by default.'),
+      }).strict(),
+      execute: async args => {
+        const result = await host.selfReports.raise({ title: args.title, evidence: args.evidence, reproduction: args.reproduction,
+          session: agent.id, ...args.ticket === undefined ? {} : { ticket: args.ticket }, ...args.labels === undefined ? {} : { labels: args.labels } })
+        if (result.status === 'off') return { status: 'off', note: 'The Eval self-report gate is off; nothing was recorded.' }
+        if (result.status === 'draft') {
+          return { status: 'draft', report_id: result.report.id, reason: result.reason,
+            note: result.reason === 'daily-limit'
+              ? `The daily limit of ${SELF_REPORT_DAILY_LIMIT} filed self reports is reached; the finding stays a draft for a person to approve.`
+              : 'A draft waits in Overview for a person to approve or dismiss it.' }
+        }
+        if (result.status === 'linked') {
+          return { status: 'linked', report_id: result.report.id, issue_number: result.issue_number,
+            note: 'An existing Issue already tracks this finding, so nothing was filed; the draft was dismissed.' }
+        }
+        return { status: 'filed', report_id: result.report.id, issue_number: result.issue_number,
+          issue: `https://github.com/${SELF_REPOSITORY}/issues/${result.issue_number}` }
+      },
+    }),
+    tool({
+      name: 'orchestrator_incident',
+      description: 'List, read and act on operational incidents: deterministic records of detectable trouble in the installation, with a bounded read-only diagnosis. Please use list or get first. diagnose asks the read-only diagnostician Session for a root cause and a fix plan within the daily budget; dismiss closes a record with a reason; route creates the follow-up work once, after diagnosis, and only when you confirm it. Never use this tool to fix anything yourself.',
+      schema: z.discriminatedUnion('action', [
+        z.object({
+          action: z.literal('list'),
+          status: z.enum(INCIDENT_STATUS_FILTERS).optional().describe('Only incidents in this status; omit or open for the ones still live.'),
+          severity: z.enum(INCIDENT_SEVERITY_FILTERS).optional().describe('Only incidents at this severity.'),
+          limit: z.number().int().min(1).max(100).optional().describe('How many records to return (default 20).'),
+        }).strict(),
+        z.object({ action: z.literal('get'), id: z.string().trim().min(1) }).strict(),
+        z.object({ action: z.literal('diagnose'), id: z.string().trim().min(1) }).strict(),
+        z.object({ action: z.literal('dismiss'), id: z.string().trim().min(1),
+          reason: z.string().trim().min(1).max(280).describe('Why a person decided the record needs no work.') }).strict(),
+        z.object({ action: z.literal('route'), id: z.string().trim().min(1),
+          confirm: z.boolean().optional().describe('Must be true: creating a Request hands engineering work to a Lead, and filing an Issue reports a superagent finding.') }).strict(),
+      ]),
+      execute: async args => {
+        if (args.action === 'list') {
+          const filter = { ...args.status ? { status: args.status } : {}, ...args.severity ? { severity: args.severity } : {} }
+          return { incidents: host.incidents.list({ ...filter, ...args.limit ? { limit: args.limit } : {} }),
+            total: host.incidents.total(filter) }
+        }
+        const incident = requireIncident(host.store.incidents, args.id)
+        if (args.action === 'get') return host.incidents.detail(incident.id)!
+        if (args.action === 'diagnose') return host.diagnosis.diagnose(incident.id)
+        if (args.action === 'dismiss') return { incident: host.incidents.dismiss(incident.id, args.reason) }
+        if (args.confirm !== true) return { status: 'refused', reason: 'unconfirmed' }
+        return host.diagnosis.route(incident.id, { manual: true })
       },
     }),
     tool({

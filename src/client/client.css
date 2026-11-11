@@ -58,6 +58,8 @@
 .dt-event { padding: 12px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dt-event:last-child { border-bottom: 0; }
 .dt-event.dt-highlight { background: var(--dsw-alias-interactive-bg-hover); border-radius: 8px; padding-inline: 8px; margin-inline: -8px; }
+/* A deep link from an incident's self-report resolution marks the draft row it names. */
+.dt-row.dt-highlight { background: var(--dsw-alias-interactive-bg-hover); border-radius: 8px; padding-inline: 8px; margin-inline: -8px; }
 .dt-event-text { margin: 0; font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dt-event-actor { font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .dt-event-quiet .dt-event-text { color: var(--dsw-alias-label-tertiary); }

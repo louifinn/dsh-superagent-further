@@ -1,19 +1,25 @@
 /** Typed panel routes, route parser, and sessionStorage location history. */
-import { THREAD_FILTERS, TICKET_FILTERS, type ThreadFilter, type TicketFilter } from '../app/api.ts'
+import { INCIDENT_SEVERITY_FILTERS, INCIDENT_STATUS_FILTERS, THREAD_FILTERS, TICKET_FILTERS, type IncidentSeverityFilter,
+  type IncidentStatusFilter, type ThreadFilter, type TicketFilter } from '../app/api.ts'
 import type { SetupPlace } from '../setup.ts'
 import { DECISION_FILTERS, type DecisionFilter } from './api.ts'
 import type { T } from './text.ts'
 
-export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'memory', 'tasks', 'logs', 'settings'] as const
+export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'memory', 'tasks', 'incidents', 'updates', 'logs', 'settings'] as const
 export type Tab = typeof TABS[number]
 export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'language', 'prompts', 'deployment'] as const
 export type SettingsGroup = typeof SETTINGS_GROUPS[number]
-export type Route = { page: 'overview' | 'source' | 'memory' | 'tasks' | 'logs'; id?: undefined; query?: undefined }
+export type Route = { page: 'overview'; id?: undefined; query?: { report?: string } }
+  | { page: 'source' | 'memory' | 'tasks'; id?: undefined; query?: undefined }
+  | { page: 'logs'; id?: undefined; query?: { q?: string } }
   | { page: 'trigger'; id?: undefined; query?: { filter?: ThreadFilter } }
   | { page: 'trigger'; id: string; query?: { trigger?: string } }
   | { page: 'eval'; id?: undefined; query?: { filter?: DecisionFilter; window?: '24h' } }
   | { page: 'execution'; id?: undefined; query?: { filter?: TicketFilter } }
   | { page: 'execution'; id: string; query?: undefined }
+  | { page: 'incidents'; id?: undefined; query?: { status?: IncidentStatusFilter; severity?: IncidentSeverityFilter } }
+  | { page: 'incidents'; id: string; query?: undefined }
+  | { page: 'updates'; id?: undefined; query?: undefined }
   | { page: 'settings'; id?: undefined; query: { group: SettingsGroup; source?: string; version?: string } }
 export const HOME: Route = { page: 'overview' }
 export const settingsRoute = (group: SettingsGroup, query: { source?: string; version?: string } = {}): Route =>
@@ -21,7 +27,8 @@ export const settingsRoute = (group: SettingsGroup, query: { source?: string; ve
 export const setupPage = (place: SetupPlace): Route =>
   place === 'deployment' ? settingsRoute('deployment') : settingsRoute('source', { source: place })
 export const routeLabel = (t: T, route: Route): string =>
-  route.id ? t(route.page === 'trigger' ? 'term.thread' : 'term.ticket') : t(`tab.${route.page}`)
+  route.id ? t(route.page === 'trigger' ? 'term.thread' : route.page === 'incidents' ? 'incidentDetailTitle' : 'term.ticket')
+    : t(`tab.${route.page}`)
 
 const pick = <V extends string>(values: readonly V[], value: unknown): V | undefined => values.find(item => item === value)
 function compact<Q extends object>(query: Q): Q | undefined {
@@ -34,12 +41,19 @@ export function parseRoute(value: unknown): Route | undefined {
   const text = (name: string) => typeof query?.[name] === 'string' ? query[name] as string : undefined
   const record = typeof id === 'string' && id ? id : undefined
   switch (page) {
-    case 'overview': case 'source': case 'memory': case 'tasks': case 'logs': return { page }
+    // A self-report resolution deep-links to its draft on Overview (ADR-0005): `report` names the row to highlight.
+    case 'overview': return { page, query: compact({ report: text('report') }) }
+    case 'source': case 'memory': case 'tasks': case 'updates': return { page }
+    // A Logs deep link carries the keyword to prefill: ticket=<id>, assignment=<id>, request=<id>, or free text.
+    case 'logs': { const q = text('q'); return q ? { page, query: { q } } : { page } }
     case 'trigger': return record ? { page, id: record, query: compact({ trigger: text('trigger') }) }
       : { page, query: compact({ filter: pick(THREAD_FILTERS, query?.filter) }) }
     case 'eval': return { page, query: compact({ filter: pick(DECISION_FILTERS, query?.filter),
       window: query?.window === '24h' ? '24h' as const : undefined }) }
     case 'execution': return record ? { page, id: record } : { page, query: compact({ filter: pick(TICKET_FILTERS, query?.filter) }) }
+    case 'incidents': return record ? { page, id: record }
+      : { page, query: compact({ status: pick(INCIDENT_STATUS_FILTERS, query?.status),
+        severity: pick(INCIDENT_SEVERITY_FILTERS, query?.severity) }) }
     case 'settings': return { page, query: { group: pick(SETTINGS_GROUPS, query?.group) ?? 'source',
       ...compact({ source: text('source'), version: text('version') }) } }
     default: return undefined

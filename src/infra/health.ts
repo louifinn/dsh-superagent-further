@@ -8,13 +8,18 @@ export interface HealthEntry {
   release(): void
 }
 
+/** Called after a claim's state changed; a same-state `detail` update does not call it. */
+export type HealthTransition = (name: string, previous: Health | undefined, next: Health) => void
+
 /**
  * Central registry of component health entries, enforcing single-writer ownership per entry name.
  * Claimed by Runtime, Effects, Sessions, DshExecutor, Settings, and SourceRegistry, and read by management HTTP routes.
+ * An optional transition listener sees only real state changes, so callers can log recovery without detail churn.
  */
 export class HealthBoard {
   private readonly entries: Record<string, Health> = {}
   private readonly claimed = new Set<string>()
+  constructor(private readonly onChange?: HealthTransition) {}
   claim(name: string, initial?: Health): HealthEntry {
     if (this.claimed.has(name)) throw new Error(`The health entry ${name} is reported by another part`)
     this.claimed.add(name)
@@ -22,7 +27,12 @@ export class HealthBoard {
     let held = true
     return {
       get: () => this.entries[name],
-      set: health => { if (held) this.entries[name] = health },
+      set: health => {
+        if (!held) return
+        const previous = this.entries[name]
+        this.entries[name] = health
+        if (previous?.state !== health.state) this.onChange?.(name, previous, health)
+      },
       release: () => {
         if (!held) return
         held = false

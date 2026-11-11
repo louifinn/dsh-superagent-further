@@ -9,10 +9,12 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
-  migrateTo19, migrateTo20, migrateTo21, migrateTo22, tooOld } from './migration.ts'
+  migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, tooOld } from './migration.ts'
+import { IncidentRecords } from './incidents.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { ProjectRequests } from './project-requests.ts'
+import { SelfReportRecords } from './self-reports.ts'
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
 
@@ -81,6 +83,10 @@ export class Store implements Repositories {
   readonly leads: LeadMessages
   /** Root and derived project-level requests a project Lead disposes (docs/012 D1, schema 21). */
   readonly projectRequests: ProjectRequests
+  /** Drafts, filed Issues and dismissed findings of the self-evolution Issue outlet (docs/014 D3, schema 24). */
+  readonly selfReports: SelfReportRecords
+  /** Deterministic incidents and their occurrences (ADR-0004, schema 25). */
+  readonly incidents: IncidentRecords
   /** Facts, decisions, preferences and lessons that outlive a Session and are recalled by tools and the prompt. */
   readonly memories: Memories
   /** Tier-B settings proposals awaiting the operator's approval and the decisions already taken (docs/011 A5.2). */
@@ -90,13 +96,15 @@ export class Store implements Repositories {
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (22), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (25), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     this.leads = new LeadMessages(this.db)
     this.projectRequests = new ProjectRequests(this.db)
+    this.selfReports = new SelfReportRecords(this.db)
+    this.incidents = new IncidentRecords(this.db)
     this.memories = new Memories(this.db, () => this.settings().memory)
     this.proposals = new Proposals(this.db)
     this.automations = new AutomationRecords(this.db)
@@ -153,10 +161,19 @@ export class Store implements Repositories {
             CREATE TABLE IF NOT EXISTS project_request (id TEXT PRIMARY KEY, project TEXT NOT NULL, status TEXT NOT NULL,
               updated TEXT NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS project_request_project ON project_request(project, status);
+            CREATE TABLE IF NOT EXISTS self_report (id TEXT PRIMARY KEY, status TEXT NOT NULL, updated TEXT NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS self_report_status ON self_report(status, updated);
+            CREATE TABLE IF NOT EXISTS incident (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, rule TEXT NOT NULL,
+              project TEXT NOT NULL DEFAULT '', ticket TEXT NOT NULL DEFAULT '', request TEXT NOT NULL DEFAULT '',
+              session TEXT NOT NULL DEFAULT '', severity TEXT NOT NULL, status TEXT NOT NULL, first_at TEXT NOT NULL,
+              last_at TEXT NOT NULL, occurrences INTEGER NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
+              evidence_dir TEXT NOT NULL DEFAULT '', diagnosis TEXT, resolution TEXT, updated_at TEXT NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS incident_status ON incident(status, last_at);
+            CREATE INDEX IF NOT EXISTS incident_severity ON incident(severity, last_at);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this); if (version! < 23) migrateTo23(this); if (version! < 24) migrateTo24(this); if (version! < 25) migrateTo25(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {

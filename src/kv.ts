@@ -35,6 +35,8 @@ export const KV = {
   lead: { sessions: family<string, [project: string]>('lead-session:') },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },
+  /** Incidents: the diagnosis runs spent on one UTC day (`YYYY-MM-DD`), so the budget survives a restart (ADR-0005). */
+  incidents: { diagnoses: family<number, [day: string]>('incident-diagnoses:') },
   /** Schema 11 migration: legacy main-Session queues imported into the effect table. */
   queues: { relays: record<{ id: string; text: string }[]>('relay-queue'), unsubscribed: record<string[]>('subscription-results'),
     prompts: record<number | null>('prompt-notification'), settings: record<number | null>('settings-notification') },

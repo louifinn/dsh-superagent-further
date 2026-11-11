@@ -3,10 +3,14 @@ import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { AutomationLimitError, AutomationRunRefusedError, UnknownAutomationError, UnknownProjectError } from '../src/app/automations.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
+import { SelfReports } from '../src/app/self-reports.ts'
 import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
+import { Logs } from '../src/app/logs.ts'
 import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
+import { SELF_REPOSITORY, type SelfReport, type SelfReportRepository, type SelfReportStatus } from '../src/core/index.ts'
 import { SetupError } from '../src/setup.ts'
+import type { UpdateSnapshot } from '../src/supervisor/update-state.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
@@ -14,7 +18,7 @@ type Headers = Record<string, string | undefined>
 function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.0.1') {
   let handler: Handler = async () => {}
   const ctx = { webServer: { host, port: 3082, register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
-  registerHttp(ctx as never, { ready: Promise.resolve(), ...runtime } as unknown as HttpHost)
+  registerHttp(ctx as never, { ready: Promise.resolve(), logs: new Logs(), ...runtime } as unknown as HttpHost)
   return async (method: string, path: string, body?: unknown, headers: Headers = {}) => {
     let status = 0, text = ''
     const chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
@@ -249,11 +253,12 @@ it('answers 404 for a memory that is not stored', async () => {
     .toEqual({ status: 404, body: { error: 'Memory not found' } })
 })
 
-it('opens the setup wizard on a first run and records the answer in the key-value store', async () => {
+it('opens the setup wizard, refuses to skip it before a workspace is selected, and records the answer after one is', async () => {
   let saved: { at: string; skipped: boolean } | undefined
+  const workspace = { path: '/srv/agent-home' }
   const base = {
     store: {
-      settings: () => SettingsSchema.parse({}),
+      settings: () => SettingsSchema.parse({ workspace }),
       tickets: { open: () => [] },
       get: () => saved,
       set: (_key: string, value: { at: string; skipped: boolean }) => { saved = value },
@@ -267,6 +272,13 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
   }
   const call = serve(base)
   expect(await call('GET', 'state')).toMatchObject({ status: 200, body: { wizard: { firstRun: true, skipped: false } } })
+  // Without a workspace, the wizard cannot record an answer: the host is paused in setupPending, and the next reload must
+  // still present the workspace step as unanswered.
+  const unset = serve({ ...base, store: { ...base.store, settings: () => SettingsSchema.parse({}) } })
+  expect(await unset('PUT', 'wizard', { skipped: true })).toMatchObject({ status: 400,
+    body: { setup: { place: 'execution', code: 'workspaceRequired' } } })
+  expect(saved).toBeUndefined()
+  // With a workspace selected, the skip is recorded and closes the wizard once no project is registered.
   expect(await call('PUT', 'wizard', { skipped: true })).toEqual({ status: 200, body: { firstRun: false, skipped: true } })
   expect(saved?.skipped).toBe(true)
   expect(Number.isNaN(Date.parse(saved!.at))).toBe(false)
@@ -274,7 +286,7 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
   expect(await call('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: true } } })
   // Registering a project also ends the first run before any answer is recorded.
   const registered = serve({ ...base, store: { ...base.store, get: () => undefined,
-    settings: () => SettingsSchema.parse({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/srv/app',
+    settings: () => SettingsSchema.parse({ workspace, executor: { projects: [{ id: 'app', name: 'App', workspace: '/srv/app',
       repository: 'acme/app' }] } }) } })
   expect(await registered('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: false } } })
   // The answer must be a boolean; a malformed body is refused before it reaches the store.
@@ -379,14 +391,257 @@ it('serves the Host log page with level and scope filtering', async () => {
   const asked: unknown[] = []
   const logs = { list: (query: unknown) => { asked.push(query); return entries } }
   const call = serve({ logs })
-  expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '' } })
-  expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 120 })
-  expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5'))
-    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu' } })
-  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5 })
+  expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '', q: '' } })
+  expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 200, q: '' })
+  expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5&q=FAILED'))
+    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu', q: 'FAILED' } })
+  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5, q: 'FAILED' })
   // An unknown level falls back to all instead of failing the page.
   expect((await call('GET', 'logs?level=nonsense')).body).toMatchObject({ level: 'all' })
   // Only the panel's same-origin header reaches the route.
   expect(await call('GET', 'logs', undefined, { 'x-orchestrator-request': undefined }))
     .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+})
+
+it('filters the Host log API by keyword across message, scope and data, case-insensitively', async () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 20)
+  logs.record('info', 'assignment', 'assignment.launched ticket=t1')
+  logs.record('warn', 'feishu', 'poll failed: timeout')
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 'ticket-42', kind: 'Policy' })
+  const call = serve({ logs })
+
+  const entries = async (path: string) => (await call('GET', path)).body.entries as { message: string }[]
+  expect((await entries('logs?q=LAUNCHED')).map(entry => entry.message)).toEqual(['assignment.launched ticket=t1'])
+  expect((await entries('logs?q=feishu')).map(entry => entry.message)).toEqual(['poll failed: timeout'])
+  expect((await entries('logs?q=POLICY')).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect((await entries('logs?q=ticket-42')).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(await entries('logs')).toHaveLength(3)
+  expect(await entries('logs?q=missing')).toHaveLength(0)
+})
+
+it('audits human-triggered domain actions with metadata only, never values or message text', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const call = serve({
+    logs,
+    store: {
+      settings: () => SettingsSchema.parse({ executor: { projects: [{ id: 'default', name: 'Default', workspace: '/w', repository: 'acme/app' }] } }),
+      tickets: { get: (id: string) => id === 't1' ? { id: 't1', title: 'Fix login' } : undefined },
+    },
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: {
+      save: async () => ({ saved: true, revision: 7, restarting: false }),
+      restore: async (...args: unknown[]) => ({ saved: true, revision: 8, policy_changed: false, restarting: false,
+        context_delivery: 'injected', restoredFrom: args[1] }),
+    },
+    engine: { retryTicket: () => {}, stopTicket: () => {} },
+    decideEscalation: async () => ({ id: 'pr-1', project: 'default', status: 'rejected',
+      replies: [{ by: 'orchestrator', at: '2026-11-11T00:00:00.000Z', text: 'SECRET reply' }], tickets: [], reply_delivered: true }),
+    automations: {
+      create: async () => ({ id: 'auto-1' }), edit: async () => ({ id: 'auto-1' }),
+      run: async () => ({ id: 'auto-1' }), remove: async () => ({ id: 'auto-1', deleted: true }),
+    },
+  })
+  const settingsValue = { blockedCommands: ['gh-personal'], secretToken: 'SECRET setting value' }
+  expect((await call('PUT', 'settings/executor', { value: settingsValue, revision: 0 })).status).toBe(200)
+  expect((await call('POST', 'settings/eval/restore', { revision: 3, reason: 'SECRET reason' })).status).toBe(200)
+  expect((await call('POST', 'tickets/t1/retry')).status).toBe(200)
+  expect((await call('POST', 'tickets/t1/stop')).status).toBe(200)
+  expect((await call('POST', 'escalations/pr-1/decide', { decision: 'reject', reply: 'SECRET reply' })).status).toBe(200)
+  const automation = { title: 'SECRET automation title', instruction: 'SECRET instruction',
+    rrule: 'DTSTART:20261111T090000Z\nRRULE:FREQ=DAILY', project: 'default' }
+  expect((await call('POST', 'automations', automation)).status).toBe(200)
+  expect((await call('PUT', 'automations/auto-1', { title: 'SECRET changed' })).status).toBe(200)
+  expect((await call('POST', 'automations/auto-1/run')).status).toBe(200)
+  expect((await call('DELETE', 'automations/auto-1')).status).toBe(200)
+
+  const { body } = await call('GET', 'logs?scope=audit')
+  const audit = body.entries as { at: string; level: string; scope: string; message: string; data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message.split(' ')[0])).toEqual(['settings.save', 'settings.restore', 'ticket.retry',
+    'ticket.stop', 'escalation.decide', 'automation.create', 'automation.edit', 'automation.run', 'automation.delete'])
+  for (const entry of audit) {
+    expect(entry.level).toBe('info')
+    expect(entry.scope).toBe('audit')
+    expect(entry.message).toContain('actor=operator')
+    expect(entry.data?.actor).toBe('operator')
+  }
+  expect(audit[0]!.message).toContain('block=executor')
+  expect(audit[0]!.message).toContain('revision=7')
+  expect(audit[1]!.message).toContain('block=eval')
+  expect(audit[1]!.message).toContain('restoredFrom=3')
+  expect(audit[2]!.message).toContain('ticket=t1')
+  expect(audit[4]!.message).toContain('request=pr-1')
+  // Settings values, the restore reason, the reply text and an automation's instruction never reach the audit log.
+  const text = JSON.stringify(audit)
+  for (const secret of ['SECRET setting value', 'secretToken', 'gh-personal', 'SECRET reason', 'SECRET reply',
+    'SECRET automation title', 'SECRET instruction', 'SECRET changed']) expect(text).not.toContain(secret)
+})
+
+it('does not audit automatic system events or human actions that fail', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 't1' })
+  const call = serve({
+    logs,
+    store: { settings: () => SettingsSchema.parse({}), blockRevision: () => 0 },
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: { save: async () => { throw new SettingsConflict('Settings changed. Reload before saving.') } },
+  })
+  expect((await call('GET', 'logs')).status).toBe(200)
+  expect((await call('PUT', 'settings/executor', { value: {}, revision: 0 })).status).toBe(409)
+  const { body } = await call('GET', 'logs?scope=audit')
+  expect(body.entries).toEqual([])
+})
+
+/** The self-report table the real `SelfReports` service reads, without SQLite. */
+class HttpSelfReportRecords implements SelfReportRepository {
+  readonly rows = new Map<string, SelfReport>()
+  get(id: string): SelfReport | undefined { return this.rows.get(id) }
+  save(report: SelfReport): void { this.rows.set(report.id, report) }
+  list(status?: SelfReportStatus): SelfReport[] {
+    return [...this.rows.values()].filter(report => status === undefined || report.status === status)
+  }
+}
+
+/** The two GitHub calls the outlet makes, asserting the fixed target and the create-only Issue write. */
+class HttpSelfReportCommands {
+  readonly writes: { path: string; body?: unknown }[] = []
+  fail: Error | undefined
+  async gh<T>(args: string[]): Promise<T> {
+    if (args[1]?.includes('/issues?state=open') === true) return [] as T
+    if (args[1]?.includes('/labels?per_page=') === true) return [] as T
+    throw new Error(`unexpected gh call: ${args.join(' ')}`)
+  }
+  async apiWrite(repository: string, method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<string> {
+    expect([repository, method, path]).toEqual([SELF_REPOSITORY, 'POST', 'issues'])
+    if (this.fail !== undefined) throw this.fail
+    this.writes.push({ path, body })
+    return JSON.stringify({ number: 70 + this.writes.length })
+  }
+}
+
+/** A real outlet service in observe mode over in-memory records and the fake GitHub calls. */
+function httpOutlet() {
+  const records = new HttpSelfReportRecords()
+  const commands = new HttpSelfReportCommands()
+  const service = new SelfReports({
+    store: { selfReports: records, settings: () => SettingsSchema.parse({}) },
+    commands, projects: () => [], now: () => '2026-11-10T12:00:00.000Z', version: () => '0.3.0',
+  })
+  return { service, records, commands }
+}
+
+const draftFinding = (title: string) => ({ title, evidence: 'The watcher exits with ENOENT in state/watcher.json.',
+  reproduction: 'Run the watcher, then stop polling.', session: 'master' })
+
+async function draft(service: SelfReports, title: string): Promise<SelfReport> {
+  const raised = await service.raise(draftFinding(title))
+  if (raised.status !== 'draft') throw new Error(`expected a draft, got ${raised.status}`)
+  return raised.report
+}
+
+it('files an approved self report over HTTP and audits both review actions with identifiers only', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const h = httpOutlet()
+  const call = serve({ logs, selfReports: h.service })
+  const first = await draft(h.service, 'Watcher crashes after a failed poll')
+  expect(await call('POST', `self-reports/${first.id}/approve`)).toEqual({ status: 200,
+    body: { status: 'filed', report_id: first.id, issue_number: 71 } })
+  expect(h.commands.writes).toHaveLength(1)
+  expect(h.commands.writes[0]!.body).toMatchObject({ title: 'Watcher crashes after a failed poll',
+    body: expect.stringContaining('automated agent') })
+
+  const second = await draft(h.service, 'Label refresh misses a closed pull request')
+  expect(await call('POST', `self-reports/${second.id}/dismiss`)).toEqual({ status: 200,
+    body: { status: 'dismissed', id: second.id } })
+
+  const audit = (await call('GET', 'logs?scope=audit')).body.entries as { level: string; scope: string; message: string;
+    data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message)).toEqual([
+    `self-report.approve report=${first.id} issue=71 status=filed actor=operator`,
+    `self-report.dismiss report=${second.id} actor=operator`,
+  ])
+  for (const entry of audit) {
+    expect(entry.level).toBe('info')
+    expect(entry.scope).toBe('audit')
+    expect(entry.data).toMatchObject({ actor: 'operator' })
+  }
+  expect(audit[0]!.data).toMatchObject({ action: 'self-report.approve', report: first.id, issue: 71, status: 'filed' })
+  expect(audit[1]!.data).toMatchObject({ action: 'self-report.dismiss', report: second.id })
+  // The finding's evidence never reaches the audit log, only its identifiers do.
+  expect(JSON.stringify(audit)).not.toContain('ENOENT')
+})
+
+it('answers a failed, unfiled or unknown self-report action with its status and audits nothing', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const h = httpOutlet()
+  const call = serve({ logs, selfReports: h.service })
+  expect(await call('POST', 'self-reports/srep-unknown/approve')).toMatchObject({ status: 404,
+    body: { code: 'selfReportUnknown' } })
+  expect(await call('POST', 'self-reports/srep-unknown/dismiss')).toMatchObject({ status: 404,
+    body: { code: 'selfReportUnknown' } })
+
+  const pending = await draft(h.service, 'Watcher crashes after a failed poll')
+  h.commands.fail = new Error('api unavailable')
+  expect(await call('POST', `self-reports/${pending.id}/approve`)).toMatchObject({ status: 400,
+    body: { code: 'selfReportFileFailed', values: { error: 'api unavailable' } } })
+  expect(h.service.drafts().map(report => report.id)).toEqual([pending.id])
+  expect((await call('GET', 'logs?scope=audit')).body.entries).toEqual([])
+
+  // A service answer that leaves the report unfiled is a conflict, not a filed Issue, and records nothing either.
+  const unfiled = serve({ logs, selfReports: { approve: async () => ({ status: 'draft', report: pending, reason: 'observe' }) } })
+  expect(await unfiled('POST', `self-reports/${pending.id}/approve`)).toEqual({ status: 409,
+    body: { error: 'Self report could not be filed' } })
+  expect((await unfiled('GET', 'logs?scope=audit')).body.entries).toEqual([])
+})
+
+
+it('serves the update pipeline read-only and queues one confirmed rollback, refusing pending work with 409', async () => {
+  let snapshot: UpdateSnapshot = {
+    api: 1 as const, stateDir: '/srv/dsh-superagent-further',
+    current: { version: '0.4.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'a'.repeat(64), schema: 25 },
+    previous: { version: '0.3.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'b'.repeat(64), schema: 25 },
+    journal: null, pending: null, busy: false,
+    rollback: { eligible: true, version: '0.3.0', reason: '' },
+    deploy: { command: 'node deploy', status: 'node deploy status', apply: 'node deploy apply --version <version>',
+      rollback: 'node deploy rollback', watch: 'node deploy watch' },
+    history: [], databaseSchema: 25,
+  }
+  const rollbacks: string[] = []
+  const call = serve({ updates: {
+    status: () => snapshot,
+    attention: () => ({ pending: false, failed: false, version: null, phase: null, reason: null }),
+    rollback: () => {
+      if (snapshot.busy) return { ok: false, reason: 'An update is already in progress; wait for it to finish before rolling back.' }
+      if (snapshot.pending !== null) return { ok: false, reason: 'An update request is already pending; wait for it to be claimed before rolling back.' }
+      if (!snapshot.rollback.eligible) return { ok: false, reason: snapshot.rollback.reason || 'There is no previous runtime to roll back to.' }
+      const request = { api: 1 as const, id: 'rb-1', action: 'rollback' as const, at: '2026-11-11T00:00:00.000Z', by: 'operator' as const }
+      rollbacks.push(request.id)
+      snapshot = { ...snapshot, pending: request, rollback: { eligible: false, version: '0.3.0', reason: 'An update request is pending' } }
+      return { ok: true as const, request, status: snapshot }
+    },
+  } })
+  expect((await call('GET', 'updates')).body).toMatchObject({ api: 1, current: { version: '0.4.0' }, previous: { version: '0.3.0' },
+    rollback: { eligible: true } })
+  // The confirmation token is literal: a missing, false or different token never queues anything.
+  expect(await call('POST', 'updates/rollback', {})).toMatchObject({ status: 400 })
+  expect(await call('POST', 'updates/rollback', { confirm: true })).toMatchObject({ status: 400 })
+  expect(await call('POST', 'updates/rollback', { confirm: 'rollback' })).toMatchObject({ status: 400 })
+  expect(rollbacks).toEqual([])
+  const queued = await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })
+  expect(queued).toMatchObject({ status: 200, body: { requested: true, request: { action: 'rollback', by: 'operator' },
+    status: { pending: { action: 'rollback' } } } })
+  expect(rollbacks).toEqual(['rb-1'])
+  // A second request while one is pending is a conflict; the route writes nothing.
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409 })
+  expect(rollbacks).toEqual(['rb-1'])
+  // Busy and ineligible states are conflicts with the engine's own reason, never a queued request.
+  snapshot = { ...snapshot, pending: null, busy: true, rollback: { eligible: true, version: '0.3.0', reason: '' } }
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409,
+    body: { error: 'An update is already in progress; wait for it to finish before rolling back.' } })
+  snapshot = { ...snapshot, busy: false, rollback: { eligible: false, version: null, reason: 'No previous runtime is recorded' } }
+  expect(await call('POST', 'updates/rollback', { confirm: 'ROLLBACK' })).toMatchObject({ status: 409,
+    body: { error: 'No previous runtime is recorded' } })
+  // The rollback action is in the operator audit trail, naming the request only.
+  const audit = (await call('GET', 'logs?scope=audit')).body.entries as { message: string; data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message)).toEqual(['updates.rollback request=rb-1 actor=operator'])
+  expect(audit[0]!.data).toMatchObject({ action: 'updates.rollback', request: 'rb-1' })
 })

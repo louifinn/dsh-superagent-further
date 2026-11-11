@@ -6,7 +6,7 @@ import { LIMITS } from './limits.ts'
 import { z } from 'zod'
 import { ADMISSION_DEFAULTS, type Admission, type AdmissionCell, type AdmissionRow } from './admission.ts'
 import { key, type AssessmentOutcome, type Mandate, type Policy, type PolicyEffect, type SourceScope, type Strength, type Thread, type Ticket,
-  type Trigger, type ActorRef, type GateResult } from './core/index.ts'
+  type Trigger, type ActorRef, type GateResult, INCIDENT_DAILY_BUDGET_MAX, INCIDENT_SEVERITIES } from './core/index.ts'
 import { sameName } from './infra/text.ts'
 import { WORKER_COMMANDS } from './infra/environment.ts'
 import { isAbsolutePath } from './infra/paths.ts'
@@ -175,11 +175,29 @@ export const PolicyConfigSchema = z.object({
 }).strict()
 export const EvalConfigSchema = z.object({
   mode: z.enum(['off', 'observe', 'auto']).default('observe'),
+  /**
+   * The self-evolution Issue outlet's gate (docs/014 D3, schema 24), beside the accept mode: `off` records no finding,
+   * `observe` keeps a draft for a person to approve, and `auto` files within the deduplication and daily limits.
+   */
+  selfReport: z.enum(['off', 'observe', 'auto']).default('observe'),
   timeoutSeconds: z.number().int().min(LIMITS.evalTimeoutSeconds.min).max(LIMITS.evalTimeoutSeconds.max).default(120),
   model: RoleModelSchema.nullable().default(null),
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
+/**
+ * Deterministic incident detection (ADR-0004) and its read-only diagnosis (ADR-0005): `enabled` is the gate for the
+ * detectors, `autoDiagnose` lets a new high or critical record start one diagnosis, `dailyBudget` caps new records a day,
+ * `diagnoseDailyBudget` caps diagnosis runs a day, and `minimumSeverity` keeps quiet conditions out of the record.
+ */
+export const IncidentsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  autoDiagnose: z.boolean().default(true),
+  dailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
+  diagnoseDailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
+  minimumSeverity: z.enum(INCIDENT_SEVERITIES).default('high'),
+}).strict()
+export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>
 /** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, blocked commands, and the registered projects. */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
@@ -193,6 +211,12 @@ export const ExecutorConfigSchema = z.object({
   projects: ProjectsSchema.default([]),
   /// How long a finished Ticket's worktree and branch stay for inspection; 0 keeps them.
   worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
+  /// Operational log verbosity: debug also records per-poll and per-turn detail, never message or tool content.
+  logLevel: z.enum(['info', 'debug']).default('info'),
+  /// How many daily JSONL log files the host keeps before pruning the oldest.
+  logRetentionDays: z.number().int().min(1).max(30).default(7),
+  /// Deterministic incident detection (ADR-0004); no model call and no automatic fix.
+  incidents: IncidentsConfigSchema.default(() => IncidentsConfigSchema.parse({})),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 /**
@@ -219,6 +243,15 @@ export const MemoryConfigSchema = z.object({
 export const LanguageConfigSchema = z.object({
   default: z.string().trim().min(1).max(LIMITS.languageName).default('简体中文'),
 }).strict()
+/**
+ * The mandatory Orchestrator workspace: the operator-chosen empty directory the main Session runs in (docs/adr/0003).
+ * The path is persisted canonical and owner-only; a non-empty value is validated by `Setup.verifyWorkspace` against the
+ * deployment's state directory, the DSH home and profile, the source checkout, and every project checkout before it is saved.
+ */
+export const WorkspaceConfigSchema = z.object({
+  path: z.string().trim().default(''),
+}).strict()
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
   sources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).default({}),
@@ -227,11 +260,12 @@ export const SettingsSchema = z.object({
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
   memory: MemoryConfigSchema.default(() => MemoryConfigSchema.parse({})),
   language: LanguageConfigSchema.default(() => LanguageConfigSchema.parse({})),
+  workspace: WorkspaceConfigSchema.default(() => WorkspaceConfigSchema.parse({})),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
 export type MemoryConfig = Settings['memory']
 export type LanguageConfig = Settings['language']
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | `source:${string}`
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'workspace' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 /**
@@ -252,6 +286,7 @@ const SOURCE_TIER_B = new Set(['chats', 'directMessages', 'otherChats', 'digestC
 export function fieldTier(block: SettingsSave, path: string): FieldTier {
   if (block === 'pause') return 'A'
   if (block === 'policy') return 'B'
+  if (block === 'workspace') return 'A'
   if (block.startsWith('source:')) {
     const prefix = `sources.${block.slice('source:'.length)}.`
     const rest = path.startsWith(prefix) ? path.slice(prefix.length) : path
@@ -266,8 +301,11 @@ export function fieldTier(block: SettingsSave, path: string): FieldTier {
   if (block === 'eval') return path === 'eval.timeoutSeconds' ? 'A' : 'B'
   if (block === 'executor') {
     if (path === 'executor.worktreeKeepDays') return 'A'
+    if (path === 'executor.logLevel' || path === 'executor.logRetentionDays') return 'C'
     if (path === 'executor.directory' || path === 'executor.prepare' || path.startsWith('executor.blockedCommands')
       || path.startsWith('executor.projects')) return 'C'
+    // Incident detection and its budget are operator-only: the detectors decide what the panel records (ADR-0004).
+    if (path === 'executor.incidents' || path.startsWith('executor.incidents.')) return 'C'
     return 'B'
   }
   // Memory and language are operator preferences. Anything else is a block with no assigned tier, so panel-only.
@@ -386,9 +424,10 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
       const rulesOn = (rules: string[] | undefined) => (rules ?? []).every(id => settings.policy.rules.some(rule => rule.enabled && rule.id === id))
       // Explicit follow-ups remain valid; inferred follow-ups require auto mode and enabled matched rules.
       if (basis.via === 'followup') return mandate.strength === 'explicit' || (mode === 'auto' && rulesOn(basis.rules))
-      // Internal accepts — a project Lead's decision, or the main Session acting on an installation automation delivery —
-      // came from no Source message, so no Source check or observation mode applies (docs/012 D2, D12).
-      if (basis.via === 'lead' || basis.via === 'installation' || basis.via === 'escalation') return true
+      // Internal accepts — a project Lead's decision, the main Session acting on an installation automation delivery, or
+      // the main Session acting on its own discovery of a problem in superagent itself — came from no Source message, so
+      // no Source check or observation mode applies (docs/012 D2, D12; docs/014 D2, schema 24).
+      if (basis.via === 'lead' || basis.via === 'installation' || basis.via === 'discovery' || basis.via === 'escalation') return true
       // A bot's candidate holds only while the bot remains on its Source's bot list and passes the observation checks below.
       if (basis.via === 'bot' && !listedBot(settings, mandate.actor)) return false
       // An admission-table Mandate holds while the sender's current cell still grants at least the original strength.

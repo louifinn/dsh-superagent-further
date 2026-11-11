@@ -8,6 +8,200 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The context-surface design document `docs/015-context-surfaces.md` (Issue #6, roadmap Sprint 45).
+  It records the structural fix for the three context-management defects that share one root cause —
+  a role's model-facing surface is modeled four times (prompt assembly, resource visibility, surface
+  inventory, budget) in incompatible shapes that nothing forces to agree: one declarative
+  `Record<RoleId, Surface>` contract (`sections`, `tools`, `reads`, `runtimes`, `projection`,
+  `budget`), projection as one pure function behind four property-tested invariants (completeness,
+  readable closure, boundedness, determinism), budgets as generated artefacts behind the `docs:check`
+  drift gate with structured reasons, one paged read path whose visibility lattice
+  (`reviewer ⊑ worker ⊑ lead ⊑ orchestrator`, scopes `ticket ⊑ project ⊑ installation`) replaces the
+  two-level `executor` flag, and the six-step behaviour-preserving migration whose golden snapshots
+  at zero diff are the rollback guarantee. Design only; implementation follows as the Sprint 45
+  ordinary tickets.
+
+- Staged runtime updates with a supervisor-owned swap and safe rollback (ADR-0007, schema 25 unchanged, RuntimeHost API 1
+  unchanged). `scripts/stage-runtime.mjs` validates a built `lib/runtime-entry.js` + `lib/runtime-manifest.json` (shape,
+  version, host API, integer schema, entry name, SHA-256) and copies them into `<stateDir>/runtime/<version>/` through a
+  temporary directory and one rename, adding `builtAt` and `node`; `scripts/deploy-runtime.mjs` wraps it as
+  `stage|apply|status|watch|rollback` behind `pnpm deploy`, requires `--state-dir`, creates one
+  `{api:1,id,action:'apply'|'rollback',version?,at,by:'operator'}` request under `<stateDir>/updates/` exclusively
+  (`wx` + fsync, so a racing writer is refused instead of replacing the waiting id), and refuses a
+  downgrade, a missing or unverified version, a second request or an already-running version. `src/supervisor/update.ts`
+  polls with an unref'd 2 s timer, validates and claims the request by rename to `request.processing.json`, single-flights
+  one update, and journals `prepare → stage → backup → drain → swap → load → init → commit`: `VACUUM INTO
+  runtime/backups/<version>-<timestamp>.sqlite` while the old runtime serves, the old runtime drains with reason
+  `update` while the supervisor keeps the state lock, `previous.json` and `current.json` are written atomically, and the
+  new runtime loads with the same hash/host-API/schema checks, a bounded readiness and the supervisor's self-check. A
+  failure after the backup or swap disposes the candidate with a bound, restores the database backup, restores both
+  pointers byte-for-byte, reloads the previous (else packaged) runtime, journals `fail('rollback')`, appends the failed
+  history and logs `update.failed phase=… reason=…`; the schema never moves down and no exception escapes into the DSH
+  fiber. A crash leaves the running journal and claim; the next start reconciles `current.json`/`previous.json` to the
+  journal's recorded baseline before resolving any version (so a candidate that was written but never loaded, checked or
+  committed cannot be adopted by the next boot), clears the claim, appends an `interrupted` history entry and never
+  re-runs the swap. `src/supervisor/update-state.ts` owns the request/claim files, the
+  append-only bounded `runtime/history.jsonl`, descriptor and pointer writers, the database backup/restore and
+  `updateSnapshot`; `Supervisor.updateStatus()`/`history()` expose the current and previous descriptors, journal, pending
+  request, rollback eligibility, deploy hints and recent history. The runtime adds read-only same-origin `GET updates` and
+  `POST updates/rollback` (literal `confirm:'ROLLBACK'`, audited, one exclusively created request, 409 while a request is
+  pending or an
+  update runs; no upload, download or code-body route), the Updates tab with the confirm-token rollback and history, the
+  Overview's pending/failed update link, both locales, and the live `update-failures` incident rule (one record per
+  phase, recovered by a later success line, `update.applied` or a healed `update.rolledback`). `scripts/drill.mjs`
+  (`pnpm drill`) runs 16 fault-injection scenarios against a throwaway state directory (stage+apply, rollback round-trip, a
+  simulated crash at each of the eight journaled apply phases — prepare, stage, backup, drain, swap, load, init and commit
+  — each followed by a second boot that must serve the reconciled pointer, a corrupt staged entry, a pending-request
+  storm, a schema downgrade, a failed-init rollback and a schema-bumping crash that must restore the pre-swap database) and
+  writes `.artifacts/drills/<timestamp>.json`; ADR-0007, docs/003, 005, 006, 007, 009, 011 and 013, README, README.zh-CN
+  and the pack/docs gates are updated. Live HMR stays development-only.
+- A stable supervisor and a versioned domain runtime (ADR-0006, schema 25 unchanged). `src/index.ts` now starts
+  `Supervisor`, which owns the state-directory lock, one process-wide `Logs` ring and `LogFileSink`, the machine
+  configuration, the runtime version pointers and journal, and the drain controller. It exposes readiness through
+  `configured()`/`setupProblem()`/`versionStatus()`; runtime health stays on the runtime's `HealthBoard`. The domain
+  runtime is reached only through the frozen `RuntimeHost` v1 (`src/runtime-host.ts`): the live Cordis context as the
+  DSH service channel, the DSH values the runtime must not import (`Service`, `freezeMessage`, `MessageId`,
+  `ReasoningEffortId`, `scopeParentOf`, schemastery), the machine, restart, logger, lifetime signal, logs, sink, flush
+  and lock release. `src/runtime-entry.ts` exports `createRuntime(host)` and is built as the self-contained
+  `lib/runtime-entry.js` with a `lib/runtime-manifest.json` descriptor; `scripts/check-runtime-bundle.mjs` checks the
+  bundle and is part of `pnpm check`, and the packaged fallback requires that built pair; an unbuilt source checkout
+  logs the discovery failure and still starts a verified deployed version, and only when no candidate starts does the
+  error name `pnpm build`. Startup verifies `<stateDir>/runtime/current.json` (safe entry inside the version directory,
+  SHA-256, host API and a schema that is not older than the database), falls back to the previous verified version and
+  then to the packaged runtime, and records every rejection, recovery and journal phase. Readiness is bounded at 30 s, a
+  failed runtime's dispose at 10 s, a log-sink close at 10 s and the state-directory lock release at 10 s (the last two
+  warn and continue), and a failed `load`/`init` journals that phase. The drain is idempotent and ordered — stop intake,
+  cancel remaining agents with their inboxes kept, wait bounded for in-flight work (10 s), dispose, flush the logs,
+  close the Store, release the lock, return the phase report — and `completed` is true only when every phase is `done`,
+  so an aborted drain is reported as incomplete. Only intake/cancel/in-flight may be skipped by an abort signal; the
+  maintenance phases always run, so an aborted drain still closes the database and frees the directory. A supervisor
+  that never started reports an incomplete drain while still flushing and releasing. A crash between steps recovers from
+  `<stateDir>/runtime/journal.json` without ever downgrading the schema. M35 reads `previous.json` but does not write it;
+  M36's update pipeline does. `pnpm check` builds before it tests, so a clean checkout without `lib/` is green.
+  `tests/supervisor.spec.ts` covers the resolution, packaged manifest, loader, bounded readiness with a hanging dispose,
+  bounded sink close and lock release, one ring kept across a failed candidate, packaged discovery failure, the empty
+  drain, journal, host-freeze and swap paths, and `tests/runtime.spec.ts` covers the bounded in-flight phase, the
+  incomplete abort report and an abort before the store phase that still closes it; both inject a packaged runtime so
+  they pass without a built `lib/`.
+- Read-only diagnosis of operational incidents and routing of the conclusion through the existing self-evolution
+  outlets (ADR-0005, schema 25 unchanged). A new agent preset `dsh-superagent-further-diagnostician` (order 95, not
+  selectable by hand) carries only `agent-instructions`, `time-context` and a `tool-fs` mounted with `write: false`
+  and `edit: false`; no shell, job, search, skill, compaction, delegation, scheduling, goal, plan-mode, plugin-manager,
+  web, todo, question or present tool is installed, and `src/app/diagnosis.ts` also puts the started child Session on
+  the `read-only` permission preset where the host exposes one. After a new incident is bundled, `Diagnosis.consider`
+  gates auto-diagnosis on `autoDiagnose`, a `high`/`critical` severity at or above `minimumSeverity` and an open
+  status; a person may diagnose a `detected` or `bundled` record from the panel, `orchestrator_incident` or
+  `POST incidents/<id>/diagnose`, and that action is audited (a `diagnosed` record can only be routed, dismissed or
+  resolved). Dispatch goes through the host `subagents` service
+  (`spawn`, delivery `caller`, `maxDepth` 1, the main Session parent, the selected Orchestrator workspace as cwd,
+  `diag-<incidentId>-<suffix>`), with the incident JSON, evidence directory and workspace in the prompt and a strict
+  JSON answer contract (`rootCause`, `evidence[]`, `hypotheses[]`, `fixPlan`, `confidence`, `target`). Start and result
+  together are bounded to 10 minutes: a start that overruns aborts the signal and an activation that resolves after the
+  deadline is disposed once, while a result-phase timeout disposes the activation it holds; both log one `diagnosis`
+  warning, set the `incidents` health error and leave the record `bundled`, and detection starts no model call. A
+  completion that finds the record changed (dismissed, resolved, reopened or counted again) is refused as `stale`
+  through a compare-and-swap save that merges only the diagnosis, so a slow writer never resurrects a closed record or
+  erases a repeat count. The new tier-C `executor.incidents.diagnoseDailyBudget`
+  (0–24, default 2) is a durable per-UTC-day attempt counter in the Store's kv area that survives a restart, and runs
+  are single-flight. A parsed diagnosis is stored as JSON in the existing `incident.diagnosis` column and shown on
+  `GET incidents/<id>`; an unparseable answer is kept as a low-confidence diagnosis with target `none` instead of
+  failing the run. Routing runs once per record and requires the current record to still be `diagnosed` with a
+  non-empty parsed diagnosis, then a non-empty `incident.resolution`: a registered project becomes a
+  discovery Request (`engine.raiseDiscoveryRequest`, discovery Mandate, units naming the project) that the Lead turns
+  into Tickets under the normal PR and human-merge flow (`request:<id>`); a `self` finding or an unregistered
+  repository becomes a Request under the registered self project when there is one (`request:<id>`), and otherwise
+  goes through `SelfReports.raise` with its three-state `eval.selfReport` gate, dedupe, cap and jurisdiction refusal
+  (`self-report:<id>` or `self-report:off`) — the Issue outlet refuses jurisdiction while the self repository is
+  registered, so that case must take the Request path; an operational or none conclusion creates no Request and no
+  Issue (`operational`). A route is single-flight per record while it awaits the work item, so an overlapping
+  automatic, panel, HTTP or tool call is refused as `concurrent` (HTTP 409) and creates nothing; settlement is a
+  compare-and-swap on the status and `updated_at` captured at route start, so a dismissal, recovery or repeat that
+  lands during the await is refused as `conflict` (HTTP 409), the newer record and its reason survive, and work
+  already created is named in one `diagnosis.route-conflict` warning but is neither recorded as the resolution nor
+  deleted. Reopening a record keeps the old diagnosis text but clears the resolution, and the status check refuses to
+  route that stale text. A failed automatic route leaves the resolution empty so the operator can retry with
+  `confirm: true`. `POST incidents/<id>/dismiss`
+  requires a reason and records `Dismissed: <reason>`, rendered through the localized dismissal key; the diagnose
+  response and its audit carry the auto-created `resolution` token. The panel's Incidents detail gains Diagnose,
+  Create fix (confirmed) and Dismiss actions with pending and error states and links to the created Request or
+  self-report, a self-report resolution deep-links to the named draft row highlighted on the Overview, Overview keeps
+  its "needs you" row, Execution settings gain the diagnosis budget, and both locales are updated.
+  `orchestrator_incident` (`list|get|diagnose|dismiss|route`) exposes the same services to the main Session with typed
+  refusals and a filtered list total. Covered by
+  `tests/diagnosis.spec.ts` (dispatch, gates, durable budget and restart, single-flight, parse fallback, start-overrun
+  abort and late disposal, stale dismissals and repeat counts, routing including the registered-self-project fallback,
+  route single-flight and settle conflict, dismissal),
+  `tests/diagnosis-runtime.spec.ts` (no model call in detection, event-path scope exclusion, preset delivery and
+  read-only permission, same-origin routes with metadata-only audit including the created resolution, 400/404/409
+  including the `concurrent`/`conflict` route refusals, reopened-record route refusal, filtered list total, manual
+  route retry, the tool),
+  `tests/incidents.spec.ts` (the compare-and-swap store and filtered count), `tests/bundle-patch.spec.ts`
+  (the preset inventory), `tests/panel-incidents.spec.tsx` (the actions, the localized dismissal and the Overview deep
+  link) and the extended HTTP, tool, view, locale and settings specs, with docs 005, 006, 007, 009, 011, 013 and 014
+  and ADR-0005 synchronized and the generated reference pages refreshed.
+- Deterministic operational incidents with durable records, fingerprint dedupe and content-addressed evidence bundles
+  (schema 25, ADR-0004). The Store-owned `incident` table keeps `{ id, fingerprint UNIQUE, rule, scope { project?,
+  ticket?, request?, session? }, severity: 'low' | 'medium' | 'high' | 'critical', status: 'detected' | 'bundled' |
+  'diagnosed' | 'resolved' | 'dismissed', first_at, last_at, occurrences, title, detail, evidence_dir, diagnosis?,
+  resolution?, updated_at }`; schema 24 migrates to 25 on start by creating the empty table, with no backfill.
+  `src/app/incident-detectors.ts` watches what the Runtime already produces — failed or stopped Assignment ends
+  (4 in 10 minutes per project), `agent.error` (3/10), outbox `reply delivery failed` (3/30), consecutive `poll.failed`
+  per Source (3/10, recovered by `poll.recovered`), a health claim entering `error` and the M21 watchdog's stalled
+  Assignment (sharing its existing request) — with zero model calls, no code changes and no automatic fixes;
+  `update-failures` is reserved for the update pipeline. A stable fingerprint over the rule, normalized scope ids and a
+  digit-normalized detail counts repeats instead of duplicating (one-hour cooldown from `last_at`, then reopen), the
+  daily budget (2 per UTC day), the open cap (100) and the minimum severity (`high`) bound the noise, with
+  `health-error` and `stalled-assignment` exempt from the daily budget because they describe a live outage (dedupe,
+  cooldown and the open cap still apply); each first
+  record writes owner-only `config.json`, `health.json`, `related.json`, a 30-minute `log-window.jsonl` and a hashed
+  `manifest.json` under `<workspace>/artifacts/incidents/<id>/` (newest 20 kept, 30 days), leaving the record
+  `detected` and the `incidents` health claim in error when a bundle cannot be written. The tier-C
+  `executor.incidents` setting (`enabled`, `autoDiagnose` reserved for M34, `dailyBudget`, `minimumSeverity`) has
+  controls under Execution settings; the Incidents tab lists and filters records and shows the evidence manifest,
+  Overview adds a "needs you" block while any is open, and `GET incidents` / `GET incidents/<id>` serve the same
+  views. Covered by `tests/incidents.spec.ts`, `tests/incidents-runtime.spec.ts` (a seeded fault yields exactly one
+  incident inside the cooldown, a second after it, a complete bundle, a failed bundle that cannot crash the pass and
+  no model call), the schema 25 migration and properties specs, `tests/panel-incidents.spec.tsx` and the extended
+  panel-overview, panel-panel, panel-settings, http and policy specs, with docs 005, 006, 007, 009, 011, 013 and the
+  ADR synchronized and the generated reference pages refreshed.
+- The self-evolution Issue outlet and the discovery provenance (phase 2 of document 014, schema 24). The store-owned
+  `self_report` table keeps `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status:
+  'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`; schema 23 migrates to 24 on start by
+  creating the empty table, with no backfill. `orchestrator_issue_create` targets the fixed
+  `SELF_REPOSITORY = 'louifinn/dsh-superagent-further'` and refuses when that repository is a registered project,
+  naming the discovery route instead. The Eval settings gain the tier-B `selfReport` gate — `off` records nothing,
+  `observe` (default) keeps a draft, `auto` files through the existing `gh` command path — bounded by deduplication
+  against the target's open Issues and this installation's filed reports of the last 14 days, at most three filed
+  Issues per day, required title/evidence/reproduction, the automated-agent disclosure, no Feishu content
+  (chat, message, user, union and app ids), credentials or private local paths (Unicode drive-letter and UNC
+  paths and the POSIX homes and system roots, while URLs and repository-relative paths stay valid), and only
+  labels the repository already has. Drafts appear in Overview with their target repository, an evidence
+  preview and age, and Approve and file or Dismiss actions recorded in the audit log; approving re-checks the
+  exclusive jurisdiction rule, so a draft raised before the self repository was registered cannot file.
+  `orchestrator_request_create` accepts `via: 'discovery'` (mutually exclusive with `automation`), so an
+  in-jurisdiction finding becomes a Request and a Ticket under the Mandate basis `{ via: 'discovery' }`, which
+  revalidation trusts like the installation basis; the Orchestrator prompt routes self-findings through these two
+  outlets instead of the interim `memory_write` tag. Covered by `tests/self-reports.spec.ts`,
+  `tests/self-reports-app.spec.ts`, `tests/http.spec.ts` (the real approve/dismiss routes and their audit entries),
+  the extended tool, policy, migration, properties, prompt, view, panel and model-surface specs, and the regenerated
+  `docs/reference` pages.
+- The Orchestrator workspace is mandatory and first-class. The main Session now runs in an operator-selected, explicitly
+  titled DeepSeek Harness workspace (`dsh-superagent-further · <directory name>`) instead of the plugin's `stateDir`; the
+  path is a tier-A `workspace` settings block, validated and canonicalized by `src/app/workspace-root.ts` (absolute, empty
+  or carrying `.dsh-superagent-workspace`, owner-only `0700`/ACL, no overlap with the state directory and its `work/`, the
+  DSH home/profile/session store, the checkout or a project workspace; no symlink, UNC or root path). The master Session id
+  is derived from the workspace (`orchestrator-<hash>`), and setup resolves the workspace before projects, accounts and the
+  worker environment. A missing or invalid workspace is `workspaceRequired`, `workspaceInvalid`, `workspaceNotEmpty`,
+  `workspaceNotWritable` or `workspaceUnsafe`, and startup stays `paused`/`setupPending` with no workspace registration, no
+  master Session, no Source polling and no Executor. An upgrade archives the old master Session with `stopActivity`, deletes
+  the legacy `stateDir` DSH workspace registration without deleting a Session, creates the new master Session in the selected
+  workspace and publishes the new id in one `store.atomic` write; retiring the previous master is best-effort, so an archive
+  or delete failure is logged as a warning, leaves the old Session and registration intact and readable, and startup still
+  reaches `ready`. The setup wizard's workspace step is mandatory — skip,
+  close and finish are inert until a workspace is saved, and `PUT wizard` refuses a skip — the Execution settings page shows
+  the titled workspace card, and `GET state`/`GET settings` expose `setup.workspace` and `blocks.workspace`.
+  `docs/adr/0003-workspace-identity.md` records the decision. Covered by `tests/workspace-identity.spec.ts` and the extended
+  runtime, http, policy, model-surface and panel specs.
 - Design document 014 — self-evolution: discovering superagent's own problems in flight and routing them by
   jurisdiction to a self-fix Ticket (repository registered) or a GitHub Issue on the self repository, with a
   gated Issue outlet and a switchable scheduled self-inspection. Approved by the operator on 2026-11-10 with
@@ -24,6 +218,49 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - A failed `orchestrator_send_file` now says why: `Runtime.sendFile` keeps the Source's reason in the thrown error and the
   tool response, records it in a bounded delivery-failure ring, writes a warning to the Host log, and Overview shows the
   recent failures as a problem row naming the file, chat and reason.
+- A Ticket now records why it ended: `ended.cause` is `report` (the worker's own ready or dropped Report), `human` (a
+  person's stop), `merge` (a followed pull request's close) or `eval`, beside `ended.by` (`executor` or `human`) and the
+  outcome. `Executor.stop` receives the matching `ExecutorStopCause` (`TicketEndCause | 'retry'`) instead of inferring
+  teardown authority from report timing, and schema 23 backfills every ended Ticket's cause.
+- `docs/adr/0001-ticket-end-authority.md` records the ticket-end decision: explicit causes, retirement after the reporting
+  turn, immediate external preemption, one notification authority per role, the rejected alternatives and the accepted
+  crash-window risk.
+- The panel's Host log now outlives a restart and carries the plugin's full operational record. `src/app/logs.ts` keeps
+  a 2000-entry ring (200 by default) with level and scope filters, keyword search, structured `data`, credential
+  redaction, minimum-level gating and 60-second folding of repeated entries. `src/app/log-files.ts` appends every entry
+  to durable JSONL files under `<stateDir>/logs`: one file per UTC day, rotation to `.N` at 20 MiB, retention pruning at
+  startup and day rollover, a 50 ms unref batch flush, a bounded queue with a dropped count, owner-only ACLs, an 8 KiB
+  line cap, and one `logs` health claim that reports a write failure once without breaking the caller or recursing.
+  Its `close()` stops accepting entries from its first line, shares one promise across repeated calls and drains the
+  last batch with asynchronous appends, so shutdown bounds a real wait instead of a synchronous disk stall.
+  Sessions, Setup, Automations and the Outbox keep writing their scoped warnings, and the Runtime records the lifecycle,
+  outbox delivery, health-transition, `policy.changed` and `decision.recorded` entries. The Executor and Sources add
+  metadata-only scopes: launch/retire/preempt, turn start/end, background-job settlement, report state/outcome and agent
+  errors under `executor`, and per-poll success/failure/recovery under each Source kind. The Execution settings block
+  gains `logLevel` (`info` or `debug`) and `logRetentionDays` (1–30), which apply without a restart; the panel exposes
+  both in a Logs group. `GET logs` accepts the keyword search as `q` beside its level and scope filters. `tests/log-files.spec.ts` and `tests/operational-log.spec.ts` cover the sink, redaction, folding,
+  level gating and every new scope; nothing records a message body, tool argument or result, report summary, setting
+  value, or model content.
+- The Logs page completes the operator surface: a keyword search (`q`, matching message, scope and data), **Copy**
+  of the current filtered view as JSONL, a client-side **Download JSONL** Blob with one object per line in the file's
+  fields, **Load more** in pages of 200 up to the 2000-entry ring with the loaded count, and a deep link from Ticket,
+  Request and Assignment views that prefills `q=ticket=<id>`, `q=request=<id>` or `q=assignment=<id>` through the
+  typed client route (no new HTTP route, no file route).
+- Human-triggered domain actions now leave an `audit` scope entry beside the automatic lifecycle records: settings
+  save and restore (block, revision, restored-from), Ticket retry and stop, escalation decisions (request, decision and
+  unit count) and automation create/edit/run/delete (automation id). Every entry is level `info`, carries
+  `actor=operator`, and records no setting value, reply or reason text, automation instruction, message body, tool
+  argument or result; failed actions and automatic events create none. `tests/http.spec.ts` pins both directions.
+- `scripts/archive-state.mjs` now archives the real database, `<stateDir>/orchestrator.sqlite`, by default and accepts
+  `--database <path>`; its usage text, SECURITY.md, CONTRIBUTING.md and docs/013 say `orchestrator.sqlite`.
+  docs/013 also documents that `<stateDir>/logs` is not part of an archive-state snapshot, its day/`.N` rotation and
+  1–30 day retention, and copying it by hand; `tests/archive-state.spec.ts` covers the default, the override and the
+  refusals.
+- `docs/adr/0002-operational-log-files.md` records the operational-log decision: one durable JSONL sink beside the
+  memory ring, single writer, UTC day files, 20 MiB rotation, 1–30 day pruning, metadata-only with an operator audit
+  allowlist, the crash window of the last queued batch, and why logs stay outside archive-state; it also records the
+  rejected memory-only, database-table and full-body alternatives. docs/005, docs/006, docs/007, docs/009,
+  docs/011 Part H, docs/013, README and README.zh-CN are synchronized.
 
 ### Changed
 
@@ -43,6 +280,100 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   ending a turn to wait for a wake, which stalled one assignment for three hours.
 - A worker keeps one worktree and cwd per Ticket: another worktree is evidence only through its absolute path, and no gate
   probe relies on a relative path.
+- A report that ends an `answer` Ticket no longer cancels the turn that made it. Retirement runs after the ending
+  transaction commits and waits up to `RETIRE_GRACE_MS` (60 s) for the worker's turn to end before disposing its
+  activation and stopping background work; a turn that outlives the grace is cancelled as a user stop. External endings
+  (a person's stop, a followed pull request's close, an Eval stop, a retry) still preempt the turn at once, and a retry
+  ends only the Assignment. Covered by `tests/executor-retirement.spec.ts`.
+- Worker activations now start with DSH delivery `caller`, so the application's own durable Lead messages are the single
+  notification authority and DSH settlement notices never reach the Lead model; reviewer activations keep `parent`
+  delivery because the reviewer has no application tool, and its settlement notice is what prompts the Lead's
+  `lead_review_record` verdict. This also stops a report-caused retirement from telling the Lead the worker was stopped
+  before its turn ended.
+- Documentation pass for the ticket-end contract: docs/003 and docs/010 describe retirement and the caller/parent split,
+  docs/007 names `TicketEndBy`/`TicketEndCause` and the grace, docs/014 plans the future `self_report` at schema 24
+  (schema 23 is the cause backfill), the roadmap carries the current counts and a Sprint 36 checklist, and numbered docs
+  may link to `docs/adr/*.md`.
+
+### Fixed
+
+- A quiet GitHub stream no longer fails when its ETag matches. Since the stable supervisor split the domain runtime
+  into its own self-contained bundle (`lib/runtime-entry.js`, ADR-0006), a `CliError` thrown by the runtime's `Commands`
+  is no longer the GitHub watcher bundle's `CliError` class, so the `instanceof CliError` check in the 304 handler
+  rethrew every "not modified" response and each poll reported all 24 reads failed across eight repositories. `CliError`
+  now carries a shared global brand (`Symbol.for('dsh-superagent-further.cliError')`) and `src/infra/commands.ts`
+  exports `isCliError`, which the GitHub Source's 304/404/410 handling and the GitHub/Feishu channel `gone` checks use
+  instead of `instanceof`; covered by `tests/commands.spec.ts` and `tests/sources.spec.ts`.
+- One direct answer stays one message. When the Orchestrator answered a whitelisted person's explicit message itself (for
+  example a status question it resolved from its own records), the subsequent `ignore` Decision still queued the
+  "request was not taken up" notice, so the person received the answer and a second message repeating that it was not
+  taken up. `Replies.answer` now records `answered` on the Trigger's disposition, and the explicit-decision notice skips a
+  Trigger the main Session already answered; the recorded reason also no longer doubles its full stop
+  (`你的请求未被采纳：…。。`). Covered by `tests/engine.spec.ts` and `tests/runtime.spec.ts`.
+- The setup wizard can always be closed. While no workspace was selected, the modal's close button, Escape and the backdrop
+  did nothing, so an operator who opened the wizard without finishing the workspace step was trapped in the dialog; the
+  setup wizard could not be left even though only SuperAgent itself should stay unavailable. Closing the dialog now always
+  works and records nothing: the runtime stays `paused`/`setupPending` until a valid workspace is saved, the server still
+  refuses `PUT wizard` with `workspaceRequired`, Skip step and Skip all stay disabled, and the header **Setup wizard** entry
+  reopens the dialog. The dialog also states that closing it leaves SuperAgent paused. Covered by
+  `tests/panel-setup-wizard.spec.tsx`.
+- A refused workspace selection now says why. The panel rendered only the generic `workspaceInvalid` sentence, so a path refused
+  because it overlaps a project checkout or the repository, is a file, is relative, is a UNC path or has no existing parent
+  looked like an unexplained rejection that matched none of the listed cases. The localized message now interpolates the
+  server's `reason` and `path` values, and the panel fixture answers with the same shape. Covered by
+  `tests/panel-setup-wizard.spec.tsx`.
+- A refused database restore can no longer silently roll a WAL-mode database back to its older main file. `restoreDatabase`
+  removed `<stateDir>/orchestrator.sqlite-wal` and `-shm` before copying the backup, so when the journaled backup was
+  missing, unreadable or truncated — or the process died between the two steps — the candidate's committed migration,
+  which lived only in the write-ahead log, was gone; the next boot read the pre-migration main file, saw a schema the
+  baseline supported and started it, losing the committed frames. The restore now copies the backup to
+  `<db>.restoring.tmp`, fsyncs it, verifies it opens as SQLite, publishes it as the complete-copy marker
+  `<db>.restoring`, and only then removes the sidecars and renames it over the database; every failure before the marker
+  leaves the database and its WAL untouched, so the ordinary fail-closed skip still sees the newer schema. Boot recovery
+  finishes a complete marker before reading the schema (`update.database-restore-finished schema=…`) and discards a
+  partial `.restoring.tmp` with the database untouched. Covered by five new WAL-aware cases in `tests/update.spec.ts`
+  (missing backup with the migration only in the WAL and a second boot that must still refuse, a successful WAL restore,
+  the complete-marker finish, the partial-copy discard and a truncated backup refused before any sidecar removal).
+- A runtime update that crashed after the candidate's `init` had already committed its database migration but before
+  `journal.commit` no longer leaves the host unable to start. The pipeline allows a schema-newer candidate, so the
+  migrated database was newer than both the journal's baseline runtime and the packaged fallback and every start was
+  refused as a downgrade. The engine now records the pre-swap backup path in the journal (`Journal.noteBackup`), and
+  boot recovery — after reconciling the pointers, before resolving any version — restores that backup when the
+  interrupted update is at `swap`/`load`/`init`/`commit`, the recorded baseline schema is older than the database and the
+  path is inside `runtime/backups/`, then re-reads the schema and logs `update.database-restored phase=… schema=…
+  backup=…`. A committed journal never restores; a missing or unreadable backup, a path outside that directory or an
+  unrecorded baseline schema fails closed with `update.database-restore-skipped …` and the ordinary refusal stands. Also
+  fixed alongside it: a committed journal that lost only its history append now gets the missing `applied` entry from the
+  claimed request, and the package-relative packaged descriptor is no longer written to `previous.json` (it can never be a
+  rollback target, and a later boot would reject it). Covered by the new crash/committed/missing-backup/history/packaged
+  tests in `tests/update.spec.ts` and by the sixteenth `schema-bump-crash` scenario in `pnpm drill`.
+- A runtime update that crashes after the swap wrote `current.json` no longer comes back as the candidate on the next
+  boot. The swap writes `previous.json` and `current.json` before the candidate is loaded, initialized or committed; a
+  process death in between left a running journal but a pointer naming the uncommitted version, and the boot after the
+  recovery (which had no interrupted journal left) would silently start it with no drain, backup, self-check or history
+  entry. Recovery now reconciles both pointers to the journal's recorded baseline before resolving any version — writing
+  or removing `current.json` and `previous.json` according to the record, leaving `previous.json` untouched when the
+  journal predates the field — and logs `update.pointers-reconciled phase=… current=… previous=…`. A crash in `commit`
+  after the candidate began serving in memory also returns to the baseline, because serving was never durable. Covered by
+  the two-boot crash tests at `swap` and `init` in `tests/update.spec.ts` and by every crash scenario in `pnpm drill`.
+- Two concurrent rollback confirmations can no longer replace each other's request: the request file is created
+  exclusively (`wx` + fsync), so the loser gets a busy refusal (409 from the panel, an error from `pnpm deploy`) instead
+  of overwriting the waiting identifier, and `writeUpdateRequest` is the same path for the CLI and the panel.
+- A healed rollback now recovers its `update-failures` incident. The detector recovered every phase only on
+  `update.applied`; the engine's successful `update.rolledback` line (the previous runtime served again) left a
+  high-severity record open while Overview showed no attention. Both terminal success lines now recover all phases. Switching
+  away archived that workspace's deterministic master Session, and DSH's archived-session gate then rejected every step
+  while startup still reported `ready`. Startup now unarchives the desired workspace-derived master before resolving it, so
+  the workspace resumes its own identity and conversation instead of resuming a dead Session; the legacy `stateDir`-derived
+  master stays archived and is never resumed, and an unarchive failure fails closed with `workspaceUnsafe` rather than
+  starting an orchestrator that cannot take a step. Covered by the A → B → A restart test in
+  `tests/workspace-identity.spec.ts`.
+- A workspace path that merely starts with `..` is no longer mistaken for a parent escape. The overlap check treated any
+  `relative()` result beginning with `..` as outside, so a directory inside a forbidden location whose own name begins
+  with two dots — `<stateDir>/..workspace`, a DSH-home descendant or a project-checkout descendant — was accepted as the
+  agent cwd and DSH workspace. Only the `..` parent entry itself or a path beginning with `..` plus the separator is now
+  treated as outside, so every descendant of the state directory, the DSH home/profile/session store, the checkout and
+  the project checkouts is rejected. Covered by `tests/workspace-identity.spec.ts`.
 
 ## [0.4.0] - 2026-11-10
 

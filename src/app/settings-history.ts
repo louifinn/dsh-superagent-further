@@ -9,7 +9,7 @@ type SourceSettings = SettingsVersion['settings']['sources'][string]
 /** Change codes localized by the web panel as `change.<code>`. */
 export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
-  | 'mode' | 'timeout' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'projectWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
+  | 'mode' | 'selfReport' | 'timeout' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'projectWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands' | 'projects' | 'memoryEnabled' | 'memoryInjection' | 'memoryAutoWrite' | 'memoryLimits' | 'language'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
@@ -64,6 +64,7 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
     if (JSON.stringify(before.policy.sources[id]?.admission ?? {}) !== JSON.stringify(after.policy.sources[id]?.admission ?? {})) changes.push({ code: 'sourceAdmission', source: id, part: true })
   }
   if (before.eval.mode !== after.eval.mode) changes.push({ code: 'mode', from: before.eval.mode, to: after.eval.mode })
+  if (before.eval.selfReport !== after.eval.selfReport) changes.push({ code: 'selfReport', from: before.eval.selfReport, to: after.eval.selfReport })
   if (before.eval.timeoutSeconds !== after.eval.timeoutSeconds) changes.push({ code: 'timeout', from: before.eval.timeoutSeconds, to: after.eval.timeoutSeconds })
   if (!same(before.eval.model, after.eval.model)) changes.push({ code: 'evalModel' })
   if (!same(before.executor.model, after.executor.model)) changes.push({ code: 'executorModel' })

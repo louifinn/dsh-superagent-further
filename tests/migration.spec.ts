@@ -147,7 +147,7 @@ it('writes a schema 10 database in its current shape once, so nothing reads an o
     mandate: { basis: { via: 'followup', authority: 'thread_followup' } } })
   expect(store.tickets.get('t2')).not.toHaveProperty('follows')
   // An end's reason that only repeats its outcome is not kept.
-  expect(store.tickets.get('t2')!.ended).toEqual({ at: '6', by: 'executor', outcome: 'merged' })
+  expect(store.tickets.get('t2')!.ended).toEqual({ at: '6', by: 'executor', outcome: 'merged', cause: 'merge' })
   // A ticket a person stopped keeps nothing waiting; a ticket stored without its attributes gets an origin all the same.
   expect(store.tickets.get('t4')).toMatchObject({ origin: { triggerId: '', triggerIds: [] } })
   expect(store.tickets.get('t3')).toMatchObject({ ended: { outcome: 'stopped' }, undelivered: [], origin: { triggerId: '', triggerIds: [] },
@@ -768,4 +768,102 @@ it('creates the project_request table and keeps its records when migrating to sc
   created.projectRequests.save(request)
   expect(created.projectRequests.list()).toEqual([request])
   created.close()
+})
+
+it('migrates a schema 23 database to the current schema by creating the empty self_report table and keeping the Tickets', () => {
+  const path = join(directory, 'self-reports.sqlite')
+  const at = '2026-11-10T09:00:00.000Z'
+  const seeded = new Store(path)
+  seeded.tickets.save({
+    id: 't1', title: 'Fix t1', decisionId: 'd-t1',
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' },
+  } as never)
+  // A schema 23 database had no self_report table: the Store creates it before migrateTo24 runs, with no backfill.
+  seeded.db.exec('DROP TABLE self_report')
+  seeded.db.prepare("UPDATE kv SET value='23' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(SCHEMA_VERSION).toBe(25)
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.selfReports.list()).toEqual([])
+    expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
+    const report = { id: 'srep-1', title: 'Watcher crashes', body: 'Evidence', evidence: 'ENOENT',
+      raised_by: { session: 'master' }, target_repo: 'louifinn/dsh-superagent-further', status: 'draft' as const,
+      created_at: at }
+    store.selfReports.save(report)
+    expect(store.selfReports.get('srep-1')).toEqual(report)
+    expect(store.selfReports.list('draft')).toEqual([report])
+  } finally { store.close() }
+})
+
+it('migrates a schema 24 database to 25 by creating the empty incident table and keeping the Records', () => {
+  const path = join(directory, 'incidents.sqlite')
+  const at = '2026-11-10T09:00:00.000Z'
+  const seeded = new Store(path)
+  seeded.tickets.save({
+    id: 't1', title: 'Fix t1', decisionId: 'd-t1',
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' },
+  } as never)
+  // A schema 24 database had no incident table: the Store creates it before migrateTo25 runs, with no backfill.
+  seeded.db.exec('DROP TABLE incident')
+  seeded.db.prepare("UPDATE kv SET value='24' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(SCHEMA_VERSION).toBe(25)
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.incidents.list()).toEqual([])
+    expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
+    const incident = {
+      id: 'inc-1', fingerprint: 'fp-outbox', rule: 'outbox-failures' as const, severity: 'high' as const, status: 'detected' as const,
+      scope: { project: 'p1', ticket: 't1' }, first_at: at, last_at: at, occurrences: 1, title: 'Reply deliveries failing',
+      detail: '3 reply delivery failures in 30 minutes', evidence_dir: '/srv/incidents/inc-1', updated_at: at,
+    }
+    store.incidents.save(incident)
+    expect(store.incidents.get('inc-1')).toEqual(incident)
+    expect(store.incidents.byFingerprint('fp-outbox')).toEqual(incident)
+    expect(store.incidents.list({ status: 'open' })).toEqual([incident])
+    expect(store.incidents.list({ severity: 'low' })).toEqual([])
+    // The fingerprint is unique: a second record with the same fingerprint is refused by SQLite.
+    expect(() => store.incidents.save({ ...incident, id: 'inc-2' })).toThrow()
+  } finally { store.close() }
+})
+
+it('backfills why every ended Ticket ended when migrating to schema 23 and preserves a recorded cause', () => {
+  const path = join(directory, 'end-causes.sqlite')
+  const seeded = new Store(path)
+  const at = '2026-11-10T09:00:00.000Z'
+  const stored = (id: string, ended?: Record<string, unknown>) => seeded.tickets.save({
+    id, title: `Fix ${id}`, decisionId: `d-${id}`,
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' }, ...(ended ? { ended } : {}),
+  } as never)
+  // A schema 22 database recorded the ending but not its cause.
+  stored('t1', { at, by: 'executor', outcome: 'merged' })
+  stored('t2', { at, by: 'executor', outcome: 'closed' })
+  stored('t3', { at, by: 'human', outcome: 'stopped' })
+  stored('t4', { at, by: 'executor', outcome: 'completed' })
+  stored('t5', { at, by: 'executor', outcome: 'dropped' })
+  stored('t6', { at, by: 'human', outcome: 'stopped', cause: 'eval' })
+  stored('t7')
+  seeded.db.prepare("UPDATE kv SET value='22' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    const ended = (id: string) => store.tickets.get(id)!.ended
+    expect(ended('t1')).toEqual({ at, by: 'executor', outcome: 'merged', cause: 'merge' })
+    expect(ended('t2')).toEqual({ at, by: 'executor', outcome: 'closed', cause: 'merge' })
+    expect(ended('t3')).toEqual({ at, by: 'human', outcome: 'stopped', cause: 'human' })
+    expect(ended('t4')).toEqual({ at, by: 'executor', outcome: 'completed', cause: 'report' })
+    expect(ended('t5')).toEqual({ at, by: 'executor', outcome: 'dropped', cause: 'report' })
+    expect(ended('t6')).toEqual({ at, by: 'human', outcome: 'stopped', cause: 'eval' })
+    expect(ended('t7')).toBeUndefined()
+  } finally { store.close() }
 })
