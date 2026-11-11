@@ -19,6 +19,8 @@ import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
 import { githubChannel } from '../../src/sources/github-trigger.ts'
 import { feishuKind } from '../../src/sources/feishu.ts'
 import { githubKind } from '../../src/sources/github.ts'
+import type { Incident, IncidentDiagnosis } from '../../src/core/incidents.ts'
+import { parseIncidentDiagnosis } from '../../src/core/incidents.ts'
 import type { Health } from '../../src/sources/host.ts'
 import type { SourceKind } from '../../src/sources/kind.ts'
 import { testDeployment } from './deployment.ts'
@@ -703,7 +705,49 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET incidents/:id': { answer: ({ params }) => {
     const incident = server.incidentRecords.find(item => item.id === params.id)
     if (!incident) return refuse(404, 'Incident not found')
-    return { incident, evidence: server.incidentEvidence?.[incident.id] ?? null }
+    return { incident, evidence: server.incidentEvidence?.[incident.id] ?? null, diagnosis: parseIncidentDiagnosis(incident.diagnosis) }
+  } },
+  // The operator's incident actions (ADR-0005): the panel's Diagnose, Dismiss and Create fix buttons.
+  'POST incidents/:id/diagnose': { answer: ({ params }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    if (incident.status !== 'bundled' && incident.status !== 'detected') {
+      return refuse(409, 'The diagnosis was refused: status', { code: 'incidentDiagnoseRefused' })
+    }
+    const diagnosis: IncidentDiagnosis = { rootCause: 'The outbox retries without a bound.', evidence: [], hypotheses: [],
+      fixPlan: 'Bound the retries and surface the failure.', confidence: 'high', target: { kind: 'operational' }, parsed: true }
+    const diagnosed: Incident = { ...incident, status: 'diagnosed', diagnosis: JSON.stringify(diagnosis), resolution: 'operational',
+      updated_at: '2026-11-11T10:01:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? diagnosed : item)
+    return { status: 'diagnosed' as const, incident: diagnosed, diagnosis }
+  } },
+  'POST incidents/:id/dismiss': { body: true, answer: ({ params, body }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    const reason = body.reason.trim()
+    if (reason === '') return refuse(400, 'A dismissal needs a reason', { code: 'incidentInvalid' })
+    if (incident.status !== 'bundled' && incident.status !== 'diagnosed' && incident.status !== 'detected') {
+      return refuse(409, 'The incident cannot be dismissed from this status', { code: 'incidentTransition' })
+    }
+    const dismissed: Incident = { ...incident, status: 'dismissed', resolution: `Dismissed: ${reason.slice(0, 280)}`,
+      updated_at: '2026-11-11T10:02:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? dismissed : item)
+    return { incident: dismissed }
+  } },
+  'POST incidents/:id/route': { body: true, answer: ({ params, body }) => {
+    const incident = server.incidentRecords.find(item => item.id === params.id)
+    if (!incident) return refuse(404, 'Incident not found')
+    if (body.confirm !== true) return refuse(400, 'Confirm creating the follow-up work')
+    if (incident.resolution !== undefined) return refuse(409, 'The route was refused: alreadyRouted', { code: 'incidentRouteRefused' })
+    if (incident.status !== 'diagnosed') return refuse(409, 'The route was refused: notDiagnosed', { code: 'incidentRouteRefused' })
+    const diagnosis = parseIncidentDiagnosis(incident.diagnosis)
+    if (diagnosis === null || diagnosis.target.kind === 'none') {
+      return refuse(409, 'The route was refused: notRoutable', { code: 'incidentRouteRefused' })
+    }
+    const resolution = diagnosis.target.kind === 'project' || diagnosis.target.kind === 'self' ? 'request:req-1' : 'operational'
+    const routed: Incident = { ...incident, resolution, updated_at: '2026-11-11T10:03:00Z' }
+    server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? routed : item)
+    return { status: 'routed' as const, incident: routed, resolution }
   } },
 }
 

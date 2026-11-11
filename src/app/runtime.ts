@@ -62,7 +62,9 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
+import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession } from './diagnosis.ts'
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
+import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
@@ -108,6 +110,8 @@ export class Runtime extends Service implements SourceHost {
   readonly selfReports: SelfReports
   /** Deterministic incident records and evidence bundles (ADR-0004). */
   readonly incidents: Incidents
+  /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
   readonly ready: Promise<void>
   /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
   private starting = true
@@ -233,6 +237,7 @@ export class Runtime extends Service implements SourceHost {
       })
       // Deterministic incident detection (ADR-0004): pure rules over events, the log stream and health
       // transitions; the records service owns the table, the cooldown and the evidence bundle. No model call, no fix.
+      const incidentsHealth = board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' })
       this.incidents = new Incidents({
         store: { incidents: store.incidents, settings: () => store.settings() },
         // Evidence lives under the selected Orchestrator workspace; the state directory is never a workspace (ADR-0003).
@@ -243,11 +248,15 @@ export class Runtime extends Service implements SourceHost {
         },
         stateDir: this.machine.stateDir,
         logs: this.logs,
-        health: board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' }),
+        health: incidentsHealth,
         record: message => this.logs.record('info', 'incidents', message),
         healthSnapshot: () => this.health,
       })
-      this.detachIncidentLogs = this.logs.observe((entry, at) => this.detect(this.detector.observeLog(entry, at)))
+      this.detachIncidentLogs = this.logs.observe((entry, at) => {
+        // The diagnosis service's own lines are never detector input, so a diagnosis cannot feed itself (ADR-0005).
+        if (entry.scope === DIAGNOSIS_SCOPE || isDiagnosisSession(entry.scope)) return
+        this.detect(this.detector.observeLog(entry, at))
+      })
       this.incidentsReady = true
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
@@ -363,6 +372,24 @@ export class Runtime extends Service implements SourceHost {
         } })
       // The Lead tools and the reply enforcement act through the Engine; attach it once the composition is complete.
       sessions.attachEngine(engine)
+      // Read-only incident diagnosis (ADR-0005): dispatched off the detector pass, one bounded run at a time, budgeted in the
+      // Store by UTC day and parented to the main Session. A failure leaves the record bundled and a person can retry.
+      this.diagnosis = new Diagnosis({
+        store, engine, selfReports: this.selfReports,
+        workspace: () => {
+          const path = this.setup.workspace?.path || store.settings().workspace.path
+          if (path === '') throw new Error('The Orchestrator workspace is not selected')
+          return path
+        },
+        masterId,
+        parent: () => this.ctx.agents.get(masterId as SessionId),
+        subagents: () => this.ctx.get('subagents') as SubagentService | undefined,
+        child: id => this.ctx.agents.get(id as SessionId),
+        readOnly: agent => { this.ctx.permissionPresets.set(agent.session, 'read-only') },
+        lifetime: this.lifetime,
+        logs: this.logs,
+        health: incidentsHealth,
+      })
       // The approval tools read and write through the same Engine; bind them by the Store the Lead tools are built with.
       bindLeadApprovals(store, {
         raise: input => engine.raiseProjectRequest(input),
@@ -383,7 +410,8 @@ export class Runtime extends Service implements SourceHost {
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger),
         log: kind => this.capture(kind) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        selfReports: this.selfReports, automations: this.automations, log: this.capture('executor'),
+        selfReports: this.selfReports, incidents: this.incidents, diagnosis: this.diagnosis, automations: this.automations,
+        log: this.capture('executor'),
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
@@ -772,8 +800,13 @@ export class Runtime extends Service implements SourceHost {
     if (!this.incidentsReady || signals.length === 0) return
     for (const signal of signals) {
       try {
-        if (signal.type === 'detect') this.incidents.record(signal.candidate)
-        else this.incidents.recover(signal.fingerprint)
+        if (signal.type === 'detect') {
+          // A diagnosis child Session is not a worker Assignment or a source; its events are never detector input.
+          if (isDiagnosisSession(signal.candidate.scope?.session ?? '')) continue
+          const incident = this.incidents.record(signal.candidate)
+          // Dispatch happens on a later turn (ADR-0005): the detection pass itself stays deterministic and model-free.
+          if (incident !== undefined) this.diagnosis?.consider(incident)
+        } else this.incidents.recover(signal.fingerprint)
       } catch (error) {
         this.logs.record('warn', 'incidents', `incident detection failed: ${this.short(String(error))}`)
       }
@@ -786,6 +819,7 @@ export class Runtime extends Service implements SourceHost {
       automations: this.automations,
       selfReports: this.selfReports,
       incidents: this.incidents,
+      diagnosis: this.diagnosis,
       leadOverview: () => runtime.leadOverview(),
       deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),
@@ -817,7 +851,8 @@ export class Runtime extends Service implements SourceHost {
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
       const agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
       for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
-      await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle())])
+      // The lifetime abort ends a waiting diagnosis; its dispatch is disposed and the record stays bundled for a retry.
+      await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle()), this.diagnosis.idle()])
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
       this.executor.dispose()

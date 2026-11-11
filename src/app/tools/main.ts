@@ -19,6 +19,9 @@ import { automationTools } from './automation.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../../sources/kind.ts'
 import { decideEscalation } from '../escalations.ts'
 import type { SelfReports } from '../self-reports.ts'
+import { requireIncident, type Incidents } from '../incidents.ts'
+import type { Diagnosis } from '../diagnosis.ts'
+import { INCIDENT_SEVERITY_FILTERS, INCIDENT_STATUS_FILTERS } from '../api.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -27,7 +30,7 @@ export interface MainToolsHost {
   readonly context: Context
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'
     | 'raiseDiscoveryRequest' | 'listEscalations' | 'decideEscalation'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads' | 'incidents'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry' | 'ensureLead' | 'prompt'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync' | 'propose' | 'proposals'>
@@ -35,6 +38,10 @@ export interface MainToolsHost {
   readonly resources: ResourceHost
   /** The self-evolution Issue outlet: drafts, files and dismisses findings about superagent itself (docs/014 D3). */
   readonly selfReports: SelfReports
+  /** Deterministic incident records and their evidence bundles (ADR-0004). */
+  readonly incidents: Incidents
+  /** Bounded read-only diagnosis of incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
   /** The registered Execution projects, for validating a request's delivery units. */
@@ -437,6 +444,37 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         }
         return { status: 'filed', report_id: result.report.id, issue_number: result.issue_number,
           issue: `https://github.com/${SELF_REPOSITORY}/issues/${result.issue_number}` }
+      },
+    }),
+    tool({
+      name: 'orchestrator_incident',
+      description: 'List, read and act on operational incidents: deterministic records of detectable trouble in the installation, with a bounded read-only diagnosis. Please use list or get first. diagnose asks the read-only diagnostician Session for a root cause and a fix plan within the daily budget; dismiss closes a record with a reason; route creates the follow-up work once, after diagnosis, and only when you confirm it. Never use this tool to fix anything yourself.',
+      schema: z.discriminatedUnion('action', [
+        z.object({
+          action: z.literal('list'),
+          status: z.enum(INCIDENT_STATUS_FILTERS).optional().describe('Only incidents in this status; omit or open for the ones still live.'),
+          severity: z.enum(INCIDENT_SEVERITY_FILTERS).optional().describe('Only incidents at this severity.'),
+          limit: z.number().int().min(1).max(100).optional().describe('How many records to return (default 20).'),
+        }).strict(),
+        z.object({ action: z.literal('get'), id: z.string().trim().min(1) }).strict(),
+        z.object({ action: z.literal('diagnose'), id: z.string().trim().min(1) }).strict(),
+        z.object({ action: z.literal('dismiss'), id: z.string().trim().min(1),
+          reason: z.string().trim().min(1).max(280).describe('Why a person decided the record needs no work.') }).strict(),
+        z.object({ action: z.literal('route'), id: z.string().trim().min(1),
+          confirm: z.boolean().optional().describe('Must be true: creating a Request hands engineering work to a Lead, and filing an Issue reports a superagent finding.') }).strict(),
+      ]),
+      execute: async args => {
+        if (args.action === 'list') {
+          const incidents = host.incidents.list({ ...args.status ? { status: args.status } : {},
+            ...args.severity ? { severity: args.severity } : {}, ...args.limit ? { limit: args.limit } : {} })
+          return { incidents, total: incidents.length }
+        }
+        const incident = requireIncident(host.store.incidents, args.id)
+        if (args.action === 'get') return host.incidents.detail(incident.id)!
+        if (args.action === 'diagnose') return host.diagnosis.diagnose(incident.id)
+        if (args.action === 'dismiss') return { incident: host.incidents.dismiss(incident.id, args.reason) }
+        if (args.confirm !== true) return { status: 'refused', reason: 'unconfirmed' }
+        return host.diagnosis.route(incident.id, { manual: true })
       },
     }),
     tool({

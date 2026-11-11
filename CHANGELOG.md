@@ -8,6 +8,40 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Read-only diagnosis of operational incidents and routing of the conclusion through the existing self-evolution
+  outlets (ADR-0005, schema 25 unchanged). A new agent preset `dsh-superagent-further-diagnostician` (order 95, not
+  selectable by hand) carries only `agent-instructions`, `time-context` and a `tool-fs` mounted with `write: false`
+  and `edit: false`; no shell, job, search, skill, compaction, delegation, scheduling, goal, plan-mode, plugin-manager,
+  web, todo, question or present tool is installed, and `src/app/diagnosis.ts` also puts the started child Session on
+  the `read-only` permission preset where the host exposes one. After a new incident is bundled, `Diagnosis.consider`
+  gates auto-diagnosis on `autoDiagnose`, a `high`/`critical` severity at or above `minimumSeverity` and an open
+  status; a person may diagnose any open record from the panel, `orchestrator_incident` or
+  `POST incidents/<id>/diagnose`, and that action is audited. Dispatch goes through the host `subagents` service
+  (`spawn`, delivery `caller`, `maxDepth` 1, the main Session parent, the selected Orchestrator workspace as cwd,
+  `diag-<incidentId>-<suffix>`), with the incident JSON, evidence directory and workspace in the prompt and a strict
+  JSON answer contract (`rootCause`, `evidence[]`, `hypotheses[]`, `fixPlan`, `confidence`, `target`). Start and result
+  are bounded to 10 minutes, dispose on timeout, log one `diagnosis` warning, set the `incidents` health error and
+  leave the record `bundled`; detection starts no model call. The new tier-C `executor.incidents.diagnoseDailyBudget`
+  (0–24, default 2) is a durable per-UTC-day attempt counter in the Store's kv area that survives a restart, and runs
+  are single-flight. A parsed diagnosis is stored as JSON in the existing `incident.diagnosis` column and shown on
+  `GET incidents/<id>`; an unparseable answer is kept as a low-confidence diagnosis with target `none` instead of
+  failing the run. Routing runs once per record through `incident.resolution`: a registered project becomes a
+  discovery Request (`engine.raiseDiscoveryRequest`, discovery Mandate, units naming the project) that the Lead turns
+  into Tickets under the normal PR and human-merge flow (`request:<id>`); a `self` finding or an unregistered
+  repository goes through `SelfReports.raise` with its three-state `eval.selfReport` gate, dedupe, cap and
+  jurisdiction refusal (`self-report:<id>` or `self-report:off`; a registered self repository falls back to a Request);
+  an operational or none conclusion creates no Request and no Issue (`operational`). A failed automatic route leaves
+  the resolution empty so the operator can retry with `confirm: true`. `POST incidents/<id>/dismiss` requires a reason
+  and records `Dismissed: <reason>`; the panel's Incidents detail gains Diagnose, Create fix (confirmed) and Dismiss
+  actions with pending and error states and links to the created Request or self-report, Overview keeps its "needs you"
+  row, Execution settings gain the diagnosis budget, and both locales are updated. `orchestrator_incident`
+  (`list|get|diagnose|dismiss|route`) exposes the same services to the main Session with typed refusals. Covered by
+  `tests/diagnosis.spec.ts` (dispatch, gates, durable budget and restart, single-flight, parse fallback, routing and
+  dismissal), `tests/diagnosis-runtime.spec.ts` (no model call in detection, preset delivery and read-only permission,
+  same-origin routes with metadata-only audit, code 400/404/409, manual route retry, the tool), `tests/bundle-patch.spec.ts`
+  (the preset inventory), `tests/panel-incidents.spec.tsx` (the actions) and the extended HTTP, tool, view, locale and
+  settings specs, with docs 005, 006, 007, 009, 011, 013 and 014 and ADR-0005 synchronized and the generated reference
+  pages refreshed.
 - Deterministic operational incidents with durable records, fingerprint dedupe and content-addressed evidence bundles
   (schema 25, ADR-0004). The Store-owned `incident` table keeps `{ id, fingerprint UNIQUE, rule, scope { project?,
   ticket?, request?, session? }, severity: 'low' | 'medium' | 'high' | 'critical', status: 'detected' | 'bundled' |

@@ -3,7 +3,7 @@
 // evidence manifest, and the Overview "needs you" row that links to it.
 import { expect, it } from 'vitest'
 import { zh } from '../src/client/locales.ts'
-import { usePanel, mount, all, find, tab, click, text } from './fixtures/panel.tsx'
+import { usePanel, mount, all, find, tab, click, text, type } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
 
 usePanel()
@@ -99,4 +99,65 @@ it('shows open incidents on the Overview and links them to their detail', async 
   expect(text()).toContain(zh.incidentsNeedsYou)
   await click(document.querySelector<HTMLElement>('[data-overview-incident="inc-1"] .dt-open')!)
   expect(server.requests.at(-1)?.path).toContain('incidents/inc-1')
+})
+
+const diagnosis = (target: Record<string, string>) => JSON.stringify({
+  rootCause: 'The outbox retries without a bound.', evidence: ['reply delivery failed 3 times'],
+  hypotheses: ['The provider timeout is shorter than the retry window.'], fixPlan: 'Bound the retries and surface the failure.',
+  confidence: 'high', target, parsed: true,
+})
+const diagnosed = (target: Record<string, string>) => record({ status: 'diagnosed', diagnosis: diagnosis(target),
+  resolution: undefined })
+
+it('diagnoses a bundled record, shows the answer and its routing, and marks the run pending', async () => {
+  server.incidentRecords = [record() as never]
+  await mount()
+  await click(tab(zh['tab.incidents']))
+  await click(document.querySelector<HTMLElement>('[data-incident="inc-1"] .dt-open')!)
+  await click(find(zh.incidentDiagnoseAction, '[data-incident-actions] button'))
+  expect(server.requests.some(item => item.method === 'POST' && item.path === 'incidents/inc-1/diagnose')).toBe(true)
+  const detail = document.querySelector('[data-incident-detail="inc-1"]')!
+  expect(detail.textContent).toContain(zh.incidentRootCause)
+  expect(detail.textContent).toContain('The outbox retries without a bound.')
+  expect(detail.textContent).toContain(zh.incidentFixPlan)
+  expect(detail.textContent).toContain(zh.incidentConfidence)
+  expect(detail.textContent).toContain(zh['incidentConfidence.high'])
+  expect(detail.textContent).toContain(zh.incidentResolutionOperational)
+  expect(detail.querySelector('[data-incident-actions]')!.textContent).not.toContain(zh.incidentDiagnoseAction)
+})
+
+it('creates fix work only after the confirmation and links the routed Request', async () => {
+  server.incidentRecords = [diagnosed({ kind: 'project', project: 'p1' }) as never]
+  await mount()
+  await click(tab(zh['tab.incidents']))
+  await click(document.querySelector<HTMLElement>('[data-incident="inc-1"] .dt-open')!)
+  await click(find(zh.incidentRouteAction, '[data-incident-actions] button'))
+  expect(server.requests.some(item => item.method === 'POST' && item.path === 'incidents/inc-1/route')).toBe(false)
+  expect(text()).toContain(zh.incidentRouteConfirm)
+  await click(find(zh.incidentRouteAction, '[data-incident-actions] button'))
+  expect(server.requests.some(item => item.method === 'POST' && item.path === 'incidents/inc-1/route'
+    && (item.body as { confirm?: boolean }).confirm === true)).toBe(true)
+  const detail = document.querySelector('[data-incident-detail="inc-1"]')!
+  const link = [...detail.querySelectorAll<HTMLElement>('button')].find(item => item.textContent?.includes('req-1'))
+  expect(link).toBeDefined()
+  await click(link!)
+  expect(server.requests.at(-1)?.path).toContain('logs')
+  expect(server.requests.at(-1)?.path).toContain('request=req-1')
+})
+
+it('dismisses a record only with a reason and leaves the status on the page', async () => {
+  server.incidentRecords = [record() as never]
+  await mount()
+  await click(tab(zh['tab.incidents']))
+  await click(document.querySelector<HTMLElement>('[data-incident="inc-1"] .dt-open')!)
+  await click(find(zh.incidentDismissAction, '[data-incident-actions] button'))
+  const confirm = document.querySelector<HTMLButtonElement>('[data-incident-dismiss] button')!
+  expect(confirm.disabled).toBe(true)
+  await type(find(zh.incidentDismissReason, '[data-incident-actions] input') as HTMLInputElement, 'duplicate of a known outage')
+  expect(confirm.disabled).toBe(false)
+  await click(confirm)
+  expect(server.requests.some(item => item.method === 'POST' && item.path === 'incidents/inc-1/dismiss'
+    && (item.body as { reason?: string }).reason === 'duplicate of a known outage')).toBe(true)
+  expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent).toContain(zh['incidentStatus.dismissed'])
+  expect(document.querySelector('[data-incident-detail="inc-1"]')!.textContent).toContain('Dismissed: duplicate of a known outage')
 })

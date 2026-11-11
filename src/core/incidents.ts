@@ -56,6 +56,82 @@ export interface Incident {
   updated_at: string
 }
 
+/** The confidence levels a diagnosis may carry; an answer the parser cannot read is always low (ADR-0005). */
+export const DIAGNOSIS_CONFIDENCES = ['low', 'medium', 'high'] as const
+export type DiagnosisConfidence = typeof DIAGNOSIS_CONFIDENCES[number]
+
+/** Where a diagnosis says the fix belongs: a registered project, this repository, operations, or nowhere yet. */
+export type DiagnosisTarget =
+  | { kind: 'project'; project: string }
+  | { kind: 'self' }
+  | { kind: 'operational' }
+  | { kind: 'none' }
+
+/**
+ * One validated diagnosis, stored as JSON text in the record's existing `diagnosis` column (ADR-0005 keeps schema 25).
+ * `parsed: false` keeps the model's answer verbatim in `raw` at low confidence, so an unreadable answer still informs a
+ * person without pretending to be structured.
+ */
+export interface IncidentDiagnosis {
+  rootCause: string
+  evidence: string[]
+  hypotheses: string[]
+  fixPlan: string
+  confidence: DiagnosisConfidence
+  target: DiagnosisTarget
+  parsed: boolean
+  raw?: string
+}
+
+/** Reads a diagnosis target from an unknown value; null when it is not one of the four shapes. */
+export function diagnosisTargetOf(value: unknown): DiagnosisTarget | null {
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as Record<string, unknown>
+  switch (record.kind) {
+    case 'project': return typeof record.project === 'string' && record.project.trim() !== ''
+      ? { kind: 'project', project: record.project.trim() } : null
+    case 'self': return { kind: 'self' }
+    case 'operational': return { kind: 'operational' }
+    case 'none': return { kind: 'none' }
+    default: return null
+  }
+}
+
+function diagnosisStrings(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+    ? value.map(item => item.trim()).filter(item => item !== '') : null
+}
+
+/**
+ * Validates a diagnosis document (the parsed JSON of a model answer or the stored column). Null means the text is not a
+ * diagnosis, so the panel shows nothing rather than a guess.
+ */
+export function parseIncidentDiagnosis(value: unknown): IncidentDiagnosis | null {
+  let document = value
+  if (typeof value === 'string') {
+    try { document = JSON.parse(value) } catch { return null }
+  }
+  if (typeof document !== 'object' || document === null) return null
+  const record = document as Record<string, unknown>
+  const target = diagnosisTargetOf(record.target)
+  const evidence = diagnosisStrings(record.evidence)
+  const hypotheses = diagnosisStrings(record.hypotheses)
+  if (typeof record.rootCause !== 'string' || typeof record.fixPlan !== 'string') return null
+  if (target === null || evidence === null || hypotheses === null) return null
+  const confidence = record.confidence
+  if (typeof confidence !== 'string' || !DIAGNOSIS_CONFIDENCES.includes(confidence as DiagnosisConfidence)) return null
+  return {
+    rootCause: record.rootCause.trim(),
+    evidence,
+    hypotheses,
+    fixPlan: record.fixPlan.trim(),
+    confidence: confidence as DiagnosisConfidence,
+    target,
+    parsed: record.parsed !== false,
+    ...(typeof record.raw === 'string' ? { raw: record.raw } : {}),
+  }
+}
+
 /** What a detector hands the records service: ids and counts only, never a message body or a comment. */
 export interface IncidentCandidate {
   rule: IncidentRule

@@ -13,10 +13,10 @@ import type { Health } from '../sources/host.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { Settings } from '../policy.ts'
 import {
-  checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, isOpenIncident, INCIDENT_COOLDOWN_MS,
-  INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT, INCIDENT_LOG_WINDOW_MS,
-  INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentFilter,
-  type IncidentRepository, type IncidentScope, type IncidentSeverity,
+  checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, isOpenIncident, parseIncidentDiagnosis,
+  transitionIncident, INCIDENT_COOLDOWN_MS, INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT,
+  INCIDENT_LOG_WINDOW_MS, INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentDiagnosis,
+  type IncidentFilter, type IncidentRepository, type IncidentScope, type IncidentSeverity,
 } from '../core/incidents.ts'
 import { UserError } from '../core/errors.ts'
 import { key } from '../core/ids.ts'
@@ -45,8 +45,8 @@ export interface IncidentListView {
   offset: number
   limit: number
 }
-/** One incident with its evidence summary. */
-export interface IncidentDetailView { incident: Incident; evidence: IncidentEvidence | null }
+/** One incident with its evidence summary and its parsed diagnosis (ADR-0005). */
+export interface IncidentDetailView { incident: Incident; evidence: IncidentEvidence | null; diagnosis: IncidentDiagnosis | null }
 
 /**
  * The incident table's records (schema 25). Filter columns are stored beside the JSON value so the panel's status,
@@ -274,7 +274,23 @@ export class Incidents {
   detail(id: string): IncidentDetailView | undefined {
     const incident = this.host.store.incidents.get(id)
     if (incident === undefined) return undefined
-    return { incident, evidence: incident.evidence_dir === '' ? null : this.evidence(id) ?? null }
+    return { incident, evidence: incident.evidence_dir === '' ? null : this.evidence(id) ?? null,
+      diagnosis: parseIncidentDiagnosis(incident.diagnosis) }
+  }
+
+  /**
+   * Closes an open record with an operator's reason (ADR-0005). The record stays for the audit trail in `dismissed`;
+   * a repeat inside the cooldown stays quiet, and a later repeat may reopen the same record.
+   */
+  dismiss(id: string, reason: string, at: Date = this.now()): Incident {
+    const existing = this.host.store.incidents.get(id)
+    if (existing === undefined) throw new UserError('incidentUnknown', { incident: id })
+    const why = reason.replace(/\s+/g, ' ').trim()
+    if (why === '') throw new UserError('incidentInvalid', { reason: 'reason' })
+    const updated = transitionIncident(existing, 'dismissed', at.toISOString(), { resolution: `Dismissed: ${why.slice(0, 280)}` })
+    this.host.store.incidents.save(updated)
+    this.host.record?.(`incident.dismissed id=${id}`)
+    return updated
   }
 
   /** The evidence bundle on disk for an incident, with its parsed manifest when one exists. */

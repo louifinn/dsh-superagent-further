@@ -186,14 +186,15 @@ export const EvalConfigSchema = z.object({
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
 /**
- * Deterministic incident detection (ADR-0004, ADR-0004): `enabled` is the gate for the detectors, `autoDiagnose` is
- * reserved for the read-only diagnoser (M34), `dailyBudget` caps new records a day, and `minimumSeverity` keeps quiet
- * conditions out of the record. Detection makes no model call and changes no code.
+ * Deterministic incident detection (ADR-0004) and its read-only diagnosis (ADR-0005): `enabled` is the gate for the
+ * detectors, `autoDiagnose` lets a new high or critical record start one diagnosis, `dailyBudget` caps new records a day,
+ * `diagnoseDailyBudget` caps diagnosis runs a day, and `minimumSeverity` keeps quiet conditions out of the record.
  */
 export const IncidentsConfigSchema = z.object({
   enabled: z.boolean().default(true),
   autoDiagnose: z.boolean().default(true),
   dailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
+  diagnoseDailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
   minimumSeverity: z.enum(INCIDENT_SEVERITIES).default('high'),
 }).strict()
 export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>

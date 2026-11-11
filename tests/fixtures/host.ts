@@ -131,9 +131,10 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   open?: (id: string, parent: string) => Promise<void>
   deliver?: (id: string, content: unknown) => void
 } = {}) {
-  const children = new Map<string, { parent: string; delivery: 'parent' | 'caller'; preset: string; live: boolean; settled: PromiseWithResolvers<void> }>()
+  const children = new Map<string, { parent: string; delivery: 'parent' | 'caller'; preset: string; live: boolean; settled: PromiseWithResolvers<unknown> }>()
   const closed = new Set<string>()
-  const settle = (id: string, wake = true) => {
+  /** Settle one child, optionally with the result its caller reads (a diagnosis document, or nothing). */
+  const settle = (id: string, wake = true, result?: unknown) => {
     const child = children.get(id)
     if (!child?.live) return
     child.live = false
@@ -142,7 +143,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     if (!wake) parent?.inject(ended)
     else if (parent?.status === 'idle') parent.followup(ended)
     else parent?.steer(ended)
-    child.settled.resolve()
+    child.settled.resolve(result)
   }
   const service = {
     waitForChildren: vi.fn(async (parent: { id: string }) => {
@@ -166,7 +167,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
       // A host with a real subagent service creates the child Session, decorates it and then delivers the activation prompt.
       if (options.open) await options.open(id, parent)
       if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
-      children.set(id, { parent, delivery: spec.delivery, preset: spec.request.agentPreset, live: true, settled: Promise.withResolvers<void>() })
+      children.set(id, { parent, delivery: spec.delivery, preset: spec.request.agentPreset, live: true, settled: Promise.withResolvers<unknown>() })
       if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
       options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
       // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
@@ -196,7 +197,7 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
   const spawn = (parent: string) => {
     if (closed.has(parent)) throw new Error('DRAINING: the Session admits no new subagents')
     const id = `child-${children.size + 1}`
-    children.set(id, { parent, delivery: 'caller', preset: '', live: true, settled: Promise.withResolvers<void>() })
+    children.set(id, { parent, delivery: 'caller', preset: '', live: true, settled: Promise.withResolvers<unknown>() })
     agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
     return id
   }
@@ -360,8 +361,10 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     deliver: (id, content) => (agents.get(id) as unknown as { followup(message: unknown): void } | undefined)
       ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }),
   })
+  // DSH's permission presets, spied so a test can observe a Session put under read-only (ADR-0005).
+  const permissionPresets = { set: vi.fn((_session: unknown, _preset: string) => {}) }
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
-    sessionPersistence: persistence, workspaceRegistry: workspaces.registry, permissionPresets: { set: () => {} }, subprocess, webServer,
+    sessionPersistence: persistence, workspaceRegistry: workspaces.registry, permissionPresets, subprocess, webServer,
     jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
   hostCtx.ctx = ctx
@@ -439,6 +442,6 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
   return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
-    jobs, subagents, step, claim }
+    jobs, subagents, step, claim, permissionPresets }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>
