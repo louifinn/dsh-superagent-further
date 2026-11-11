@@ -1,5 +1,5 @@
 /**
- * The incident records service (docs/015, ADR-0004): one durable record per condition, its occurrences, an evidence
+ * The incident records service (ADR-0004): one durable record per condition, its occurrences, an evidence
  * bundle under `<workspace>/artifacts/incidents/<id>/`, fingerprint dedupe with a cooldown for closed records, a daily
  * budget for new records and an open-incident cap. Detection makes no model call and changes nothing; failures degrade
  * to the `incidents` health entry and a log line instead of breaking the caller.

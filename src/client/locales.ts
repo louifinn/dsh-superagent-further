@@ -260,7 +260,7 @@ const TEXT = {
   selfReportApprove: ['批准并提交', 'Approve and file'],
   selfReportDismiss: ['驳回', 'Dismiss'],
   selfReportBlocked: ['今天的提交上限已用完；批准后这条仍会保留为草稿。', 'Today\'s filing cap is reached; approving keeps this as a draft.'],
-  // Incidents (docs/015): deterministic findings the host records without a model call; M34 adds diagnosis actions.
+  // Incidents (docs/005-panel.md): deterministic findings the host records without a model call; M34 adds diagnosis actions.
   incidentsTitle: ['事件', 'Incidents'],
   incidentsHint: ['Host 按固定规则自行发现并记录的事件：同一条件按指纹合并，冷却期内只累计次数；每条都带有取证包。',
     'Incidents the host detected and recorded deterministically: one record per fingerprint, counted while the condition repeats, each with an evidence bundle.'],

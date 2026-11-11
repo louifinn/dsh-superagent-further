@@ -27,7 +27,7 @@ import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import type { LeadRow, DeliveryFailure } from './views/overview.ts'
 import type { SelfReports } from './self-reports.ts'
-import type { Incidents } from './incidents.ts'
+import { requireIncident, type Incidents } from './incidents.ts'
 import type { IncidentFilter } from '../core/incidents.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
@@ -63,7 +63,7 @@ export interface HttpHost {
   readonly automations?: Automations
   /** The self-evolution Issue outlet: drafts for the Overview, and the approve/dismiss actions. */
   readonly selfReports: SelfReports
-  /** Deterministic incident records and their evidence bundles (docs/015). */
+  /** Deterministic incident records and their evidence bundles (ADR-0004). */
   readonly incidents: Incidents
   readonly health: Record<string, Health>
   readonly machine: Machine
@@ -407,7 +407,7 @@ function routes(runtime: HttpHost): Routes {
       const { level, scope, limit, q } = LogsQuery.parse(query)
       return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }
     },
-    // Deterministic incidents (docs/015). Detection itself is not exposed here: M34 adds the diagnose/dismiss actions.
+    // Deterministic incidents (ADR-0004). Detection itself is not exposed here: M34 adds the diagnose/dismiss actions.
     'GET incidents': ({ query }) => {
       const parsed = IncidentsQuery.parse(query)
       const scope: { project?: string; ticket?: string; request?: string; session?: string } = {}
@@ -422,9 +422,9 @@ function routes(runtime: HttpHost): Routes {
         ...(parsed.severity === undefined ? {} : { severity: parsed.severity }), offset: parsed.offset, limit: parsed.limit }
     },
     'GET incidents/:id': ({ params }) => {
-      const view = runtime.incidents.detail(params.id)
-      if (view === undefined) throw new RouteError(404, 'Incident not found')
-      return view
+      // `requireIncident` raises `incidentUnknown`, which the failure mapper turns into the one missing-record 404.
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      return runtime.incidents.detail(incident.id)!
     },
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {

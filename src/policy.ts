@@ -186,7 +186,7 @@ export const EvalConfigSchema = z.object({
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
 /**
- * Deterministic incident detection (docs/015, ADR-0004): `enabled` is the gate for the detectors, `autoDiagnose` is
+ * Deterministic incident detection (ADR-0004, ADR-0004): `enabled` is the gate for the detectors, `autoDiagnose` is
  * reserved for the read-only diagnoser (M34), `dailyBudget` caps new records a day, and `minimumSeverity` keeps quiet
  * conditions out of the record. Detection makes no model call and changes no code.
  */
@@ -214,7 +214,7 @@ export const ExecutorConfigSchema = z.object({
   logLevel: z.enum(['info', 'debug']).default('info'),
   /// How many daily JSONL log files the host keeps before pruning the oldest.
   logRetentionDays: z.number().int().min(1).max(30).default(7),
-  /// Deterministic incident detection (docs/015); no model call and no automatic fix.
+  /// Deterministic incident detection (ADR-0004); no model call and no automatic fix.
   incidents: IncidentsConfigSchema.default(() => IncidentsConfigSchema.parse({})),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
@@ -303,7 +303,7 @@ export function fieldTier(block: SettingsSave, path: string): FieldTier {
     if (path === 'executor.logLevel' || path === 'executor.logRetentionDays') return 'C'
     if (path === 'executor.directory' || path === 'executor.prepare' || path.startsWith('executor.blockedCommands')
       || path.startsWith('executor.projects')) return 'C'
-    // Incident detection and its budget are operator-only: the detectors decide what the panel records (docs/015).
+    // Incident detection and its budget are operator-only: the detectors decide what the panel records (ADR-0004).
     if (path === 'executor.incidents' || path.startsWith('executor.incidents.')) return 'C'
     return 'B'
   }

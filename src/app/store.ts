@@ -85,7 +85,7 @@ export class Store implements Repositories {
   readonly projectRequests: ProjectRequests
   /** Drafts, filed Issues and dismissed findings of the self-evolution Issue outlet (docs/014 D3, schema 24). */
   readonly selfReports: SelfReportRecords
-  /** Deterministic incidents and their occurrences (docs/015, ADR-0004, schema 25). */
+  /** Deterministic incidents and their occurrences (ADR-0004, schema 25). */
   readonly incidents: IncidentRecords
   /** Facts, decisions, preferences and lessons that outlive a Session and are recalled by tools and the prompt. */
   readonly memories: Memories

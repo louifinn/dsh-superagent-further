@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (docs/015, ADR-0004), which the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (ADR-0004), which the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -261,7 +261,7 @@ export function migrateTo23(store: Store): void {
  */
 export function migrateTo24(_store: Store): void {}
 /**
- * Schema 25 adds the `incident` table for deterministic incident detection (docs/015, ADR-0004): one durable record per
+ * Schema 25 adds the `incident` table for deterministic incident detection (ADR-0004): one durable record per
  * condition, its occurrences and the path of its evidence bundle. The Store creates the table before this runs and no
  * schema 24 record needs a backfill, so the step stays in the sequence as the place for a later incident record rewrite.
  */

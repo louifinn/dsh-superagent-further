@@ -686,7 +686,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       skills: Object.fromEntries(skills),
       orchestrator: composePrompt(body, 'orchestrator'), worker: composePrompt(body, 'worker'), scope: '' }
   } },
-  // Deterministic incidents (docs/015): the API filters, counts and pages records the same way the host service does.
+  // Deterministic incidents (ADR-0004): the API filters, counts and pages records the same way the host service does.
   'GET incidents': { query: ['status', 'severity', 'project', 'ticket', 'request', 'session', 'offset', 'limit'], answer: ({ query }) => {
     const status = (query.status ?? 'open') as ApiResponse<'GET incidents'>['status']
     const severity = query.severity as ApiResponse<'GET incidents'>['severity']

@@ -19,7 +19,7 @@ export interface RequestRow { id: string; title: string; createdAt: string; tick
 export interface DeliveryFailure { path: string; chat: string; reason: string; at: string }
 /** One observe-mode self report awaiting a person: its title, target repository, evidence preview and age (docs/014 D5). */
 export interface SelfReportRow { id: string; title: string; target_repo: string; evidence: string; createdAt: string }
-/** One open incident in the Overview's "needs you" row: what fired, how severe it is and when it last repeated (docs/015). */
+/** One open incident in the Overview's "needs you" row: what fired, how severe it is and when it last repeated (docs/005-panel.md). */
 export interface IncidentRow { id: string; rule: string; severity: string; title: string; occurrences: number; last_at: string
   scope: { project?: string; ticket?: string; request?: string; session?: string } }
 import { preview } from './text.ts'
@@ -127,7 +127,7 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
       title: report.title, target_repo: report.target_repo, evidence: preview(report.evidence), createdAt: report.created_at })),
     /** True when today's daily cap is reached, so the panel says why approving will keep a draft instead of filing it. */
     selfReportsBlocked: filedSelfReportsToday(store.selfReports.list('filed'), now).length >= SELF_REPORT_DAILY_LIMIT,
-    /** One "needs you" entry per rule-created incident still awaiting attention (docs/015); M34 adds diagnosis actions. */
+    /** One "needs you" entry per rule-created incident still awaiting attention (docs/005-panel.md); M34 adds diagnosis actions. */
     incidents: { count: store.incidents.openCount(), items: openIncidents.map((incident): IncidentRow => ({ id: incident.id,
       rule: incident.rule, severity: incident.severity, title: incident.title, occurrences: incident.occurrences,
       last_at: incident.last_at, scope: incident.scope })) },

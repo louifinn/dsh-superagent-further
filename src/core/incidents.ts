@@ -1,5 +1,5 @@
 /**
- * The incident model (docs/015, ADR-0004): what a deterministic detector reports, how two reports of the same
+ * The incident model (ADR-0004): what a deterministic detector reports, how two reports of the same
  * condition are recognised as one record, and which status changes a record may take. Detection is pure and makes no
  * model call; a fingerprint is a stable hash over the rule, the normalized scope ids and a digit-normalized detail,
  * so a repeating count or a new identifier never creates a second record for the same condition.

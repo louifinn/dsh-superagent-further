@@ -140,7 +140,7 @@ function SelfReportEntry({ item, blocked, onChanged }: {
     </div>
   </li>
 }
-/** One open deterministic incident in the Overview's "needs you" row, linking to the Incidents page (docs/015). */
+/** One open deterministic incident in the Overview's "needs you" row, linking to the Incidents page (docs/005-panel.md). */
 function IncidentEntry({ item }: { item: ApiResponse<'GET overview'>['incidents']['items'][number] }) {
   const { t, navigate } = usePanel()
   const tone: TagTone = item.severity === 'critical' ? 'danger' : item.severity === 'high' ? 'warning'
@@ -219,7 +219,7 @@ export function OverviewPage() {
     {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
       <ul className="dt-list">{data.escalations.map(item => <EscalationEntry key={item.id} item={item} onChanged={reload} />)}</ul>
     </Section>}
-    {/* Open deterministic incidents are the host's own findings: they need a person, not a second request (docs/015). */}
+    {/* Open deterministic incidents are the host's own findings: they need a person, not a second request (docs/005-panel.md). */}
     {incidents.count > 0 && <Section title={t('incidentsNeedsYou')} count={incidents.count} action={more({ page: 'incidents' })}>
       <ul className="dt-list">{incidents.items.map(item => <IncidentEntry key={item.id} item={item} />)}</ul>
     </Section>}

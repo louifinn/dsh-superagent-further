@@ -67,7 +67,7 @@ export class Logs {
   private minimum: () => LogMinLevel = () => 'debug'
   /** The consecutive streak being folded: its first time, its last time, and how many entries it holds. */
   private fold?: { at: number; lastAt: number; level: LogLevel; scope: string; message: string; data?: Record<string, unknown>; count: number }
-  /** Bounded observers of every recorded entry, used by deterministic incident detection (docs/015). */
+  /** Bounded observers of every recorded entry, used by deterministic incident detection (ADR-0004). */
   private readonly observers = new Set<(entry: LogEntry, at: Date) => void>()
   constructor(private readonly now: () => Date = () => new Date(), private readonly limit = LOG_LIMIT) {}
 

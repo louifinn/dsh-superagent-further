@@ -111,5 +111,7 @@ it('serves the incident list and detail with the manifest summary over the manag
   const view = detail.body as { incident: { id: string }; evidence: { dir: string; manifest: { files: unknown[] } } | null }
   expect(view.incident.id).toBe(body.incidents[0]!.id)
   expect(view.evidence!.manifest.files.length).toBeGreaterThan(0)
-  expect((await h.api('GET', 'incidents/not-a-record')).status).toBe(404)
+  const missing = await h.api('GET', 'incidents/not-a-record')
+  expect(missing.status).toBe(404)
+  expect(missing.body.code).toBe('incidentUnknown')
 })

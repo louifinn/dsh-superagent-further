@@ -94,7 +94,7 @@ export interface Api {
   'POST self-reports/:id/approve': { response: { status: 'filed' | 'linked'; report_id: string; issue_number: number } }
   /** Dismiss one draft self report from the Overview without filing it. */
   'POST self-reports/:id/dismiss': { response: { status: 'dismissed'; id: string } }
-  /** Deterministic incidents, newest first, with the gate's filters and paging (docs/015). */
+  /** Deterministic incidents, newest first, with the gate's filters and paging (docs/006-deployment.md). */
   'GET incidents': { query?: Paged & { status?: IncidentStatusFilter; severity?: IncidentSeverity; project?: string
     ; ticket?: string; request?: string; session?: string }; response: IncidentListView }
   /** One incident with its evidence manifest summary, or 404 when the record does not exist. */

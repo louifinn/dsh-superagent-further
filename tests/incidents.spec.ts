@@ -3,7 +3,7 @@
  * condition, occurrences count its bursts, the cooldown and daily budget govern how often a person is asked, and an
  * evidence bundle is written beside the workspace. No test makes a model call: detection is pure.
  */
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -37,7 +37,7 @@ afterEach(() => {
 
 /** One service over a real Store, a temp workspace, a real ring and an exact clock. */
 function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medium' | 'high' | 'critical'; dailyBudget?: number }
-  = {}, limits: { cooldownMs?: number; openCap?: number; keepBundles?: number; workspace?: string } = {}) {
+  = {}, limits: { cooldownMs?: number; openCap?: number; keepBundles?: number; workspace?: string; workspaceThrows?: boolean } = {}) {
   directory = mkdtempSync(join(tmpdir(), 'incidents-'))
   workspace = limits.workspace ?? join(directory, 'workspace')
   // A test passing a workspace under a regular file leaves it uncreated, so the evidence write fails as intended.
@@ -53,7 +53,12 @@ function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medi
   let next = 0
   const incidents = new Incidents({
     store: { incidents: store.incidents, settings: () => settings },
-    workspace: () => workspace,
+    // A throwing host models a detection before the Orchestrator workspace is selected; the record must survive
+    // without an evidence bundle and without falling back to the state directory.
+    workspace: () => {
+      if (limits.workspaceThrows === true) throw new Error('The Orchestrator workspace is not selected')
+      return workspace
+    },
     stateDir: directory,
     logs,
     health: { set: value => { health.push(value) } },
@@ -187,6 +192,20 @@ describe('Incidents service', () => {
     expect(incident.evidence_dir).toBe('')
     expect(h.health.some(entry => entry.state === 'error')).toBe(true)
     expect(h.recorded.some(message => message.includes('evidence'))).toBe(true)
+    expect(h.store.incidents.get(incident.id)).not.toBeUndefined()
+  })
+
+  it('keeps a detection without evidence when the workspace is not selected, never writing under the state directory', () => {
+    const h = harness({}, { workspaceThrows: true })
+    expect(() => h.incidents.record(candidate('outbox-failures'))).not.toThrow()
+    const incident = h.store.incidents.list()[0]!
+    expect(incident.status).toBe('detected')
+    expect(incident.evidence_dir).toBe('')
+    expect(h.health.some(entry => entry.state === 'error' && entry.detail.includes('workspace is not selected'))).toBe(true)
+    expect(h.recorded.some(message => message.includes('evidence'))).toBe(true)
+    // ADR-0003: the state directory is never a workspace, so no bundle may appear beside it (or the unselected one).
+    expect(existsSync(join(h.directory, 'artifacts'))).toBe(false)
+    expect(existsSync(join(h.workspace, 'artifacts'))).toBe(false)
     expect(h.store.incidents.get(incident.id)).not.toBeUndefined()
   })
 

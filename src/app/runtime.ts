@@ -106,7 +106,7 @@ export class Runtime extends Service implements SourceHost {
   readonly passes: Passes
   /** The self-evolution Issue outlet's service, shared by the main Session's tool and the Overview's review routes. */
   readonly selfReports: SelfReports
-  /** Deterministic incident records and evidence bundles (docs/015, ADR-0004). */
+  /** Deterministic incident records and evidence bundles (ADR-0004). */
   readonly incidents: Incidents
   readonly ready: Promise<void>
   /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
@@ -231,11 +231,16 @@ export class Runtime extends Service implements SourceHost {
         health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
         record: message => this.log.warn('dsh-superagent-further: %s', message),
       })
-      // Deterministic incident detection (docs/015, ADR-0004): pure rules over events, the log stream and health
+      // Deterministic incident detection (ADR-0004): pure rules over events, the log stream and health
       // transitions; the records service owns the table, the cooldown and the evidence bundle. No model call, no fix.
       this.incidents = new Incidents({
         store: { incidents: store.incidents, settings: () => store.settings() },
-        workspace: () => this.setup.workspace?.path || store.settings().workspace.path || this.machine.stateDir,
+        // Evidence lives under the selected Orchestrator workspace; the state directory is never a workspace (ADR-0003).
+        workspace: () => {
+          const path = this.setup.workspace?.path || store.settings().workspace.path
+          if (path === '') throw new Error('The Orchestrator workspace is not selected')
+          return path
+        },
         stateDir: this.machine.stateDir,
         logs: this.logs,
         health: board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' }),

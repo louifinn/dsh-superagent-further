@@ -1,5 +1,5 @@
 /**
- * Deterministic incident detectors (docs/015, ADR-0004). Every rule is a pure, bounded reduction over facts the host
+ * Deterministic incident detectors (ADR-0004). Every rule is a pure, bounded reduction over facts the host
  * already records: DomainEvents, operational log entries and health transitions. A detector returns signals — a new
  * candidate or the fingerprint of a condition that cleared — and makes no model call and no decision about writing.
  * The `update-failures` rule is reserved for the update pipeline (M36) and has no detector here.
