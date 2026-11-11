@@ -596,7 +596,7 @@ Parameters:
 
 ### `orchestrator_reply`
 
-Send an answer, a ready result, or attention requiring human action, as the replies section says; the gate refuses other purposes. purpose=result needs a ticket in person/review after a ready report, a completed or merged one, or a dropped one whose rule asks for a closing message. IM limit: 100 words.
+Send an answer, a ready result, or attention requiring human action, as the replies section says; the gate refuses other purposes. purpose=answer needs the worker's registered answer, or the question an answer ticket started from once its report is ready or the ticket completed. purpose=result needs a ticket in person/review after a ready report, a completed or merged one, or a dropped one whose rule asks for a closing message. IM limit: 100 words.
 
 Parameters:
 
@@ -1800,7 +1800,7 @@ Parameters:
       ]
     },
     "reply_to_trigger_id": {
-      "description": "The explicit human question this report answers; never for ordinary progress.",
+      "description": "The explicit human question this report answers; never for ordinary progress. An answer ticket's ready report already answers the question that started it.",
       "type": "string"
     },
     "requests": {

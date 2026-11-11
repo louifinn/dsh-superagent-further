@@ -1074,6 +1074,24 @@ describe('replies', () => {
     expect(h.engine.reply({ purpose: 'result', ticketId, text: 'Done' })).toMatchObject({ status: 'pending' })
     expect(h.outbox.at(-1)!.channel).toEqual(trigger('1').channel)
   })
+  it('answers the question an answer ticket started from once its ready report lands, with no registered answer', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    // The ticket owes an answer to its origin question, but until the worker reports, that channel stays shut.
+    expect(() => h.engine.reply({ purpose: 'answer', triggerId: '1', text: 'Yes' })).toThrow(new UserError('noAnswer'))
+    h.engine.report(ticketId, { state: 'progress', summary: 'Looking' })
+    expect(() => h.engine.reply({ purpose: 'answer', triggerId: '1', text: 'Yes' })).toThrow(new UserError('noAnswer'))
+    // A ready report with no reply_to_trigger_id is the deliverable, so it answers the origin question on its own.
+    h.engine.report(ticketId, { state: 'ready', summary: 'Done' })
+    expect(h.repo.tickets.get(ticketId)!.ended).toMatchObject({ outcome: 'completed' })
+    expect(h.engine.reply({ purpose: 'answer', triggerId: '1', text: 'Yes' })).toMatchObject({ status: 'pending', reused: false })
+    expect(h.outbox.at(-1)).toMatchObject({ channel: trigger('1').channel, text: 'Yes', kind: 'reply', ticketId })
+    // A change ticket's origin question keeps the strict rule: its ready report delivers through a result, not an answer.
+    const changeId = accepted(h, '7', 't7', 'change').ticketId!
+    h.engine.bindThread(changeId, { source: 'gh', id: 'pr-2' }, true)
+    h.engine.threadClosed({ source: 'gh', id: 'pr-2' }, 'merged', '2026-09-23T00:02:00Z')
+    expect(() => h.engine.reply({ purpose: 'answer', triggerId: '7', text: 'Merged' })).toThrow(new UserError('noAnswer'))
+  })
 })
 describe('ticket commands', () => {
   it('ends a ticket by the same rule on a close and on a ready report: once no PR it opened is open, as the latest of them ended', () => {
