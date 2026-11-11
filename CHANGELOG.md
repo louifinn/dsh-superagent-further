@@ -284,6 +284,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- The setup wizard can always be closed. While no workspace was selected, the modal's close button, Escape and the backdrop
+  did nothing, so an operator who opened the wizard without finishing the workspace step was trapped in the dialog; the
+  setup wizard could not be left even though only SuperAgent itself should stay unavailable. Closing the dialog now always
+  works and records nothing: the runtime stays `paused`/`setupPending` until a valid workspace is saved, the server still
+  refuses `PUT wizard` with `workspaceRequired`, Skip step and Skip all stay disabled, and the header **Setup wizard** entry
+  reopens the dialog. The dialog also states that closing it leaves SuperAgent paused. Covered by
+  `tests/panel-setup-wizard.spec.tsx`.
 - A refused database restore can no longer silently roll a WAL-mode database back to its older main file. `restoreDatabase`
   removed `<stateDir>/orchestrator.sqlite-wal` and `-shm` before copying the backup, so when the journaled backup was
   missing, unreadable or truncated — or the process died between the two steps — the candidate's committed migration,

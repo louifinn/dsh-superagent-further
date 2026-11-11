@@ -1,8 +1,8 @@
 /**
  * First-run setup wizard: select the mandatory Orchestrator workspace, register a project, check the GitHub agent account,
  * optionally enable Feishu, and choose the default language. Every step after the workspace can be skipped or revisited, and
- * the wizard can be skipped from any of those steps; the workspace step itself must be completed, and the dialog cannot close
- * before one is selected.
+ * the wizard can be skipped from any of those steps. The server keeps SuperAgent paused until a workspace is selected, but
+ * the dialog itself can always be closed: leaving setup unfinished never traps the operator in the wizard.
  */
 import { useState } from 'react'
 import { LIMITS } from '../limits.ts'
@@ -29,13 +29,15 @@ export function SetupWizard({ onClose }: { onClose: () => void }) {
   return <SettingsProvider><WizardFrame close={onClose} /></SettingsProvider>
 }
 
-/** The dialog's close button is inert until a workspace is selected, since the wizard must not be dismissed unfinished. */
+/**
+ * The dialog can always be closed: the workspace gates SuperAgent's work through the paused runtime, not the operator
+ * through the modal. Closing records nothing, so the first run stays open and the header entry reopens the wizard.
+ */
 function WizardFrame({ close }: { close: () => void }) {
   const { t } = usePanel()
-  const { settings } = useSettings()
-  const locked = settings.blocks.workspace.value.path.trim() === ''
-  return <Modal className="dt-wizard" open onClose={locked ? () => {} : close} title={t('wizardTitle')} closeLabel={t('close')}
+  return <Modal className="dt-wizard" open onClose={close} title={t('wizardTitle')} closeLabel={t('close')}
     description={t('wizardIntro')}>
+    <p className="dt-hint">{t('wizardClosableHint')}</p>
     <Wizard close={close} />
   </Modal>
 }

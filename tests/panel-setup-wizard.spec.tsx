@@ -94,19 +94,26 @@ it('turns the Feishu source off from its step', async () => {
   expect(text()).toContain(zh.wizardLanguageIntro)
 })
 
-it('keeps skipping, closing, and finishing locked until a workspace is selected', async () => {
+it('keeps skipping and finishing locked, but lets the dialog close before a workspace is selected', async () => {
   server.settings = { ...server.settings, workspace: { path: '' } }
   server.setup = { ...server.setup, workspace: null }
   server.wizard = { firstRun: true, skipped: false }
   await mount()
   await click(wizardButton(zh.wizardStart))
   expect(text()).toContain(zh.wizardWorkspaceIntro)
+  expect(text()).toContain(zh.wizardClosableHint)
   expect((wizardButton(zh.wizardSkipStep) as HTMLButtonElement).disabled).toBe(true)
   expect((wizardButton(zh.wizardSkipAll) as HTMLButtonElement).disabled).toBe(true)
-  // Closing is a no-op in this state, and it never records a skip on the server.
+  // Closing never answers the wizard: the host stays paused until a workspace is saved, but the dialog can always be left.
   await click(wizardButton(zh.close))
-  expect(all('[role="dialog"]')).toHaveLength(1)
+  expect(all('[role="dialog"]')).toHaveLength(0)
   expect(server.requests.some(request => request.path === 'wizard')).toBe(false)
+  expect(server.settings.workspace.path).toBe('')
+  // The header entry reopens it, and the workspace step still works afterwards.
+  await click(find(zh.wizardOpen))
+  expect(dialog()?.getAttribute('aria-label')).toBe(zh.wizardTitle)
+  await click(wizardButton(zh.wizardStart))
+  expect(text()).toContain(zh.wizardWorkspaceIntro)
   await type(field<HTMLInputElement>(zh.wizardWorkspaceLabel), '/home/user/agent-home')
   await click(wizardButton(zh.wizardSave))
   expect(server.requests).toContainEqual({ path: 'settings/workspace', method: 'PUT',

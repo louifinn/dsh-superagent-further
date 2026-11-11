@@ -1277,6 +1277,8 @@ const TEXT = {
   'wizardOpen': ['设置向导', 'Setup wizard'],
   'wizardIntro': ['这个向导帮助你完成第一次启动：选择工作区、登记项目、检查账号，并按需配置飞书与默认语言。',
     'This wizard completes the first start: choose the workspace, register a project, check accounts, and optionally set up Feishu and the default language.'],
+  'wizardClosableHint': ['你可以随时关闭此窗口；在完成引导前 SuperAgent 保持暂停，不会开始工作。',
+    'You can close this dialog at any time; SuperAgent stays paused and does no work until setup is complete.'],
   'wizardWelcome': ['请先选择主 Session 的工作区；其余步骤建议按顺序完成，可以跳过，之后也能从页面右上角重新打开。',
     'Choose the main Session\'s workspace first; work through the remaining steps in order—they can be skipped, and the header entry reopens the wizard later.'],
   'wizardStep.workspace': ['选择工作区', 'Choose a workspace'],
