@@ -13,8 +13,8 @@ import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, Source
   TicketRow, TicketStage,
   TriggerRow } from '../../src/client/api.ts'
 import { SETUP_FIELDS } from '../../src/deployment.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema } from '../../src/policy.ts'
-import { SetupError, type SetupCode } from '../../src/setup.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, WorkspaceConfigSchema } from '../../src/policy.ts'
+import { SetupError, type SetupCode, type SetupProblem } from '../../src/setup.ts'
 import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
 import { githubChannel } from '../../src/sources/github-trigger.ts'
 import { feishuKind } from '../../src/sources/feishu.ts'
@@ -82,6 +82,9 @@ export const problemOf = (code: SetupCode, values: Record<string, string> = {}) 
 const KINDS = [feishuKind, githubKind] as unknown as SourceKind[]
 export const MACHINE = { stateDir: '/srv/dsh-superagent-further', promptMaxChars: 100000, admissionContextMaxPages: 10,
   admissionContextTimeoutMs: 15000 }
+/** The problem the host reports while no Orchestrator workspace is selected; the wizard must not be skipped. */
+export const WORKSPACE_REQUIRED = { place: 'execution', code: 'workspaceRequired', values: {},
+  detail: 'The orchestrator workspace is not selected. Choose an empty directory in the setup wizard before selecting a project.' } as unknown as SetupProblem
 
 type Settings = ReturnType<typeof SettingsSchema.parse>
 export interface PanelServer {
@@ -201,7 +204,8 @@ const settingsView = (): ApiResponse<'GET settings'> => ({
     eval: { value: server.settings.eval, revision: server.revisions.eval ?? 0 },
     executor: { value: server.settings.executor, revision: server.revisions.executor ?? 0 },
     memory: { value: server.settings.memory, revision: server.revisions.memory ?? 0 },
-    language: { value: server.settings.language, revision: server.revisions.language ?? 0 } },
+    language: { value: server.settings.language, revision: server.revisions.language ?? 0 },
+    workspace: { value: server.settings.workspace, revision: server.revisions.workspace ?? 0 } },
   sources: sourceSettings(),
   environment: { root: '/srv/dsh-superagent-further/work', variables: [
     { owner: 'executor', enabled: true, variables: [{ key: 'DSH_SUPERAGENT_DIR', description: { zh: '工单的执行目录',
@@ -276,6 +280,7 @@ function threadPage(key: string, { before, around }: { before?: string; around?:
 }
 function initial(): PanelServer {
   const settings = SettingsSchema.parse({
+    workspace: { path: '/srv/agent-home' },
     policy: { sources: { feishu: { allowed: [{ id: 'ou_alice', name: 'Alice' }], syncChat: 'oc_team' },
       github: { allowed: [{ id: 'alice' }] } },
       rules: [{ id: 'copy', name: '文案修改', enabled: true, instruction: '修正明确的文案错误' }] },
@@ -293,11 +298,12 @@ function initial(): PanelServer {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
+      workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
     // Existing panel tests start on a finished installation; wizard tests set `firstRun` themselves.
     wizard: { firstRun: false, skipped: false },
-    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0 }, restoreValues: {},
+    settings, revisions: { policy: 3, eval: 1, executor: 0, memory: 0, language: 0, workspace: 0 }, restoreValues: {},
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },
       defaults: defaultPrompts(), parts: Object.entries(builtInParts()).map(([key, part]) => ({ key, ...part, base: builtInBase(part.text) })),
@@ -541,7 +547,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'PUT settings/:block': { body: true, answer: ({ params: { block }, body }) => {
     const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
-    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'memory', 'language', 'workspace'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     if (body.revision !== (server.revisions[block] ?? 0)) return refuse(409, 'Settings changed. Reload before saving.')
     let restarting = false
@@ -550,7 +556,18 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(body.value) }
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(body.value) }
     else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(body.value) }
-    else if (source) {
+    else if (block === 'workspace') {
+      const value = WorkspaceConfigSchema.parse(body.value)
+      // As the host does: a selection is an absolute canonical directory and a change restarts setup.
+      if (value.path !== '' && !/^(?:[A-Za-z]:[\\/]|\/)/.test(value.path)) {
+        return refuse(400, 'The workspace path must be absolute.', { setup: { ...WORKSPACE_REQUIRED, code: 'workspaceInvalid',
+          detail: 'The workspace path must be an absolute directory.' } })
+      }
+      restarting = value.path !== server.settings.workspace.path
+      server.settings = { ...server.settings, workspace: value }
+      if (value.path !== '') server.setup = { ...server.setup, workspace: { path: value.path,
+        title: `dsh-superagent-further · ${value.path.split(/[\\/]/).filter(Boolean).at(-1) ?? value.path}` } }
+    } else if (source) {
       const { enabled, config: value } = SourceSave.parse(body.value)
       const config = source.schema.parse(value)
       // As on the server, a changed CLI that fails its check refuses the save with the setup problem.
@@ -566,7 +583,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'POST settings/:block/restore': { body: true, answer: ({ params: { block }, body }) => {
     const source = block.startsWith('source:') ? KINDS.find(kind => `source:${kind.kind}` === block) : undefined
-    if (!['policy', 'eval', 'executor', 'memory', 'language'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'memory', 'language', 'workspace'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     const snapshot = server.restoreValues[body.revision]
     if (!snapshot) return refuse(404, `No settings revision ${body.revision} is retained`)
@@ -576,6 +593,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'executor') value = snapshot.executor
     else if (block === 'memory') value = snapshot.memory
     else if (block === 'language') value = snapshot.language
+    else if (block === 'workspace') value = snapshot.workspace
     else if (source) value = snapshot.sources[source.kind]
     if (value === undefined) return refuse(404, `Settings revision ${body.revision} does not contain ${block}`)
     let restarting = false
@@ -584,6 +602,11 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(value) }
     else if (block === 'memory') server.settings = { ...server.settings, memory: MemoryConfigSchema.parse(value) }
     else if (block === 'language') server.settings = { ...server.settings, language: LanguageConfigSchema.parse(value) }
+    else if (block === 'workspace') {
+      const workspace = WorkspaceConfigSchema.parse(value)
+      restarting = workspace.path !== server.settings.workspace.path
+      server.settings = { ...server.settings, workspace }
+    }
     else if (source) {
       const { enabled, config: stored } = SourceSave.parse(value)
       const config = source.schema.parse(stored)
@@ -601,6 +624,10 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },
   'POST setup/check': { answer: () => ({ restarting: true }) },
   'PUT wizard': { body: true, answer: ({ body }) => {
+    // A workspace is mandatory, so the wizard cannot answer before one is selected, exactly as the host refuses it.
+    if (server.settings.workspace.path === '') {
+      return refuse(400, WORKSPACE_REQUIRED.detail, { setup: WORKSPACE_REQUIRED })
+    }
     server.wizard = { firstRun: false, skipped: body.skipped }
     return { ...server.wizard }
   } },

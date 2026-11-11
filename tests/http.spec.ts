@@ -250,11 +250,12 @@ it('answers 404 for a memory that is not stored', async () => {
     .toEqual({ status: 404, body: { error: 'Memory not found' } })
 })
 
-it('opens the setup wizard on a first run and records the answer in the key-value store', async () => {
+it('opens the setup wizard, refuses to skip it before a workspace is selected, and records the answer after one is', async () => {
   let saved: { at: string; skipped: boolean } | undefined
+  const workspace = { path: '/srv/agent-home' }
   const base = {
     store: {
-      settings: () => SettingsSchema.parse({}),
+      settings: () => SettingsSchema.parse({ workspace }),
       tickets: { open: () => [] },
       get: () => saved,
       set: (_key: string, value: { at: string; skipped: boolean }) => { saved = value },
@@ -268,6 +269,13 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
   }
   const call = serve(base)
   expect(await call('GET', 'state')).toMatchObject({ status: 200, body: { wizard: { firstRun: true, skipped: false } } })
+  // Without a workspace, the wizard cannot record an answer: the host is paused in setupPending, and the next reload must
+  // still present the workspace step as unanswered.
+  const unset = serve({ ...base, store: { ...base.store, settings: () => SettingsSchema.parse({}) } })
+  expect(await unset('PUT', 'wizard', { skipped: true })).toMatchObject({ status: 400,
+    body: { setup: { place: 'execution', code: 'workspaceRequired' } } })
+  expect(saved).toBeUndefined()
+  // With a workspace selected, the skip is recorded and closes the wizard once no project is registered.
   expect(await call('PUT', 'wizard', { skipped: true })).toEqual({ status: 200, body: { firstRun: false, skipped: true } })
   expect(saved?.skipped).toBe(true)
   expect(Number.isNaN(Date.parse(saved!.at))).toBe(false)
@@ -275,7 +283,7 @@ it('opens the setup wizard on a first run and records the answer in the key-valu
   expect(await call('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: true } } })
   // Registering a project also ends the first run before any answer is recorded.
   const registered = serve({ ...base, store: { ...base.store, get: () => undefined,
-    settings: () => SettingsSchema.parse({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/srv/app',
+    settings: () => SettingsSchema.parse({ workspace, executor: { projects: [{ id: 'app', name: 'App', workspace: '/srv/app',
       repository: 'acme/app' }] } }) } })
   expect(await registered('GET', 'state')).toMatchObject({ body: { wizard: { firstRun: false, skipped: false } } })
   // The answer must be a boolean; a malformed body is refused before it reaches the store.

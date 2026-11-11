@@ -6,11 +6,11 @@ import type { Project } from '../projects.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
 import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, Tag, type TagTone } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
-import { usePanel } from './provider.tsx'
+import { usePanel, usePanelData } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { localized, valueLabel } from './text.ts'
-import { ClampText, ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead, When } from './widgets.tsx'
+import { ClampText, ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, SetupMessage, StatusHead, When } from './widgets.tsx'
 
 export function ExecutionStatus({ filter: current, state, reload }: {
   filter: TicketFilter; state: StateView; reload: () => Promise<void>
@@ -136,6 +136,36 @@ function Projects({ projects, onChange }: { projects: Project[]; onChange: (next
     </li>)}</ul> : <Hint>{t('projectsEmpty')}</Hint>}
   </Section>
 }
+/** The name of a workspace directory, as the DSH title ends with it. */
+const workspaceName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+/**
+ * The mandatory Orchestrator workspace: the explicitly titled DSH workspace the main Session runs in, and the settings block
+ * that selects it. The title comes from the running host; before the first save the path's last segment stands in for it.
+ */
+function WorkspaceSettings() {
+  const { t } = usePanel()
+  const { setup } = usePanelData()
+  const { settings } = useSettings()
+  const block = settings.blocks.workspace
+  const draft = useBlockDraft('workspace', block.value, block.revision)
+  const title = setup?.workspace?.title ?? (block.value.path ? `dsh-superagent-further · ${workspaceName(block.value.path)}` : '')
+  return <div className="dt-form dt-block">
+    <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
+      <Fields disabled={draft.busy}>
+        <Section title={t('workspaceSettingsTitle')} hint={t('workspaceSettingsIntro')}>
+          {title !== '' && <LabelValue label={t('workspaceTitleLabel')} value={title} />}
+          <Field label={t('workspacePathLabel')} hint={t('workspacePathHint')}
+            note={block.value.path ? undefined : t('workspacePathEmpty')}>
+            <Input className="dt-mono" required spellCheck={false} value={draft.value.path}
+              placeholder={t('workspacePathPlaceholder')} onChange={event => draft.edit({ path: event.target.value })} />
+          </Field>
+          {setup?.problem?.place === 'execution' && <SetupMessage problem={setup.problem} />}
+        </Section>
+      </Fields>
+      <SaveBar {...draft} onDiscard={draft.discard} />
+    </form>
+  </div>
+}
 export function ExecutionSettings() {
   const { t } = usePanel()
   const { blocks, environment, sources } = useSettings().settings
@@ -154,6 +184,7 @@ export function ExecutionSettings() {
     requestAnimationFrame(() => { field?.focus(); const caret = at + key.length + 3; field?.setSelectionRange(caret, caret) })
   }
   return <div className="dt-form">
+    <WorkspaceSettings />
     <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
       <Fields disabled={draft.busy}>
         <div className="dt-form dt-block">
@@ -210,6 +241,6 @@ export function ExecutionSettings() {
       </Fields>
       <SaveBar {...draft} onDiscard={draft.discard} />
     </form>
-    <ConfigHistory blocks={['executor', 'pause']} />
+    <ConfigHistory blocks={['workspace', 'executor', 'pause']} />
   </div>
 }

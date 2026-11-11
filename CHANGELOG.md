@@ -8,6 +8,21 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The Orchestrator workspace is mandatory and first-class. The main Session now runs in an operator-selected, explicitly
+  titled DeepSeek Harness workspace (`dsh-superagent-further · <directory name>`) instead of the plugin's `stateDir`; the
+  path is a tier-A `workspace` settings block, validated and canonicalized by `src/app/workspace-root.ts` (absolute, empty
+  or carrying `.dsh-superagent-workspace`, owner-only `0700`/ACL, no overlap with the state directory and its `work/`, the
+  DSH home/profile/session store, the checkout or a project workspace; no symlink, UNC or root path). The master Session id
+  is derived from the workspace (`orchestrator-<hash>`), and setup resolves the workspace before projects, accounts and the
+  worker environment. A missing or invalid workspace is `workspaceRequired`, `workspaceInvalid`, `workspaceNotEmpty`,
+  `workspaceNotWritable` or `workspaceUnsafe`, and startup stays `paused`/`setupPending` with no workspace registration, no
+  master Session, no Source polling and no Executor. An upgrade archives the old master Session with `stopActivity`, deletes
+  the legacy `stateDir` DSH workspace registration without deleting a Session, creates the new master Session in the selected
+  workspace and publishes the new id in one `store.atomic` write. The setup wizard's workspace step is mandatory — skip,
+  close and finish are inert until a workspace is saved, and `PUT wizard` refuses a skip — the Execution settings page shows
+  the titled workspace card, and `GET state`/`GET settings` expose `setup.workspace` and `blocks.workspace`.
+  `docs/adr/0003-workspace-identity.md` records the decision. Covered by `tests/workspace-identity.spec.ts` and the extended
+  runtime, http, policy, model-surface and panel specs.
 - Design document 014 — self-evolution: discovering superagent's own problems in flight and routing them by
   jurisdiction to a self-fix Ticket (repository registered) or a GitHub Issue on the self repository, with a
   gated Issue outlet and a switchable scheduled self-inspection. Approved by the operator on 2026-11-10 with

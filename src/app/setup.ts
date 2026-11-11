@@ -6,6 +6,7 @@ import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, 
 import type { Settings, SettingsBlock } from '../policy.ts'
 import type { CaptureLogs } from './logs.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
+import { prepareWorkspace, WorkspaceSetupError, type PreparedWorkspace } from './workspace-root.ts'
 
 export interface SetupHost {
   readonly context: Context
@@ -16,13 +17,15 @@ export interface SetupHost {
   readonly log?: CaptureLogs
 }
 
-// The values setup derives the deployment from: the Source CLIs it probes, and the first project, whose repository is the
-// primary repository setup verifies and names Threads by. The retired GitHub `repository` setting is not compared: the
-// schema drops it from a parsed Source, so a save that only removes it must not look like an account change.
+// The values setup derives the deployment from: the Source CLIs it probes, the first project, whose repository is the
+// primary repository setup verifies and names Threads by, and the mandatory workspace the main Session runs in. The retired
+// GitHub `repository` setting is not compared: the schema drops it from a parsed Source, so a save that only removes it must
+// not look like an account change.
 const setupFields = (settings: Settings) => JSON.stringify([
   settings.sources.github?.config.cli ?? '',
   settings.executor.projects[0]?.repository ?? '',
   settings.sources.feishu?.config.cli ?? '',
+  settings.workspace.path,
 ])
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
 
@@ -42,6 +45,8 @@ export const primaryRepository = (settings: Settings): string => {
  */
 export class Setup {
   private resolved?: Deployment
+  /** The prepared orchestrator workspace, available only after a successful `run`; startup registers exactly this. */
+  workspace?: PreparedWorkspace
   problem?: SetupProblem
   feishuProblem?: SetupProblem
   /** PATH with the worker shim directory removed so the host's own CLI calls invoke the real binaries. */
@@ -60,14 +65,23 @@ export class Setup {
     return this.resolved
   }
   configured(): boolean { return this.resolved !== undefined }
-  /** Resolve deployment accounts and apply the worker environment, recording `SetupError` failures in `problem`/`feishuProblem` and rethrowing unexpected errors. */
+  /** Resolve deployment accounts and apply the worker environment, recording setup failures in `problem`/`feishuProblem` and rethrowing unexpected errors. */
   async run(settings: Settings): Promise<boolean> {
+    this.workspace = undefined
     try { this.resolved = await this.resolve(settings); return true }
     catch (error) {
-      if (!(error instanceof SetupError)) throw error
+      if (!(error instanceof SetupError) && !(error instanceof WorkspaceSetupError)) throw error
       this.problem = error.problem
       return false
     }
+  }
+
+  /**
+   * Validate a workspace path as the panel would save it, returning the canonical path to persist. Used by
+   * `Settings.save` before a workspace change is stored, so an invalid selection is refused rather than restarted into.
+   */
+  async verifyWorkspace(path: string, settings: Settings): Promise<string> {
+    return (await prepareWorkspace({ path, stateDir: this.host.machine.stateDir, projects: settings.executor.projects })).path
   }
   /** Trigger a restart to re-run setup, refusing if setup and Feishu are already healthy so running assignments are not interrupted. */
   check(): void {
@@ -109,6 +123,10 @@ export class Setup {
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
     const probe = this.probe()
+    // The workspace is mandatory and comes first: without it the wizard cannot finish, no project can be selected, and the
+    // main Session would have no legitimate cwd. It also refuses every path whose identity belongs to this deployment.
+    this.workspace = await prepareWorkspace({ path: settings.workspace.path, stateDir: machine.stateDir,
+      projects: settings.executor.projects })
     // Every Ticket runs as a subagent of its project's Lead, so the host needs at least one registered project before it
     // serves work; that first project's repository is also the deployment's primary repository.
     if (settings.executor.projects.length === 0) throw new SetupError('projectUnset')

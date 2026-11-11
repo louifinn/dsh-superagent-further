@@ -223,6 +223,15 @@ export const MemoryConfigSchema = z.object({
 export const LanguageConfigSchema = z.object({
   default: z.string().trim().min(1).max(LIMITS.languageName).default('简体中文'),
 }).strict()
+/**
+ * The mandatory Orchestrator workspace: the operator-chosen empty directory the main Session runs in (docs/adr/0003).
+ * The path is persisted canonical and owner-only; a non-empty value is validated by `Setup.verifyWorkspace` against the
+ * deployment's state directory, the DSH home and profile, the source checkout, and every project checkout before it is saved.
+ */
+export const WorkspaceConfigSchema = z.object({
+  path: z.string().trim().default(''),
+}).strict()
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
   sources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).default({}),
@@ -231,11 +240,12 @@ export const SettingsSchema = z.object({
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
   memory: MemoryConfigSchema.default(() => MemoryConfigSchema.parse({})),
   language: LanguageConfigSchema.default(() => LanguageConfigSchema.parse({})),
+  workspace: WorkspaceConfigSchema.default(() => WorkspaceConfigSchema.parse({})),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
 export type MemoryConfig = Settings['memory']
 export type LanguageConfig = Settings['language']
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | `source:${string}`
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'workspace' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 /**
@@ -256,6 +266,7 @@ const SOURCE_TIER_B = new Set(['chats', 'directMessages', 'otherChats', 'digestC
 export function fieldTier(block: SettingsSave, path: string): FieldTier {
   if (block === 'pause') return 'A'
   if (block === 'policy') return 'B'
+  if (block === 'workspace') return 'A'
   if (block.startsWith('source:')) {
     const prefix = `sources.${block.slice('source:'.length)}.`
     const rest = path.startsWith(prefix) ? path.slice(prefix.length) : path

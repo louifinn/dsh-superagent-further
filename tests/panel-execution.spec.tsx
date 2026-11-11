@@ -28,6 +28,7 @@ it('lists Tickets under Execution by who they wait on, with the Executor state a
   await click(find(zh['tab.settings'], '.dt-status-head button'))
   expect(tab(zh['tab.settings']).getAttribute('aria-selected')).toBe('true')
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['promptPart.runtime/work'])
+  expect(text()).toContain(server.setup.workspace!.title)
   await type(field<HTMLInputElement>(zh.maxWorkers), '4')
   await click(tab(zh['tab.execution']))
   await click(zh.pauseProcessing)

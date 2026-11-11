@@ -62,3 +62,8 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
 
 1. `node scripts/archive-state.mjs --state-dir <dir>`; 2. pull the release tarball; 3. `pnpm install --frozen-lockfile && pnpm build`;
 4. `node scripts/verify-install`; 5. reload the plugin; 6. confirm Overview and Logs are clean.
+
+If the installation predates workspace identity, step 4 reports exit 2 and the panel shows `workspaceRequired`: open the setup wizard, select an absolute empty directory (not the state directory, a DSH home or profile, the checkout, or a project workspace), and save. The host registers the titled DSH workspace and creates a new master Session; the old one stays archived and readable, and the main conversation does not continue. Then repeat step 4 until it exits 0.
+
+- **The host starts paused at `workspaceRequired`**: this is the fail-closed state, not a broken upgrade. Select the workspace in the wizard or under **Execution → Settings**; until then nothing polls, no Executor starts and no master Session exists. An invalid path reports `workspaceInvalid`, `workspaceNotEmpty`, `workspaceNotWritable` or `workspaceUnsafe` with the reason, and nothing is saved.
+- **Choosing the workspace**: it is the directory the main Session works in, not the state directory. It must be absolute, empty or carry the `.dsh-superagent-workspace` marker, and must not overlap the state directory and its `work/`, the DSH home and profile, the source checkout, or a registered project workspace. The tool sets it owner-only.

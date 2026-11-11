@@ -257,7 +257,8 @@ describe('settings migration', () => {
       eval: { mode: 'auto', timeoutSeconds: 90, model: { provider: 'p', model: 'm' } },
       executor: { model: null, maxWorkers: 5, projectWorkers: 2, directory: '', prepare: '', blockedCommands: [], projects: [], worktreeKeepDays: 7, logLevel: 'info', logRetentionDays: 7 },
       memory: MemoryConfigSchema.parse({}),
-    language: LanguageConfigSchema.parse({}),
+      language: LanguageConfigSchema.parse({}),
+      workspace: { path: '' },
     })
     expect(migrateSettings(migrated)).toEqual(migrated)
   })

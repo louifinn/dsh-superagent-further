@@ -53,6 +53,7 @@ import type { SourceLabelChange, SourceLabelResult } from '../sources/kind.ts'
 import { SOURCE as SESSION_SOURCE, sessionDecisionText, sessionKind, sessionSubmitTool } from '../sources/session.ts'
 import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
+import { registerWorkspace, retireMaster, type WorkspaceRegistryLike } from './workspace-root.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
@@ -159,8 +160,14 @@ export class Runtime extends Service implements SourceHost {
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
-      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
-      store.set(KV.runtime.masterId, masterId)
+      // The master Session's identity is derived from the operator's workspace, never from the state directory. A stored id
+      // is used only while no workspace is selected yet (the host pauses in that state) or when a previous master exists;
+      // it is never published here, because startup publishes only after the workspace-derived session exists.
+      const storedMaster = store.get(KV.runtime.masterId)
+      const workspacePath = store.settings().workspace.path
+      const masterId = this.masterId = workspacePath === ''
+        ? storedMaster ?? `orchestrator-${key(machine.stateDir)}`
+        : `orchestrator-${key(workspacePath)}`
       // The schedule service is optional: without it the main Session has no automation tools and the rest of the runtime is
       // unchanged. Installations that mount it let the plugin create Host tasks that deliver turns to this main Session.
       const schedule = ctx.get('schedule') as ScheduleService | undefined
@@ -461,13 +468,28 @@ export class Runtime extends Service implements SourceHost {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
     }
+    // Setup validated and prepared the mandatory workspace; register exactly that directory, under its explicit title, and
+    // retire a previous master (archived, never deleted) and the state directory's legacy workspace registration. Nothing
+    // in this path hands the state directory to DSH as an agent cwd.
+    const prepared = this.setup.workspace!
+    const registry = this.ctx.workspaceRegistry as unknown as WorkspaceRegistryLike
+    const workspace = await registerWorkspace(registry, prepared)
+    const storedMaster = this.store.get(KV.runtime.masterId)
+    const retired = await retireMaster({ desired: this.masterId, stored: storedMaster, stateDir: this.machine.stateDir,
+      workspaceId: workspace.id, registry,
+      hasSession: async id => !('error' in await this.ctx.sessionController.resolveAgent(id as SessionId)) })
+      .catch((error: unknown) => { this.log.warn('dsh-superagent-further could not retire the previous master session: %s', String(error)); return { archived: [] } })
+    if (retired.archived.length) this.log.warn('dsh-superagent-further archived the previous master Session: %s', retired.archived.join(', '))
     this.sessions.install()
     this.executor.install()
     try {
-      await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent-further orchestrator', 'orchestrator')
+      await this.sessions.ensure(this.masterId, workspace, prepared.title, 'orchestrator')
     } catch (error) {
       throw hostedElsewhere(error, this.machine.stateDir, this.masterId)
     }
+    // Publish only after the new master Session exists: a crash before this point replays the same idempotent retirement and
+    // reuses the same workspace-derived id on the next start, so no session is ever orphaned or deleted.
+    if (storedMaster !== this.masterId) this.store.atomic(() => this.store.set(KV.runtime.masterId, this.masterId))
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
@@ -696,6 +718,7 @@ export class Runtime extends Service implements SourceHost {
       decideEscalation: input => runtime.decideEscalation(input),
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+      get workspace() { return setup.workspace ?? null },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
       requestShutdown: () => { runtime.requestShutdown() } }

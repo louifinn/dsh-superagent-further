@@ -407,6 +407,19 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
         }
       },
       "additionalProperties": false
+    },
+    "workspace": {
+      "default": {
+        "path": ""
+      },
+      "type": "object",
+      "properties": {
+        "path": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
