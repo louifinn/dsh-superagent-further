@@ -879,13 +879,14 @@ export class DshExecutor implements Executor {
       void this.background(Promise.resolve().then(() => { this.failed(ticket.id, String(error)) }))
     }))
   }
-  /** Unsubscribes from host agent events and clears any pending transient-retry timers. */
+  /** Unsubscribes from host agent events and clears pending transient-retry timers and turn bookkeeping. */
   dispose(): void {
     for (const dispose of this.disposers.splice(0)) dispose()
     for (const dispose of this.watching.values()) dispose()
     this.watching.clear()
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.clear()
+    this.turns.clear()
   }
   /**
    * Reconciles running and pending assignments across open tickets after a host restart: notifies Engine of interrupted

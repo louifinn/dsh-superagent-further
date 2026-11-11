@@ -37,12 +37,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   to durable JSONL files under `<stateDir>/logs`: one file per UTC day, rotation to `.N` at 20 MiB, retention pruning at
   startup and day rollover, a 50 ms unref batch flush, a bounded queue with a dropped count, owner-only ACLs, an 8 KiB
   line cap, and one `logs` health claim that reports a write failure once without breaking the caller or recursing.
+  Its `close()` stops accepting entries from its first line, shares one promise across repeated calls and drains the
+  last batch with asynchronous appends, so shutdown bounds a real wait instead of a synchronous disk stall.
   Sessions, Setup, Automations and the Outbox keep writing their scoped warnings, and the Runtime records the lifecycle,
   outbox delivery, health-transition, `policy.changed` and `decision.recorded` entries. The Executor and Sources add
   metadata-only scopes: launch/retire/preempt, turn start/end, background-job settlement, report state/outcome and agent
   errors under `executor`, and per-poll success/failure/recovery under each Source kind. The Execution settings block
   gains `logLevel` (`info` or `debug`) and `logRetentionDays` (1–30), which apply without a restart; the panel exposes
-  both in a Logs group. `tests/log-files.spec.ts` and `tests/operational-log.spec.ts` cover the sink, redaction, folding,
+  both in a Logs group. `GET logs` accepts the keyword search as `q` beside its level and scope filters. `tests/log-files.spec.ts` and `tests/operational-log.spec.ts` cover the sink, redaction, folding,
   level gating and every new scope; nothing records a message body, tool argument or result, report summary, setting
   value, or model content.
 

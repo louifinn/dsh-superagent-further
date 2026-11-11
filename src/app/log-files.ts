@@ -4,8 +4,12 @@
  * day rollover. `Logs.record` only enqueues; a 50 ms unref timer flushes batches so logging never blocks the caller. Every
  * failure (a full disk, a denied ACL, a missing directory) is counted and reported once through the `logs` health claim, and
  * no path in this module throws into its caller or writes a log entry itself.
+ *
+ * `close()` is the one asynchronous path: it stops accepting entries immediately, then writes the last batch with
+ * non-blocking appends and resolves once the file is closed, so a shutdown can bound its wait while keeping the event loop
+ * free. A stuck disk can leave that promise pending, but it can no longer block the process or re-enter the sink.
  */
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, write, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { LogEntry, LogSink } from './logs.ts'
@@ -47,7 +51,10 @@ export class LogFileSink implements LogSink {
   private path?: string
   private openDay?: string
   private slot = 0
+  /** Set at the first `close()`: every later append is dropped and no timer or flush may run. */
   private closed = false
+  /** The one close promise, so a repeated `close()` waits for the same final batch instead of returning early. */
+  private closing?: Promise<void>
   private failing = false
   private aclWarned = false
   private droppedCount = 0
@@ -81,25 +88,11 @@ export class LogFileSink implements LogSink {
 
   /** Write everything queued, grouping entries by their UTC day; failures drop that group and count every line. */
   flush(): void {
+    if (this.closed) return
     if (this.timer !== undefined) { clearTimeout(this.timer); this.timer = undefined }
-    // A retention edit applies on the next flush even when no entry arrived, so the setting needs no restart.
-    const retention = this.retentionWindow()
-    if (retention !== this.prunedFor) {
-      try { this.prune(utcDay(this.now()), retention) } catch (error) { this.fail(error) }
-    }
+    this.pruneIfChanged()
     if (!this.pendingEntries.length) return
-    const batch = this.pendingEntries.splice(0)
-    const groups = new Map<string, string[]>()
-    for (const entry of batch) {
-      try {
-        const day = utcDay(entry.at)
-        const lines = groups.get(day)
-        if (lines) lines.push(this.line(entry))
-        else groups.set(day, [this.line(entry)])
-      } catch {
-        this.droppedCount += 1
-      }
-    }
+    const groups = this.groups(this.pendingEntries.splice(0))
     for (const [day, lines] of groups) {
       if (!lines.length) continue
       try {
@@ -115,13 +108,62 @@ export class LogFileSink implements LogSink {
     }
   }
 
-  /** Flush synchronously and stop accepting entries; the Runtime awaits this before closing its Store. */
+  /**
+   * Stops accepting entries at once, then writes the last batch with non-blocking appends and resolves once the file is
+   * closed. Repeated calls share one promise, so a second caller cannot return before the first close finished. A failure
+   * while closing drops (and counts) the batch without reporting health, which would re-enter the ring after it stopped.
+   */
   close(): Promise<void> {
-    if (this.closed) return Promise.resolve()
-    this.flush()
+    if (this.closing !== undefined) return this.closing
     this.closed = true
-    this.closeFile()
-    return Promise.resolve()
+    if (this.timer !== undefined) { clearTimeout(this.timer); this.timer = undefined }
+    this.closing = this.drain()
+    return this.closing
+  }
+
+  /** The asynchronous final flush behind `close()`; it never rejects and always releases the descriptor. */
+  private async drain(): Promise<void> {
+    try {
+      this.pruneIfChanged()
+      const groups = this.groups(this.pendingEntries.splice(0))
+      for (const [day, lines] of groups) {
+        if (!lines.length) continue
+        try {
+          this.ensureDay(day)
+          if (this.fd === undefined) throw new Error('the log file is not open')
+          await appendAsync(this.fd, lines.join('\n') + '\n')
+          this.afterWrite()
+        } catch (error) {
+          this.droppedCount += lines.length
+          this.fail(error)
+        }
+      }
+    } finally {
+      this.closeFile()
+    }
+  }
+
+  /** A retention edit applies on the next flush even when no entry arrived, so the setting needs no restart. */
+  private pruneIfChanged(): void {
+    const retention = this.retentionWindow()
+    if (retention === this.prunedFor) return
+    try { this.prune(utcDay(this.now()), retention) } catch (error) { this.fail(error) }
+  }
+
+  /** Renders a batch as one or more lines per UTC day, counting an entry whose line cannot be rendered as dropped. */
+  private groups(batch: readonly LogEntry[]): Map<string, string[]> {
+    const groups = new Map<string, string[]>()
+    for (const entry of batch) {
+      try {
+        const day = utcDay(entry.at)
+        const lines = groups.get(day)
+        if (lines) lines.push(this.line(entry))
+        else groups.set(day, [this.line(entry)])
+      } catch {
+        this.droppedCount += 1
+      }
+    }
+    return groups
   }
 
   private prepare(): void {
@@ -229,6 +271,9 @@ export class LogFileSink implements LogSink {
   }
 
   private report(state: 'ready' | 'error', detail: string): void {
+    // Once closing started, a health report would re-enter the ring and append to a sink that already stopped accepting
+    // entries; the dropped count and the process-level failure stay the record instead.
+    if (this.closed) return
     try { this.onState?.(state, detail) } catch { /* Health reporting never breaks logging. */ }
   }
 
@@ -238,4 +283,24 @@ export class LogFileSink implements LogSink {
     // A denied ACL degrades to the process's inherited access; it must not stop startup or the sink.
     try { process.emitWarning(`Could not restrict the log files to the owner: ${error instanceof Error ? error.message : String(error)}`, 'LogFileSink') } catch { /* A warning is best effort. */ }
   }
+}
+
+/**
+ * Appends a whole UTF-8 chunk with `fs.write`, looping over partial writes. Unlike `writeSync`, the libuv worker does the
+ * disk I/O, so `close()`'s promise can be awaited and bounded without holding the event loop.
+ */
+function appendAsync(fd: number, text: string): Promise<void> {
+  const data = Buffer.from(text, 'utf8')
+  return new Promise((resolve, reject) => {
+    let offset = 0
+    const step = (): void => {
+      write(fd, data, offset, data.length - offset, null, (error, written) => {
+        if (error !== null) { reject(error); return }
+        offset += written
+        if (offset < data.length) step()
+        else resolve()
+      })
+    }
+    step()
+  })
 }

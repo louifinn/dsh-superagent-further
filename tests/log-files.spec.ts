@@ -1,4 +1,5 @@
-// The durable JSONL log sink: one file per UTC day, size rotation, retention, a bounded queue, ACL-safe failures, and a close that flushes.
+// The durable JSONL log sink: one file per UTC day, size rotation, retention, a bounded queue, redaction, ACL-safe failures,
+// and a close that stops accepting entries, drains them with asynchronous appends and is safe to repeat.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -113,6 +114,68 @@ it('never throws when the log directory cannot be created, and reports the failu
   await sink.close()
   expect(states[0]).toBe('error')
   expect(sink.dropped).toBeGreaterThan(0)
+})
+
+it('redacts credentials and environment values before both the ring and the file', async () => {
+  const stateDir = scratch()
+  const dayAt = new Date(Date.UTC(2026, 10, 10))
+  const logs = new Logs(() => dayAt, 20)
+  const sink = new LogFileSink({ stateDir, now: () => dayAt, flushMs: 60_000 })
+  logs.attach(sink)
+  logs.record('info', 'source', 'Authorization: Bearer supersecret token=abc password=hunter2 env FOO=bar')
+  logs.record('info', 'executor', 'report.recorded', { token: 'abc', ticket: 't1', nested: { password: 'x' } })
+  await sink.close()
+
+  const ring = logs.list()
+  expect(ring[0]!.message).toContain('<redacted>')
+  for (const secret of ['supersecret', 'abc', 'hunter2', 'FOO=bar']) expect(ring[0]!.message).not.toContain(secret)
+  expect(ring[1]!.data).toMatchObject({ token: '<redacted>', ticket: 't1', nested: { password: '<redacted>' } })
+
+  const text = readFileSync(join(stateDir, 'logs', `${day(dayAt)}.jsonl`), 'utf8')
+  for (const secret of ['supersecret', 'abc', 'hunter2', 'FOO=bar']) expect(text).not.toContain(secret)
+})
+
+it('sets closed before the final drain, drops later entries, clears its timer and shares one close promise', async () => {
+  vi.useFakeTimers()
+  const stateDir = scratch()
+  const now = new Date(Date.UTC(2026, 10, 10, 12))
+  const sink = new LogFileSink({ stateDir, now: () => now, flushMs: 60_000 })
+  sink.append({ at: now.toISOString(), level: 'info', scope: 'runtime', message: 'kept' })
+  expect(vi.getTimerCount()).toBe(1)
+
+  const first = sink.close()
+  const second = sink.close()
+  expect(second).toBe(first)
+  await first
+  expect(vi.getTimerCount()).toBe(0)
+
+  // Post-close appends and flushes cannot write, open a file or schedule a timer; they only raise the dropped count.
+  sink.append({ at: now.toISOString(), level: 'info', scope: 'runtime', message: 'after close' })
+  sink.flush()
+  await sink.close()
+  expect(sink.pending).toBe(0)
+  expect(sink.dropped).toBe(1)
+  expect(vi.getTimerCount()).toBe(0)
+  expect(lines(join(stateDir, 'logs', `${day(now)}.jsonl`)).map(entry => entry.message)).toEqual(['kept'])
+})
+
+it('swallows a final-write failure without reporting health or writing again', async () => {
+  const stateDir = scratch()
+  const now = new Date(Date.UTC(2026, 10, 10, 12))
+  const states: string[] = []
+  const sink = new LogFileSink({ stateDir, now: () => now, flushMs: 60_000, onState: state => states.push(state) })
+  // A directory where the day's file belongs makes the final open fail deterministically on every platform.
+  mkdirSync(join(stateDir, 'logs', `${day(now)}.jsonl`))
+  sink.append({ at: now.toISOString(), level: 'info', scope: 'runtime', message: 'will fail' })
+  const before = readdirSync(join(stateDir, 'logs')).sort()
+
+  await expect(sink.close()).resolves.toBeUndefined()
+  expect(sink.dropped).toBe(1)
+  // A failure during close must not call the health listener, which appends to the ring that is already closed.
+  expect(states).toEqual([])
+  // The repeated close retries nothing: the directory is untouched, so no new descriptor or write happened.
+  await expect(sink.close()).resolves.toBeUndefined()
+  expect(readdirSync(join(stateDir, 'logs')).sort()).toEqual(before)
 })
 
 it('escapes newlines and caps every line at 8 KiB', async () => {

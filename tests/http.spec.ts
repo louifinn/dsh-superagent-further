@@ -5,6 +5,7 @@ import { AutomationLimitError, AutomationRunRefusedError, UnknownAutomationError
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
+import { Logs } from '../src/app/logs.ts'
 import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
 
@@ -381,12 +382,28 @@ it('serves the Host log page with level and scope filtering', async () => {
   const call = serve({ logs })
   expect(await call('GET', 'logs')).toEqual({ status: 200, body: { entries, level: 'all', scope: '', q: '' } })
   expect(asked[0]).toEqual({ level: 'all', scope: '', limit: 200, q: '' })
-  expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5'))
-    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu', q: '' } })
-  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5, q: '' })
+  expect(await call('GET', 'logs?level=warn&scope=feishu&limit=5&q=FAILED'))
+    .toEqual({ status: 200, body: { entries, level: 'warn', scope: 'feishu', q: 'FAILED' } })
+  expect(asked[1]).toEqual({ level: 'warn', scope: 'feishu', limit: 5, q: 'FAILED' })
   // An unknown level falls back to all instead of failing the page.
   expect((await call('GET', 'logs?level=nonsense')).body).toMatchObject({ level: 'all' })
   // Only the panel's same-origin header reaches the route.
   expect(await call('GET', 'logs', undefined, { 'x-orchestrator-request': undefined }))
     .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+})
+
+it('filters the Host log API by keyword across message, scope and data, case-insensitively', async () => {
+  const logs = new Logs(() => new Date(Date.UTC(2026, 10, 10)), 20)
+  logs.record('info', 'assignment', 'assignment.launched ticket=t1')
+  logs.record('warn', 'feishu', 'poll failed: timeout')
+  logs.record('info', 'runtime', 'decision.recorded', { ticket: 'ticket-42', kind: 'Policy' })
+  const call = serve({ logs })
+
+  const entries = async (path: string) => (await call('GET', path)).body.entries as { message: string }[]
+  expect((await entries('logs?q=LAUNCHED')).map(entry => entry.message)).toEqual(['assignment.launched ticket=t1'])
+  expect((await entries('logs?q=feishu')).map(entry => entry.message)).toEqual(['poll failed: timeout'])
+  expect((await entries('logs?q=POLICY')).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect((await entries('logs?q=ticket-42')).map(entry => entry.message)).toEqual(['decision.recorded'])
+  expect(await entries('logs')).toHaveLength(3)
+  expect(await entries('logs?q=missing')).toHaveLength(0)
 })

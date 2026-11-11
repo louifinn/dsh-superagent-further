@@ -731,12 +731,18 @@ export class Runtime extends Service implements SourceHost {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
       this.setup.restore()
       // Flush the durable log before the Store closes: the sink needs no Store, but closing first keeps every shutdown entry
-      // that preceded it on disk. The flush is bounded so a stuck disk cannot hold the host open forever.
+      // that preceded it on disk. close() accepts nothing from its first line and writes the last batch with asynchronous
+      // appends, so the timer can actually fire; the bound gives up waiting on a stuck disk without blocking the event loop.
       const sink = this.logsSink
-      if (sink) await Promise.race([sink.close(), new Promise<void>(resolve => {
-        const timer = setTimeout(resolve, 10_000)
-        timer.unref?.()
-      })])
+      if (sink) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000); timer.unref?.() })
+        try {
+          await Promise.race([sink.close(), bound])
+        } finally {
+          if (timer !== undefined) clearTimeout(timer)
+        }
+      }
       try { this.store.close() } finally {
         const unreleased = (error: unknown) => { this.log.warn('dsh-superagent-further could not release its state directory lock: %s',
           String(error)) }
