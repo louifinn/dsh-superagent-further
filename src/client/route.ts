@@ -5,7 +5,7 @@ import type { SetupPlace } from '../setup.ts'
 import { DECISION_FILTERS, type DecisionFilter } from './api.ts'
 import type { T } from './text.ts'
 
-export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'memory', 'tasks', 'incidents', 'logs', 'settings'] as const
+export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'memory', 'tasks', 'incidents', 'updates', 'logs', 'settings'] as const
 export type Tab = typeof TABS[number]
 export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'language', 'prompts', 'deployment'] as const
 export type SettingsGroup = typeof SETTINGS_GROUPS[number]
@@ -19,6 +19,7 @@ export type Route = { page: 'overview'; id?: undefined; query?: { report?: strin
   | { page: 'execution'; id: string; query?: undefined }
   | { page: 'incidents'; id?: undefined; query?: { status?: IncidentStatusFilter; severity?: IncidentSeverityFilter } }
   | { page: 'incidents'; id: string; query?: undefined }
+  | { page: 'updates'; id?: undefined; query?: undefined }
   | { page: 'settings'; id?: undefined; query: { group: SettingsGroup; source?: string; version?: string } }
 export const HOME: Route = { page: 'overview' }
 export const settingsRoute = (group: SettingsGroup, query: { source?: string; version?: string } = {}): Route =>
@@ -42,7 +43,7 @@ export function parseRoute(value: unknown): Route | undefined {
   switch (page) {
     // A self-report resolution deep-links to its draft on Overview (ADR-0005): `report` names the row to highlight.
     case 'overview': return { page, query: compact({ report: text('report') }) }
-    case 'source': case 'memory': case 'tasks': return { page }
+    case 'source': case 'memory': case 'tasks': case 'updates': return { page }
     // A Logs deep link carries the keyword to prefill: ticket=<id>, assignment=<id>, request=<id>, or free text.
     case 'logs': { const q = text('q'); return q ? { page, query: { q } } : { page } }
     case 'trigger': return record ? { page, id: record, query: compact({ trigger: text('trigger') }) }

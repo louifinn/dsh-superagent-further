@@ -324,10 +324,35 @@ describe('IncidentDetector', () => {
       .toBe(incidentFingerprint((again[0] as { candidate: IncidentCandidate }).candidate))
   })
 
-  it('leaves the update-failure rule reserved for the update pipeline and never detects it here', () => {
+  it('detects one update failure per journal phase and recovers every phase on a later success or a healed rollback', () => {
     const detector = new IncidentDetector({ tickets })
-    expect(detector.observeLog({ at: '2026-11-11T10:00:00.000Z', level: 'error', scope: 'update',
-      message: 'update.failed version=0.4.0 reason=checksum' })).toHaveLength(0)
+    const failed = detector.observeLog({ at: '2026-11-11T10:00:00.000Z', level: 'error', scope: 'update',
+      message: 'update.failed phase=swap version=0.4.0 id=r1 reason=checksum' })
+    expect(failed).toHaveLength(1)
+    expect(failed[0]).toMatchObject({ type: 'detect', candidate: { rule: 'update-failures', severity: 'high',
+      title: 'The runtime update failed at the swap phase' } })
+    // The message's ids and reasons vary between runs; the phase alone is the condition.
+    const again = detector.observeLog({ at: '2026-11-11T10:01:00.000Z', level: 'error', scope: 'update',
+      message: 'update.failed phase=swap version=0.4.1 id=r2 reason=timeout' })
+    expect(incidentFingerprint((again[0] as { candidate: IncidentCandidate }).candidate))
+      .toBe(incidentFingerprint((failed[0] as { candidate: IncidentCandidate }).candidate))
+    const other = detector.observeLog({ at: '2026-11-11T10:02:00.000Z', level: 'error', scope: 'update',
+      message: 'update.failed phase=init version=0.5.0 id=r3 reason=ready' })
+    expect(incidentFingerprint((other[0] as { candidate: IncidentCandidate }).candidate))
+      .not.toBe(incidentFingerprint((failed[0] as { candidate: IncidentCandidate }).candidate))
+    const recovered = detector.observeLog({ at: '2026-11-11T10:05:00.000Z', level: 'info', scope: 'update',
+      message: 'update.applied version=0.5.0 from=0.4.1 id=r4 durationMs=120' })
+    expect(recovered).toContainEqual({ type: 'recover',
+      fingerprint: incidentFingerprint((failed[0] as { candidate: IncidentCandidate }).candidate) })
+    expect(recovered).toContainEqual({ type: 'recover',
+      fingerprint: incidentFingerprint((other[0] as { candidate: IncidentCandidate }).candidate) })
+    // A healed rollback is a terminal success too: the previous runtime serves again, so the incident must not stay open.
+    const healed = detector.observeLog({ at: '2026-11-11T10:06:00.000Z', level: 'info', scope: 'update',
+      message: 'update.rolledback version=0.4.1 from=0.5.0 id=r5' })
+    expect(healed).toContainEqual({ type: 'recover',
+      fingerprint: incidentFingerprint((failed[0] as { candidate: IncidentCandidate }).candidate) })
+    expect(healed).toContainEqual({ type: 'recover',
+      fingerprint: incidentFingerprint((other[0] as { candidate: IncidentCandidate }).candidate) })
   })
 })
 

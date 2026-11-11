@@ -11,7 +11,7 @@
  * older deployed or packaged runtime is refused before it can touch a newer database.
  */
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Machine } from '../deployment.ts'
@@ -24,10 +24,16 @@ import { HOST_API, type DrainReport, type RuntimeDescriptor, type RuntimeHandle,
 import { VERSION } from '../version.ts'
 import { DrainController } from './drain.ts'
 import { buildRuntimeHost, type BuiltHost } from './host.ts'
-import { Journal, type JournalRecovery } from './journal.ts'
+import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
+import { UpdateEngine, type UpdateEnvironment } from './update.ts'
 import {
-  databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, type RuntimeCandidate, type RuntimeSource,
+  readUpdateHistory, recoverInterruptedRestore, removeDescriptorFile, restoreDatabase, shortReason, UPDATE_POLL_MS,
+  updateBackupsDirectory, updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry, type UpdateSnapshot,
+} from './update-state.ts'
+import {
+  currentPointer, databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, verifyDescriptor,
+  type RuntimeCandidate, type RuntimeSource,
 } from './versions.ts'
 
 /** How long the supervisor waits for a runtime's `ready` before disposing it and trying the next candidate. */
@@ -38,6 +44,8 @@ export const FLUSH_LOGS_MS = 10_000
 export const LOCK_RELEASE_MS = 10_000
 /** How long the supervisor waits for a failed candidate's `dispose` before warning and trying the next candidate. */
 export const DISPOSE_MS = 10_000
+/** Journal phases in which the swap may already have written `current.json`; a crash there needs the baseline pointers back. */
+const SWAPPED_PHASES: readonly JournalState['phase'][] = ['swap', 'load', 'init', 'commit']
 
 /** The resolved runtime and where it came from; the read-only version surface M36 exposes to the panel. */
 export interface SupervisorStatus {
@@ -74,6 +82,10 @@ export interface SupervisorOptions {
   readonly logSink?: LogFileSink
   /** Journal timestamps. */
   readonly now?: () => string
+  /** How often the update engine looks for an operator request; tests shorten it. */
+  readonly updatePollMs?: number
+  /** Test seam: disable the update engine for a supervisor that must never claim a request. */
+  readonly updates?: boolean
 }
 
 /**
@@ -98,6 +110,7 @@ export class Supervisor {
   private releasing = false
   private record?: RuntimeDescriptor
   private statusValue?: SupervisorStatus
+  private updater?: UpdateEngine
 
   constructor(private readonly options: SupervisorOptions) {
     this.log = options.context.logger as HostLogger
@@ -115,6 +128,12 @@ export class Supervisor {
   setupProblem(): SetupProblem | undefined { return this.runtime?.setupProblem }
   /** The runtime and version currently serving; M36 reads this for the Updates surface. */
   versionStatus(): SupervisorStatus | undefined { return this.statusValue }
+  /** The read-only update surface: pointers, journal projection, pending request, rollback eligibility and history. */
+  updateStatus(): UpdateSnapshot { return updateSnapshot(this.options.machine.stateDir) }
+  /** The newest finished update attempts, oldest first. */
+  history(): UpdateHistoryEntry[] { return readUpdateHistory(this.options.machine.stateDir) }
+  /** True while the update engine is claiming or running a request. */
+  get updating(): boolean { return this.updater?.busy ?? false }
   /** The supervisor-owned ring, for tests and a future diagnostics surface. It is the same instance for every attempt. */
   get logs(): Logs { return this.logsRing }
   /** The current runtime handle, for tests; production code goes through the plugin entry and the Host services. */
@@ -125,6 +144,7 @@ export class Supervisor {
    * second call returns the first report and does nothing.
    */
   async drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    await this.updater?.stop()
     this.releasing = true
     const runtime = this.runtime
     if (runtime === undefined) {
@@ -145,6 +165,13 @@ export class Supervisor {
   }
 
   private async shutdown(): Promise<void> {
+    // An update in flight must finish or cancel before the supervisor starts releasing the lock; the engine's stop is
+    // idempotent and never rethrows a failed attempt.
+    try {
+      await this.updater?.stop()
+    } catch (error) {
+      this.log.warn('dsh-superagent-further could not stop the update engine: %s', String(error))
+    }
     this.releasing = true
     try {
       if (this.runtime !== undefined) {
@@ -186,8 +213,13 @@ export class Supervisor {
       if (interrupted !== undefined) {
         this.log.warn('dsh-superagent-further found an interrupted %s at %s; recovery will prefer the recorded runtime only if it verifies',
           interrupted.operation, interrupted.phase)
+        this.reconcileUpdatePointers(runtimeDir, interrupted)
       }
-      const database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+      // A restore that died after it had already published the complete copied database is finished before the schema is
+      // read; only after that is the journaled backup considered, and only when the database is still ahead of the baseline.
+      const finished = this.completeInterruptedRestore(stateDir, interrupted)
+      let database = finished ?? databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+      database = this.recoverDatabaseBackup(stateDir, interrupted, database)
       let packaged: PackagedRuntime | undefined
       let packagedProblem: unknown
       try {
@@ -206,6 +238,7 @@ export class Supervisor {
       for (const candidate of resolution.candidates) {
         try {
           await this.attempt(candidate, database, previous, interrupted)
+          this.startUpdates(interrupted)
           return
         } catch (error) {
           last = error
@@ -226,22 +259,99 @@ export class Supervisor {
     }
   }
 
+  /**
+   * Put both version pointers back to the journal's pre-update baseline after a crash in or after the swap. The journal is
+   * the only record of what was serving before the update; without this, the next boot would start the uncommitted candidate
+   * that `current.json` names with no drain, backup, self-check, history entry or journal record (ADR-0007). A crash in the
+   * `commit` phase also reconciles: serving the candidate was in-memory only and was never committed.
+   */
+  private reconcileUpdatePointers(runtimeDir: string, interrupted: JournalState): void {
+    if (interrupted.operation !== 'update' || !SWAPPED_PHASES.includes(interrupted.phase)) return
+    const current = interrupted.current
+    if (current === undefined) removeDescriptorFile(currentPointer(runtimeDir))
+    else writeDescriptorFile(currentPointer(runtimeDir), current)
+    let previous: string
+    if (interrupted.previous === undefined) previous = 'unrecorded'
+    else if (interrupted.previous === null) { removeDescriptorFile(previousPointer(runtimeDir)); previous = 'none' }
+    else { writeDescriptorFile(previousPointer(runtimeDir), interrupted.previous); previous = interrupted.previous.version }
+    const line = `update.pointers-reconciled phase=${interrupted.phase} current=${current?.version ?? 'none'} previous=${previous}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+  }
+
+  /**
+   * Finish a database restore that the previous process died inside, before the schema is read. The restore publishes the
+   * complete copy as `<db>.restoring` before it removes the write-ahead log and renames it over the database, so a boot that
+   * finds the marker has a whole copy and only the replacement left: the sidecars are removed, the copy is renamed into place
+   * and the restored schema is logged. A partial `<db>.restoring.tmp` proves the live database was never touched and is
+   * discarded; a complete but unreadable marker is discarded as well. Either way the database and its WAL are left alone and
+   * the ordinary fail-closed path in `recoverDatabaseBackup` still applies.
+   */
+  private completeInterruptedRestore(stateDir: string, interrupted: JournalState | undefined): number | undefined {
+    const phase = interrupted?.operation === 'update' ? interrupted.phase : 'startup'
+    let recovery: ReturnType<typeof recoverInterruptedRestore>
+    try {
+      recovery = recoverInterruptedRestore(stateDir)
+    } catch (error) {
+      this.restoreSkipped(phase, `the interrupted restore could not be finished: ${message(error)}`)
+      return undefined
+    }
+    if (recovery.reason !== undefined) this.restoreSkipped(phase, recovery.reason)
+    if (!recovery.finished) return undefined
+    const line = `update.database-restore-finished schema=${recovery.schema ?? 'unknown'}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+    return recovery.schema
+  }
+
+  /** The one fail-closed restore line: the database and its write-ahead log were left exactly as they were. */
+  private restoreSkipped(phase: string, reason: string): void {
+    const line = `update.database-restore-skipped phase=${phase} reason=${shortReason(reason)}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+  }
+
+  /**
+   * Restore the pre-swap database copy a crashed update recorded when the candidate's `init` migrated the database past the
+   * schema its baseline runtime supports. Without this the journal's baseline is refused as a schema downgrade, the packaged
+   * runtime is older than the database too, and the host cannot start until an operator intervenes (ADR-0007). This fails
+   * closed: no backup, no recorded baseline schema, an unreadable or truncated backup or one outside
+   * `<stateDir>/runtime/backups/` all leave the database (and its WAL) untouched so the ordinary refusal is reported.
+   */
+  private recoverDatabaseBackup(stateDir: string, interrupted: JournalState | undefined,
+    database: number | undefined): number | undefined {
+    if (interrupted?.operation !== 'update' || !SWAPPED_PHASES.includes(interrupted.phase) || interrupted.backup === undefined) {
+      return database
+    }
+    const baseline = interrupted.current?.schema
+    const skip = (reason: string): number | undefined => {
+      this.restoreSkipped(interrupted.phase, reason)
+      return database
+    }
+    if (baseline === undefined || database === undefined) return skip('the journal does not record a comparable database schema')
+    if (baseline >= database) return database
+    const backups = resolve(updateBackupsDirectory(stateDir))
+    const backup = resolve(stateDir, interrupted.backup)
+    const inside = relative(backups, backup)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      return skip('the recorded backup is outside the runtime backups directory')
+    }
+    try {
+      restoreDatabase(stateDir, backup)
+    } catch (error) {
+      return skip(`the recorded backup could not be restored: ${shortReason(message(error))}`)
+    }
+    const restored = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+    const line = `update.database-restored phase=${interrupted.phase} schema=${restored ?? 'unknown'} baseline=${baseline} backup=${backup}`
+    this.logsRing.record('warn', 'update', line)
+    this.log.warn('%s', line)
+    return restored ?? database
+  }
+
   /** Load and initialize one verified candidate. A failure disposes what it created and leaves the lock for the next try. */
   private async attempt(candidate: RuntimeCandidate, database: number | undefined, previous: RuntimeDescriptor | undefined,
     interrupted: ReturnType<Journal['interrupted']>): Promise<void> {
-    const built = buildRuntimeHost({
-      context: this.options.context,
-      machine: this.options.machine,
-      restart: this.options.restart ?? (() => {}),
-      exit: this.options.exit ?? (() => {}),
-      version: candidate.descriptor.version,
-      logger: this.log,
-      lifetime: this.lockLost.signal,
-      flushLogs: () => this.flushLogs(),
-      releaseStateLock: () => this.releaseGated(),
-      logs: this.logsRing,
-      ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
-    })
+    const built = this.buildHost(candidate.descriptor.version)
     this.apply(built)
     const journal = this.journal as Journal
     journal.begin('startup', candidate.descriptor, previous)
@@ -288,6 +398,119 @@ export class Supervisor {
     }
     this.log.info('dsh-superagent-further runtime %s started from the %s runtime (host API %s, schema %s)',
       candidate.descriptor.version, candidate.source, HOST_API, loaded.schema)
+  }
+
+  /** Build one runtime host over the shared ring, sink and lifetime; startup and the update engine use the same builder. */
+  private buildHost(version: string): BuiltHost {
+    return buildRuntimeHost({
+      context: this.options.context,
+      machine: this.options.machine,
+      restart: this.options.restart ?? (() => {}),
+      exit: this.options.exit ?? (() => {}),
+      version,
+      logger: this.log,
+      lifetime: this.lockLost.signal,
+      flushLogs: () => this.flushLogs(),
+      releaseStateLock: () => this.releaseGated(),
+      logs: this.logsRing,
+      ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
+    })
+  }
+
+  /** Start the update engine after the first runtime is serving; it owns polling and crash-claim cleanup from here on. */
+  private startUpdates(interrupted: JournalState | undefined): void {
+    if (this.options.updates === false) return
+    const engine = this.updater = new UpdateEngine(this.updateEnvironment(),
+      { pollMs: this.options.updatePollMs ?? UPDATE_POLL_MS })
+    engine.start(interrupted?.operation === 'update' ? interrupted : undefined)
+  }
+
+  /** The supervisor half of the update engine: the serving slot, the loader, drains and the packaged fallback. */
+  private updateEnvironment(): UpdateEnvironment {
+    const stateDir = this.options.machine.stateDir
+    const database = (): number | undefined => databaseSchema(join(stateDir, 'orchestrator.sqlite'))
+    return {
+      stateDir,
+      journal: this.journal as Journal,
+      logs: this.logsRing,
+      logger: this.log,
+      now: this.now,
+      readyTimeoutMs: this.options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+      disposeMs: this.options.disposeMs ?? DISPOSE_MS,
+      current: () => this.record,
+      previous: () => readDescriptorFile(previousPointer(runtimeDirectory(stateDir))).descriptor,
+      verify: descriptor => verifyDescriptor(runtimeDirectory(stateDir), descriptor, database()),
+      packaged: () => {
+        try { return (this.options.packaged ?? (() => packagedRuntime()))() } catch (error) {
+          this.log.warn('dsh-superagent-further cannot discover the packaged runtime for a rollback: %s', message(error))
+          return undefined
+        }
+      },
+      load: async (descriptor, entry) => {
+        await this.closeBuilt()
+        const built = this.buildHost(descriptor.version)
+        this.apply(built)
+        try {
+          return await loadRuntime({ host: built.host, entry, databaseSchema: database() })
+        } catch (error) {
+          await this.closeBuilt()
+          throw error
+        }
+      },
+      ready: async (loaded, version) => {
+        this.runtime = loaded.handle
+        try {
+          await bounded(loaded.handle.ready, this.options.readyTimeoutMs ?? READY_TIMEOUT_MS, `the ${version} runtime readiness`)
+          this.selfCheck(loaded, version)
+        } catch (error) {
+          this.runtime = undefined
+          try {
+            await bounded(loaded.handle.dispose(), this.options.disposeMs ?? DISPOSE_MS, `the ${version} runtime dispose`)
+          } catch (disposeError) {
+            this.log.warn('dsh-superagent-further could not dispose the failed %s runtime: %s', version, message(disposeError))
+          }
+          await this.closeBuilt()
+          throw error
+        }
+      },
+      serve: (loaded, descriptor) => {
+        this.record = { ...descriptor, schema: loaded.schema }
+        this.statusValue = { version: descriptor.version, source: 'current', hostApi: HOST_API, schema: loaded.schema }
+      },
+      discard: async (loaded, version) => {
+        try {
+          await bounded(loaded.handle.dispose(), this.options.disposeMs ?? DISPOSE_MS, `the ${version} runtime dispose`)
+        } catch (error) {
+          this.log.warn('dsh-superagent-further could not dispose the unused %s runtime: %s', version, message(error))
+        }
+        await this.closeBuilt()
+      },
+      drain: async reason => {
+        const runtime = this.runtime
+        this.runtime = undefined
+        if (runtime === undefined) throw new Error('no runtime is running to drain for the update')
+        const report = await runtime.drain(reason)
+        await this.flushLogs()
+        return report
+      },
+      unserved: () => {
+        this.runtime = undefined
+        this.record = undefined
+        this.statusValue = undefined
+      },
+    }
+  }
+
+  /** The post-readiness self-check: the runtime must answer configured() and setupProblem without throwing or lying. */
+  private selfCheck(loaded: LoadedRuntime, version: string): void {
+    if (loaded.handle.configured !== undefined) {
+      const configured = loaded.handle.configured()
+      if (typeof configured !== 'boolean') throw new Error(`the ${version} runtime returned a non-boolean configured()`)
+    }
+    const problem: unknown = loaded.handle.setupProblem
+    if (problem !== undefined && problem !== null && typeof problem !== 'object') {
+      throw new Error(`the ${version} runtime returned an invalid setupProblem`)
+    }
   }
 
   private apply(built: BuiltHost): void {

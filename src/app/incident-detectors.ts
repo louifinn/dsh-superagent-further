@@ -2,9 +2,11 @@
  * Deterministic incident detectors (ADR-0004). Every rule is a pure, bounded reduction over facts the host
  * already records: DomainEvents, operational log entries and health transitions. A detector returns signals — a new
  * candidate or the fingerprint of a condition that cleared — and makes no model call and no decision about writing.
- * The `update-failures` rule is reserved for the update pipeline (M36) and has no detector here.
+ * The `update-failures` rule reads the supervisor's update engine lines: one failure per journal phase, and a later
+ * successful apply recovers every phase (docs/adr/0007).
  */
 import { incidentFingerprint, type IncidentCandidate, type IncidentScope } from '../core/incidents.ts'
+import type { JournalPhase } from '../supervisor/journal.ts'
 import type { DomainEvent } from '../core/index.ts'
 
 /** One rule's conclusion: detect a condition, or report that a known condition cleared. */
@@ -30,6 +32,14 @@ export const SOURCE_POLL_COUNT = 3
 /** The `assignment.ended` reasons that mean work failed rather than finished. */
 const FAILED_END_REASONS = new Set(['failed', 'stopped', 'interrupted', 'hostRestarted'])
 const STALLED_MS = 10 * 60_000
+/** Every journal phase an update can fail in; one condition per phase, recovered together on the next successful apply. */
+const UPDATE_PHASES: readonly JournalPhase[] = ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit', 'rollback']
+
+/** The stable candidate for an update failure at one phase: the phase, not the run's message, is the condition. */
+function updateFailure(phase: string): IncidentCandidate {
+  return { rule: 'update-failures', severity: 'high', title: `The runtime update failed at the ${phase} phase`,
+    detail: `The supervisor could not finish the ${phase} phase of a runtime update` }
+}
 
 /** The detector's collaborators: a way to find the project that owns a ticket, which scopes a burst. */
 export interface DetectorHost { tickets?(ticketId: string): { project?: string } | undefined }
@@ -74,10 +84,19 @@ export class IncidentDetector {
       detail: `${detailNumber(ASSIGNMENT_BURST_COUNT)} Assignments failed or stopped within ${ASSIGNMENT_BURST_WINDOW_MS / 60_000} minutes` })]
   }
 
-  /** Feeds one operational log entry; the rules that read logs are agent errors, reply deliveries and source polls. */
+  /** Feeds one operational log entry; the rules that read logs are agent errors, reply deliveries, source polls and updates. */
   observeLog(entry: ObservedLog, at: Date = new Date(entry.at)): IncidentSignal[] {
     const now = time(entry.at)
     if (!Number.isFinite(now)) return []
+    if (entry.message.startsWith('update.failed')) {
+      const phase = /(?:^|\s)phase=([^\s]+)/.exec(entry.message)?.[1] ?? 'unknown'
+      return [this.detect(updateFailure(phase))]
+    }
+    // A finished attempt recovers the failure record either way: an applied update supersedes the failed one, and a healed
+    // rollback (the previous runtime serves again) is just as complete an outcome as an apply.
+    if (entry.message.startsWith('update.applied') || entry.message.startsWith('update.rolledback')) {
+      return UPDATE_PHASES.map(phase => ({ type: 'recover' as const, fingerprint: incidentFingerprint(updateFailure(phase)) }))
+    }
     if (entry.message.includes('agent.error') || (entry.scope === 'executor' && entry.message.startsWith('agent.error'))) {
       this.agentErrors.push(now)
       const since = now - AGENT_ERROR_WINDOW_MS

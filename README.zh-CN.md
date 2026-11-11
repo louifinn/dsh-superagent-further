@@ -35,7 +35,7 @@ dsh-superagent-further 是一个自托管的工程智能体，工作在你团队
 | --- | --- |
 | 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
 | 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：103 个 spec 文件，**1735 passed / 5 skipped（1740）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 检查 | `pnpm check`：108 个 spec 文件，**1775 passed / 5 skipped（1780）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.4.0`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.4.0.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
 | 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复；项目自动化投递可经其 Lead 提出一个项目请求，安装级自动化投递可由主会话创建安装级 Request，Lead 可把本项目之外的工作升级给 Orchestrator 决定 |
@@ -135,7 +135,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 **看见需要人处理的事。** Overview 汇总打开的 Request、升级、需要关注的自动化、失败的文件投递，以及每个项目的 Lead；仍在运行却已闲置超过十分钟的 assignment 会变成 attention 并唤醒 Lead 一次；日志页支持 `q` 关键字搜索、复制当前过滤视图、下载 JSONL、加载更多，并可从工单、Request 与 Assignment 深链进入时预填关键字，Host 日志同时保存为状态目录下的滚动 JSONL 文件；人工触发的操作记入 `audit` 范围（`actor=operator`，只含 id，不含设置值或正文）；健康、发件箱与回复队列细节仍然可见；工单显示验证证据与审查状态；执行页显示每个 worker 的后台任务与最后输出。
 
-**像服务一样运维。** 要求专用具名工作区的安装向导、Windows/macOS/Linux 服务脚本、`verify-install`、单主机守护与优雅关停让它可无人值守运行。架构版本原地迁移，`scripts/archive-state.mjs` 取一致快照，[运维手册](docs/013-operations-runbook.md)与[安全策略](SECURITY.md)记录日常路径与信任边界。
+**像服务一样运维。** 要求专用具名工作区的安装向导、Windows/macOS/Linux 服务脚本、`verify-install`、单主机守护与优雅关停让它可无人值守运行。架构版本原地迁移，`scripts/archive-state.mjs` 取一致快照；构建好的 runtime 更新由运行中的主机内暂存并交换——带崩溃日志、`VACUUM INTO` 数据库备份，失败时回滚到上一个验证过的版本——并提供 Updates 标签页与 `pnpm deploy` CLI。[运维手册](docs/013-operations-runbook.md)与[安全策略](SECURITY.md)记录日常路径与信任边界。
 
 **不重接管线地扩展。** 来源（GitHub、飞书、DeepSeek Harness 会话）、label 能力、飞书文件投递与操作型 skills（分流、发布、项目请求）都是一等能力；[工具参考](docs/reference/tools.md)与[设置参考](docs/reference/config.md)从代码生成，因此不会漂移。
 

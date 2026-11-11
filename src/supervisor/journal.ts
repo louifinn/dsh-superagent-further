@@ -11,8 +11,8 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { dirname } from 'node:path'
 import type { RuntimeDescriptor } from '../runtime-host.ts'
 
-/** The steps of a runtime start, swap, drain, or rollback. */
-export type JournalPhase = 'prepare' | 'stage' | 'drain' | 'swap' | 'load' | 'init' | 'commit' | 'rollback'
+/** The steps of a runtime start, update, drain, or rollback. */
+export type JournalPhase = 'prepare' | 'stage' | 'backup' | 'drain' | 'swap' | 'load' | 'init' | 'commit' | 'rollback'
 /** One recorded step. `started` is written before the step runs; `done`/`failed` after it. */
 export interface JournalStep {
   readonly phase: JournalPhase
@@ -31,12 +31,17 @@ export interface JournalRecovery {
 export interface JournalState {
   readonly api: 1
   readonly status: 'running' | 'committed' | 'failed'
-  readonly operation: 'startup' | 'drain'
+  readonly operation: 'startup' | 'drain' | 'update'
   readonly phase: JournalPhase
   readonly updatedAt: string
   readonly steps: readonly JournalStep[]
   readonly current?: RuntimeDescriptor
   readonly previous?: RuntimeDescriptor | null
+  /**
+   * The pre-swap database backup (`runtime/backups/<version>-<timestamp>.sqlite`) made by the update engine. Recovery uses it
+   * only when an interrupted update's candidate already migrated the database past the recorded baseline's schema.
+   */
+  readonly backup?: string
   readonly recovery?: JournalRecovery
 }
 
@@ -81,6 +86,16 @@ export class Journal {
     if (state0 === undefined) return
     const steps = [...state0.steps, { phase, state, at: this.now(), ...(detail === undefined ? {} : { detail }) }]
     this.write({ ...state0, phase, updatedAt: this.now(), steps })
+  }
+
+  /**
+   * Record the path of the pre-swap database backup, keeping every other field. The engine calls this right after the backup
+   * succeeds; boot recovery reads it when an interrupted update's candidate migrated the database before the crash.
+   */
+  noteBackup(path: string): void {
+    const state0 = this.read()
+    if (state0 === undefined) return
+    this.write({ ...state0, backup: path, updatedAt: this.now() })
   }
 
   /** Finish the operation: the recorded versions become the recovery baseline and the status becomes committed. */

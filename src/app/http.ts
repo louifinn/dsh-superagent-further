@@ -41,6 +41,7 @@ import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 import type { LogFilter, Logs, LogsView } from './logs.ts'
+import type { Updates } from './updates.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -68,6 +69,8 @@ export interface HttpHost {
   readonly incidents: Incidents
   /** Bounded read-only diagnosis of incidents (ADR-0005). */
   readonly diagnosis: Diagnosis
+  /** The supervisor-owned update pipeline, read from disk: status, operator attention and rollback requests (ADR-0007). */
+  readonly updates: Pick<Updates, 'status' | 'rollback' | 'attention'>
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -264,7 +267,7 @@ function routes(runtime: HttpHost): Routes {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
       executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.leadOverview(),
-      runtime.deliveryFailures(), runtime.selfReports.drafts()),
+      runtime.deliveryFailures(), runtime.selfReports.drafts(), runtime.updates.attention()),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
@@ -467,6 +470,15 @@ function routes(runtime: HttpHost): Routes {
       return result
     },
     'GET automations': () => automationsPage(runtime),
+    // The panel never uploads or loads code: it reads the supervisor's status and queues one rollback request (ADR-0007).
+    'GET updates': () => runtime.updates.status(),
+    'POST updates/rollback': async ({ body }) => {
+      z.object({ confirm: z.literal('ROLLBACK') }).parse(await body())
+      const result = runtime.updates.rollback()
+      if (!result.ok) throw new RouteError(409, result.reason)
+      audit('updates.rollback', { request: result.request.id })
+      return { requested: true as const, request: result.request, status: result.status }
+    },
     'POST automations': async ({ body }) => {
       if (runtime.automations === undefined) throw new RouteError(503, 'The Host schedule service is not installed')
       const created = await runtime.automations.create(AutomationCreateSchema.parse(await body()), 'panel')

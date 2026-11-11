@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-11-11
 - **Deciders:** the operator (approved plan, M35 brief), implemented by mission M35
+- **Amended by:** [0007 A staged runtime update pipeline](0007-runtime-update-pipeline.md) (the update path that writes the pointers and rolls back)
 
 ## Context
 
@@ -11,8 +12,9 @@ directly, and that constructor takes the state-directory lock, opens the Store a
 the domain code therefore needs a plugin reload or a host restart, even when the state lives entirely in SQLite and the
 files under the state directory. The approved target is the opposite: the business runtime should be replaceable inside
 the running DeepSeek Harness process, with no human restart, while only host-level changes (a DeepSeek Harness upgrade,
-machine configuration) need a controlled restart. The first step (P2) is to make that swap structurally possible. The
-update pipeline itself — staging a deploy, requesting a swap, the panel's Updates surface — belongs to M36.
+machine configuration) need a controlled restart. The first step (P2) made that swap structurally possible; the update
+pipeline — staging a deploy, requesting a swap, the database backup and the panel's Updates surface — was built by M36
+on top of it ([0007](0007-runtime-update-pipeline.md)).
 
 That split imposes constraints. DeepSeek Harness loads a plugin from a package, and a versioned runtime has to run with
 the same services, permission model, Sessions and state directory. It may not carry the host's package tree as a runtime
@@ -82,7 +84,9 @@ leave a supervisor that can decide what to start, without ever handing a newer d
    the intake, cancel and in-flight stages: `dispose`, `logs`, `store` and `lock` always run, so an aborted drain still
    closes the database and releases the lock instead of leaking them. It returns one report with each phase's status,
    start and duration, and `completed`, which is true only when every phase is `done`; a failed or skipped phase makes it
-   false. A second call returns the first report and does nothing. Normal shutdown and M36's update path reuse it. The
+   false. A second call returns the first report and does nothing. Normal shutdown and the update path reuse it; the
+   `update` path calls the runtime handle's `drain('update')` directly so one update journal owns the whole state machine
+   instead of a second `drain` operation overwriting it. The
    supervisor's `DrainController` writes the journal's `drain` phase, awaits the handle's report, finishes the flush and
    lock release, and only then commits or fails the journal, so a crash cannot record a clean drain before the lock is
    released; the runtime never writes the journal and never releases the lock itself. The log flush is bounded by
@@ -92,11 +96,15 @@ leave a supervisor that can decide what to start, without ever handing a newer d
    flushes the sink and releases the lock.
 
 6. **The crash journal makes a swap recoverable at every point.** `<stateDir>/runtime/journal.json` holds
-   `{api:1, status:'running'|'committed'|'failed', operation:'startup'|'drain', phase, steps, current, previous,
+   `{api:1, status:'running'|'committed'|'failed', operation:'startup'|'drain'|'update', phase, steps, current, previous,
    recovery}`. Each step is written to a mode-`0600` temporary file, fsynced, renamed over the journal and followed by a
    best-effort directory fsync, so a torn write is never read as a complete record. Phases are `prepare`, `stage`,
-   `drain`, `swap`, `load`, `init`, `commit`, `rollback`. On startup, an interrupted record makes its recorded current the
-   first candidate; if it does not verify, `current.json` and then `previous.json` do; if none verify, the packaged
+   `backup`, `drain`, `swap`, `load`, `init`, `commit`, `rollback`. The update pipeline writes `previous.json` and
+   `current.json` around its `swap` phase; `previous.json` therefore names the version a rollback returns to, and the
+   supervisor's startup fallback reads it. An interrupted `update` is repaired as a whole before any version is resolved:
+   the supervisor rewrites both pointers from the record's baseline (ADR-0007 decision 6), so a candidate the swap wrote
+   but never loaded, initialized or committed cannot start. On startup, an interrupted record makes its recorded current
+   the first candidate; if it does not verify, `current.json` and then `previous.json` do; if none verify, the packaged
    runtime does. The recovery note is written to the journal and the log. No recovery path downgrades the SQLite schema:
    the supervisor reads the schema version from the database before choosing a runtime, a descriptor whose schema is
    older is rejected, and the loader refuses a module whose `SCHEMA_VERSION` is below the database. The schema is never
@@ -137,12 +145,15 @@ leave a supervisor that can decide what to start, without ever handing a newer d
   tree at load time and could not be versioned independently. Injecting the values through `RuntimeHost` keeps the
   artifact self-contained and makes the boundary checkable at build time.
 - **A second in-process drain path for updates.** Two shutdown implementations would drift on the ordering that keeps
-  the outbox and lock safe. M36's update path calls the same handle `drain()` and the same supervisor `DrainController`.
+   the outbox and lock safe. The update path calls the same handle `drain()` and the same supervisor `DrainController`
+   around its swap, and keeps the state-directory lock instead of releasing it.
 
 ## Consequences
 
 The plugin's package gains a third build entry, a generated manifest and a check; `src/app/runtime.ts` loses the lock,
 the log sink creation and its `Service` base, and every domain module that used a DSH value receives it through a host
 interface. The supervisor is now the only place that may create the state-directory lock and the only place that
-resolves which runtime runs. M36 can build staging, deploy and rollback on `current.json`, the journal and the drain
-without changing the runtime contract; a later contract change is a `HOST_API` bump, not an in-place edit.
+resolves which runtime runs. M36 built staging, deploy and rollback on `current.json`, `previous.json`, the journal and
+the drain without changing the runtime contract: `src/supervisor/update.ts` owns the journaled update, a database
+`VACUUM INTO` backup precedes the swap, and a failed swap restores the backup, both pointers and the previous runtime.
+A later contract change is a `HOST_API` bump, not an in-place edit.

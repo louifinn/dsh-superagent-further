@@ -230,6 +230,20 @@ export function OverviewPage({ route }: { route: Extract<Route, { page: 'overvie
     {incidents.count > 0 && <Section title={t('incidentsNeedsYou')} count={incidents.count} action={more({ page: 'incidents' })}>
       <ul className="dt-list">{incidents.items.map(item => <IncidentEntry key={item.id} item={item} />)}</ul>
     </Section>}
+    {/* A pending or failed runtime update is an operator action: the Updates page shows the journal and the rollback (ADR-0007). */}
+    {(data.update.pending || data.update.failed) && <Section title={t('updatesNeedsYou')} action={more({ page: 'updates' })}>
+      <ul className="dt-list"><li className="dt-row dt-link" data-overview-update>
+        <div className="dt-row-main">
+          <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap"
+            onClick={() => navigate({ page: 'updates' })}>{data.update.failed ? t('updateAttentionFailed') : t('updateAttentionPending')}</button></div>
+          <div className="dt-row-meta">
+            {data.update.version !== null && <LabelValue label={t('updateVersion')} value={data.update.version} />}
+            {data.update.phase !== null && <LabelValue label={t('updatePhase')} value={t(`updatePhase.${data.update.phase}` as never)} />}
+            {data.update.reason !== null && <LabelValue label={t('updateReason')} value={data.update.reason} />}
+          </div>
+        </div>
+      </li></ul>
+    </Section>}
     {/* Observe-mode self report drafts wait for a person; auto mode files directly and accumulates none here. */}
     {selfReports.length > 0 && <Section title={t('selfReportsTitle')} count={selfReports.length}>
       <ul className="dt-list">{selfReports.map(item => <SelfReportEntry key={item.id} item={item}

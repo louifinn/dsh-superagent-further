@@ -23,6 +23,7 @@ import type { Incident, IncidentDiagnosis } from '../../src/core/incidents.ts'
 import { parseIncidentDiagnosis } from '../../src/core/incidents.ts'
 import type { Health } from '../../src/sources/host.ts'
 import type { SourceKind } from '../../src/sources/kind.ts'
+import type { UpdateRequest, UpdateSnapshot } from '../../src/supervisor/update-state.ts'
 import { testDeployment } from './deployment.ts'
 
 export const MEMBER = 'ou_alice'
@@ -143,6 +144,10 @@ export interface PanelServer {
   incidentRecords: ApiResponse<'GET incidents'>['incidents']
   /** Evidence summaries by incident id for the detail route; an absent entry reports no bundle. */
   incidentEvidence?: Record<string, ApiResponse<'GET incidents/:id'>['evidence']>
+  /** The update pipeline snapshot the Updates page reads; each test may replace it. */
+  updates: UpdateSnapshot
+  /** The Overview's update needs-attention row; tests seed it to show the deep link. */
+  updateAttention: ApiResponse<'GET overview'>['update']
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
   /** False simulates a Host without the schedule service: the automations routes answer 503. */
@@ -202,8 +207,22 @@ function sourceStatuses(): SourceStatusRow[] {
       dropped: server.dropped.filter(item => item.channel.source === kind.kind && item.dropped.at >= dayAgo()) }
   })
 }
-const stateView = (): StateView => ({
-  setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
+/** The neutral update snapshot: one deployed runtime, no previous version, no request and no history. */
+const emptyUpdates = (): UpdateSnapshot => ({
+  api: 1,
+  stateDir: MACHINE.stateDir,
+  current: { version: '0.4.0', entry: 'runtime-entry.js', hostApi: 1, sha256: 'a'.repeat(64), schema: 25 },
+  previous: null,
+  journal: null,
+  pending: null,
+  busy: false,
+  rollback: { eligible: false, version: null, reason: 'No previous runtime is recorded' },
+  deploy: { command: 'node --experimental-transform-types scripts/deploy-runtime.mjs --state-dir "/srv/dsh-superagent-further"',
+    status: ' status', apply: ' apply --version <version>', rollback: ' rollback', watch: ' watch' },
+  history: [],
+  databaseSchema: 25,
+})
+const stateView = (): StateView => ({  setup: server.setup, load: { running: server.setup.problem ? 0 : 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers },
   wizard: server.wizard,
   proposals: server.proposals.filter(proposal => proposal.status === 'pending').length,
   masterId: 'master', paused: server.settings.paused,
@@ -261,6 +280,7 @@ const overviewView = (): ApiResponse<'GET overview'> => {
     selfReports: server.selfReports,
     selfReportsBlocked: server.selfReportsBlocked,
     incidents: server.incidents,
+    update: server.updateAttention,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -311,6 +331,7 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, incidents: { count: 0, items: [] }, incidentRecords: [], memories: [], proposals: [],
+    updates: emptyUpdates(), updateAttention: { pending: false, failed: false, version: null, phase: null, reason: null },
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
@@ -748,6 +769,19 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     const routed: Incident = { ...incident, resolution, updated_at: '2026-11-11T10:03:00Z' }
     server.incidentRecords = server.incidentRecords.map(item => item.id === incident.id ? routed : item)
     return { status: 'routed' as const, incident: routed, resolution }
+  } },
+  'GET updates': { answer: () => server.updates },
+  'POST updates/rollback': { body: true, answer: ({ body }) => {
+    if (body.confirm !== 'ROLLBACK') return refuse(400, 'Confirm the rollback')
+    if (server.updates.busy) return refuse(409, 'An update is already in progress; wait for it to finish before rolling back.')
+    if (server.updates.pending !== null) return refuse(409, 'An update request is already pending; wait for it to be claimed before rolling back.')
+    if (!server.updates.rollback.eligible) {
+      return refuse(409, server.updates.rollback.reason || 'There is no previous runtime to roll back to.')
+    }
+    const request: UpdateRequest = { api: 1, id: 'rollback-1', action: 'rollback', at: new Date().toISOString(), by: 'operator' }
+    server.updates = { ...server.updates, pending: request,
+      rollback: { ...server.updates.rollback, eligible: false, reason: 'An update request is pending' } }
+    return { requested: true as const, request, status: server.updates }
   } },
 }
 

@@ -61,6 +61,7 @@ import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
 import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
+import { Updates } from './updates.ts'
 import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { bounded } from '../infra/bounded.ts'
@@ -119,6 +120,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   readonly incidents: Incidents
   /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
   readonly diagnosis: Diagnosis
+  /** The supervisor-owned update pipeline as the panel sees it: read-only status plus a rollback request writer (ADR-0007). */
+  readonly updates: Updates
   readonly ready: Promise<void>
   /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
   private starting = true
@@ -173,6 +176,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
     this.exit = host.exit
     this.logs = host.logs
     this.logsSink = host.logSink
+    // The update surface reads the supervisor's files and writes only a rollback request; the engine stays supervisor-side.
+    this.updates = new Updates({ stateDir: host.stateDir, logs: this.logs })
     const ctx = this.ctx
     const machine = this.machine
     this.log = captureLogs(this.logs, host.logger, 'host')
@@ -835,6 +840,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       selfReports: this.selfReports,
       incidents: this.incidents,
       diagnosis: this.diagnosis,
+      updates: this.updates,
       leadOverview: () => runtime.leadOverview(),
       deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),
