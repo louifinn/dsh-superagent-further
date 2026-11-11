@@ -3,7 +3,8 @@
  *
  * This is the only module that imports the `@deepseek-ai/*` value exports the runtime needs (`Service`, the message and
  * reasoning-effort brands, the message freezer, the scope parent lookup, and schemastery). The runtime source keeps type-only
- * imports, which the build erases, so the self-contained bundle has no DSH runtime imports.
+ * imports, which the build erases, so the self-contained bundle has no DSH runtime imports. The live context itself is the
+ * runtime's service channel; there is no separate services object on the host.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import { freezeMessage, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -12,7 +13,10 @@ import schemastery from '@deepseek-ai/schemastery'
 import type { Machine } from '../deployment.ts'
 import { LogFileSink } from '../app/log-files.ts'
 import { Logs, type HostLogger } from '../app/logs.ts'
-import { HOST_API, type RuntimeHost, type RuntimeHostServices, type RuntimeHostValues } from '../runtime-host.ts'
+import { HOST_API, type RuntimeHost, type RuntimeHostValues } from '../runtime-host.ts'
+
+/** The retention window used before the runtime supplies the operator's setting; it matches `SettingsSchema`'s default of 7 days. */
+export const DEFAULT_LOG_RETENTION_DAYS = 7
 
 /** Everything the supervisor supplies; the ring, the sink, and the forwarding hooks are built here. */
 export interface HostBuildOptions {
@@ -30,6 +34,8 @@ export interface HostBuildOptions {
   flushLogs: () => Promise<void>
   /** Releases the state-directory lock exactly once. */
   releaseStateLock: () => Promise<void>
+  /** Test seam: a sink the supervisor owns across candidates instead of a fresh one beneath the state directory. */
+  readonly logSink?: LogFileSink
   /** Retention used before the runtime supplies the setting it owns. */
   readonly defaultLogRetention?: number
   /** Clock used by the sink's day files. */
@@ -52,26 +58,12 @@ export function buildRuntimeHost(options: HostBuildOptions): BuiltHost {
   const logs = new Logs()
   let logState: ((state: 'ready' | 'error', detail: string) => void) | undefined
   let retention: (() => number) | undefined
-  const logSink = new LogFileSink({
+  const logSink = options.logSink ?? new LogFileSink({
     stateDir: options.machine.stateDir,
-    retentionDays: () => retention?.() ?? options.defaultLogRetention ?? 30,
+    retentionDays: () => retention?.() ?? options.defaultLogRetention ?? DEFAULT_LOG_RETENTION_DAYS,
     onState: (state, detail) => { logState?.(state, detail) },
     ...(options.now === undefined ? {} : { now: options.now }),
   })
-  const services: RuntimeHostServices = {
-    agents: options.context.get('agents') as RuntimeHostServices['agents'],
-    sessionController: options.context.get('sessionController') as RuntimeHostServices['sessionController'],
-    sessionPersistence: options.context.get('sessionPersistence') as RuntimeHostServices['sessionPersistence'],
-    workspaceRegistry: options.context.get('workspaceRegistry') as RuntimeHostServices['workspaceRegistry'],
-    permissionPresets: options.context.get('permissionPresets') as RuntimeHostServices['permissionPresets'],
-    tools: options.context.get('tools') as RuntimeHostServices['tools'],
-    systemPrompt: options.context.get('systemPrompt') as RuntimeHostServices['systemPrompt'],
-    skills: options.context.get('skills') as RuntimeHostServices['skills'],
-    webServer: options.context.get('webServer') as RuntimeHostServices['webServer'],
-    llm: options.context.get('llm') as RuntimeHostServices['llm'],
-    subprocess: options.context.get('subprocess') as RuntimeHostServices['subprocess'],
-    settings: options.context.get('settings') as RuntimeHostServices['settings'],
-  }
   const values: RuntimeHostValues = { Service, MessageId, ReasoningEffortId, freezeMessage, scopeParentOf, schemastery }
   const host: RuntimeHost = {
     hostApi: HOST_API,
@@ -84,7 +76,6 @@ export function buildRuntimeHost(options: HostBuildOptions): BuiltHost {
     lifetime: options.lifetime,
     logs,
     logSink,
-    services,
     values,
     stateDir: options.machine.stateDir,
     onLogState: listener => { logState = listener },

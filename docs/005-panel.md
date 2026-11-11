@@ -49,7 +49,7 @@ Ticket details show the originating Trigger, Decision and reason, scope and Poli
 - **Prompts:** **Edit** changes team sections, built-in parts and skills. **Full prompt** shows the assembled text and compares it with saved text or defaults. **History** lists versions. Edited built-in parts are marked changed and can be reset; templates list their required placeholders.
 
   An upgrade that changes an overridden default marks it **Default updated** (默认内容已更新). The panel compares the old and new defaults above the team's text. If the old default was not recorded, it compares the team's text with the new default instead. Choose **Keep my text** or **Use the new default**. Overrides for removed parts are listed below the tab bar and dropped on the next save.
-- **Deployment:** startup problems with **Check again**, the state directory and machine limits. Saved limits apply without restart. The DeepSeek Harness Plugin Manager exposes the same page. The supervisor can fall back from a broken deployed runtime to the previous verified version or the packaged one; the fallback and any interrupted-journal recovery are warnings in **Logs** under the `host` scope. A dedicated Updates surface is reserved for M36.
+- **Deployment:** startup problems with **Check again**, the state directory and machine limits. Saved limits apply without restart. The DeepSeek Harness Plugin Manager exposes the same page. The supervisor can fall back from a broken deployed runtime to the previous verified version or the packaged one; the packaged one must have been built (`pnpm build`). The fallback and any interrupted-journal recovery are warnings in **Logs** under the `host` scope. A dedicated Updates surface is reserved for M36.
 
 ## Search
 

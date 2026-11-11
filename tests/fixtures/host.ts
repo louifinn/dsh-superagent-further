@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import { Runtime } from '../../src/app/runtime.ts'
+import { Runtime, type RuntimeOptions } from '../../src/app/runtime.ts'
 import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
@@ -454,7 +454,7 @@ export type Host = Awaited<ReturnType<typeof startRuntime>>
  * The supervisor's own specs construct a Supervisor; this helper only gives the runtime its frozen host, a no-op restart,
  * and a sink that closes when the runtime drains.
  */
-export function startTestRuntime(ctx: Context, machine: Machine, restart: () => void = () => {}): Runtime {
+export function startTestRuntime(ctx: Context, machine: Machine, restart: () => void = () => {}, options: RuntimeOptions = {}): Runtime {
   let built: ReturnType<typeof buildRuntimeHost> | undefined
   built = buildRuntimeHost({
     context: ctx, machine, restart, exit: () => {}, version: VERSION, logger: ctx.logger,
@@ -462,5 +462,5 @@ export function startTestRuntime(ctx: Context, machine: Machine, restart: () => 
     flushLogs: async () => { await built!.logSink.close() },
     releaseStateLock: async () => {},
   })
-  return new Runtime(built.host)
+  return new Runtime(built.host, options)
 }

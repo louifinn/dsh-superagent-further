@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { lockSync } from 'proper-lockfile'
-import { hostedElsewhere, Runtime } from '../src/app/runtime.ts'
+import { hostedElsewhere, Runtime, type RuntimeOptions } from '../src/app/runtime.ts'
 import { Supervisor } from '../src/supervisor/supervisor.ts'
 import { AUTOMATION_CONTEXT, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
 import { jobRegistry, startTestRuntime } from './fixtures/host.ts'
@@ -165,12 +165,12 @@ function seed(store: Store, accounts: Accounts = {}): void {
   store.saveSettings(SettingsSchema.parse({ ...settings, workspace: { path: workspace }, executor: { ...settings.executor, projects }, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT(), ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
 }
 let restarts: ReturnType<typeof vi.fn<() => void>>
-async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}): Promise<Runtime> {
+async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}, options: RuntimeOptions = {}): Promise<Runtime> {
   await runtime.stop()
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store, accounts); store.close()
   const ctx = new Context()
   for (const [name, service] of Object.entries(schedule === undefined ? services : { ...services, schedule })) ctx.reflect.provide(name, service)
-  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
+  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory, ...machine }), restarts, options)
   return runtime
 }
 let deliveries: ReturnType<typeof vi.fn<(request: { sessionId: string; mode: 'queue' | 'steer'; id: string; text: string }) => void>>
@@ -2351,6 +2351,38 @@ it('reports a completed root project request once through the Channel its chain 
 })
 
 
+
+it('bounds the in-flight wait, still runs the later drain phases, and reports the failure', async () => {
+  await restart({}, {}, { drainInFlightMs: 25 })
+  vi.spyOn(runtime.effects, 'drain').mockReturnValue(new Promise(() => {}))
+  const began = Date.now()
+  const report = await runtime.stop()
+  expect(Date.now() - began).toBeLessThan(3000)
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'failed'], ['dispose', 'done'], ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
+  ])
+  expect(report.phases.find(phase => phase.phase === 'in-flight')).toMatchObject({
+    phase: 'in-flight', status: 'failed', detail: expect.stringContaining('did not finish within 25 ms'),
+  })
+  expect(report.completed).toBe(false)
+  // The store was closed and the lock released, so the directory is free for the next start.
+  expect(await runtime.stop()).toBe(report)
+})
+
+it('reports a drain whose later phases were skipped after an abort as incomplete', async () => {
+  await restart()
+  const controller = new AbortController()
+  const original = runtime.executor.dispose.bind(runtime.executor)
+  vi.spyOn(runtime.executor, 'dispose').mockImplementation(() => { controller.abort(); original() })
+  const report = await runtime.drain('test abort', controller.signal)
+  expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
+    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'done'], ['dispose', 'done'],
+    ['logs', 'skipped'], ['store', 'skipped'], ['lock', 'skipped'],
+  ])
+  expect(report.completed).toBe(false)
+  // The aborted phases were skipped, so close the store here rather than leave the fixture's SQLite file open.
+  runtime.store.close()
+})
 
 it('reports the drain phases in contract order and returns the first report on a second call', async () => {
   await restart()

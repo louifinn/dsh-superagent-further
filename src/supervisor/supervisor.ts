@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Machine } from '../deployment.ts'
+import { bounded } from '../infra/bounded.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { LogFileSink } from '../app/log-files.ts'
 import type { HostLogger, Logs } from '../app/logs.ts'
@@ -28,6 +29,11 @@ import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime 
 import {
   databaseSchema, previousPointer, readDescriptorFile, resolveVersions, runtimeDirectory, type RuntimeCandidate, type RuntimeSource,
 } from './versions.ts'
+
+/** How long the supervisor waits for a runtime's `ready` before disposing it and trying the next candidate. */
+export const READY_TIMEOUT_MS = 30_000
+/** How long the supervisor waits for the durable log sink to close before continuing without it. */
+export const FLUSH_LOGS_MS = 10_000
 
 /** The resolved runtime and where it came from; the read-only version surface M36 exposes to the panel. */
 export interface SupervisorStatus {
@@ -50,6 +56,12 @@ export interface SupervisorOptions {
   readonly version?: string
   /** Test seam for the packaged runtime; production discovers it beside the installed package. */
   readonly packaged?: PackagedRuntime
+  /** Bound for a runtime's `ready`; tests shorten it. */
+  readonly readyTimeoutMs?: number
+  /** Bound for the durable log sink's close; tests shorten it. */
+  readonly flushLogsMs?: number
+  /** Test seam: the supervisor-owned durable sink, shared across candidates instead of built beneath the state directory. */
+  readonly logSink?: LogFileSink
   /** Journal timestamps. */
   readonly now?: () => string
 }
@@ -201,6 +213,7 @@ export class Supervisor {
       lifetime: this.lockLost.signal,
       flushLogs: () => this.flushLogs(),
       releaseStateLock: () => this.releaseGated(),
+      ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
     })
     this.apply(built)
     const journal = this.journal as Journal
@@ -210,8 +223,7 @@ export class Supervisor {
     try {
       loaded = await loadRuntime({ host: built.host, entry: candidate.entry, databaseSchema: database })
     } catch (error) {
-      journal.mark('load', 'failed', message(error))
-      journal.fail('rollback', message(error))
+      journal.fail('load', message(error))
       await this.closeBuilt()
       throw error
     }
@@ -219,10 +231,10 @@ export class Supervisor {
     this.runtime = loaded.handle
     journal.mark('init', 'started')
     try {
-      await loaded.handle.ready
+      await bounded(loaded.handle.ready, this.options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+        `the ${candidate.descriptor.version} runtime readiness`)
     } catch (error) {
-      journal.mark('init', 'failed', message(error))
-      journal.fail('rollback', message(error))
+      journal.fail('init', message(error))
       this.runtime = undefined
       try { await loaded.handle.dispose() } catch { /* A failed start may not drain cleanly; the lock stays supervisor-owned. */ }
       await this.closeBuilt()
@@ -261,7 +273,7 @@ export class Supervisor {
       const sink = this.logSink
       if (sink === undefined) return
       try {
-        await sink.close()
+        await bounded(sink.close(), this.options.flushLogsMs ?? FLUSH_LOGS_MS, 'the durable log sink close')
       } catch (error) {
         this.log.warn('dsh-superagent-further could not close the durable log: %s', String(error))
       }

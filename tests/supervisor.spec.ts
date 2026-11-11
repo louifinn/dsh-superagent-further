@@ -7,42 +7,47 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import schemastery from '@deepseek-ai/schemastery'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { LogFileSink } from '../src/app/log-files.ts'
 import { Logs } from '../src/app/logs.ts'
 import { buildRuntimeHost } from '../src/supervisor/host.ts'
 import { Journal } from '../src/supervisor/journal.ts'
-import { loadRuntime } from '../src/supervisor/loader.ts'
-import { HOST_API, type RuntimeDescriptor, type RuntimeHost } from '../src/runtime-host.ts'
+import { loadRuntime, packagedRuntime } from '../src/supervisor/loader.ts'
+import { HOST_API, PACKAGED_RUNTIME_MANIFEST, type RuntimeDescriptor, type RuntimeHost } from '../src/runtime-host.ts'
 import { Supervisor } from '../src/supervisor/supervisor.ts'
 import { currentPointer, previousPointer, resolveVersions, runtimeDirectory } from '../src/supervisor/versions.ts'
+import { VERSION } from '../src/version.ts'
 import { testMachine } from './fixtures/deployment.ts'
 
 let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'supervisor-')) })
-afterEach(() => { rmSync(directory, { recursive: true, force: true }) })
+afterEach(() => { vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
 
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex')
 
 /** A fake runtime bundle that records the version it started and the reason it drained beside itself. */
-function runtimeSource(version: string, options: { throws?: boolean; omitCreate?: boolean; hostApi?: number; schema?: number } = {}): string {
+function runtimeSource(version: string, options: {
+  throws?: boolean; omitCreate?: boolean; hostApi?: number; schema?: number; readyHangs?: boolean; incompleteDrain?: boolean
+} = {}): string {
   if (options.throws) return `throw new Error('the ${version} bundle cannot load')`
   const create = options.omitCreate ? '' : `
 export function createRuntime(host) {
   void host
   writeFileSync(new URL('./started.txt', import.meta.url), ${JSON.stringify(version)})
   return {
-    ready: Promise.resolve(),
+    ready: ${options.readyHangs ? 'new Promise(() => {})' : 'Promise.resolve()'},
     configured: () => true,
     drain: async (reason) => {
       writeFileSync(new URL('./drained.txt', import.meta.url), reason)
-      return { reason, startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1, completed: true,
-        phases: [{ phase: 'intake', status: 'done', startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1 }] }
+      return { reason, startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1, completed: ${options.incompleteDrain ? 'false' : 'true'},
+        phases: [{ phase: 'intake', status: ${options.incompleteDrain ? "'failed'" : "'done'"}, startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1 }] }
     },
-    dispose: async () => {},
+    dispose: async () => { writeFileSync(new URL('./disposed.txt', import.meta.url), 'yes') },
   }
 }`
   return `import { writeFileSync } from 'node:fs'
@@ -73,8 +78,8 @@ function packaged(version = 'packaged'): { descriptor: RuntimeDescriptor; entry:
 }
 
 /** A Supervisor over a fresh Cordis context; fake bundles never touch the DSH services, so the context may be empty. */
-function newSupervisor(): Supervisor {
-  return new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packaged() })
+function newSupervisor(extra: { readyTimeoutMs?: number; flushLogsMs?: number; logSink?: LogFileSink } = {}): Supervisor {
+  return new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packaged(), ...extra })
 }
 
 /** The version whose bundle was imported, read from the marker it wrote. */
@@ -147,6 +152,44 @@ describe('version resolution', () => {
   })
 })
 
+describe('packaged runtime', () => {
+  function packageRoot(): string {
+    const root = join(directory, 'package')
+    mkdirSync(join(root, 'lib'), { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'dsh-superagent-further' }))
+    return root
+  }
+
+  it('requires the built manifest and entry and names pnpm build when they are missing', () => {
+    const root = join(directory, 'package')
+    mkdirSync(root)
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'dsh-superagent-further' }))
+    expect(() => packagedRuntime(root)).toThrow(/pnpm build/)
+    mkdirSync(join(root, 'lib'), { recursive: true })
+    writeFileSync(join(root, 'lib', 'runtime-entry.js'), 'export const HOST_API = 1')
+    expect(() => packagedRuntime(root)).toThrow(/runtime-manifest\.json/)
+  })
+
+  it('verifies a packaged manifest and refuses an invalid one instead of falling back to source', () => {
+    const root = packageRoot()
+    const source = runtimeSource('3.0.0')
+    writeFileSync(join(root, 'lib', 'runtime-entry.js'), source)
+    const descriptor: RuntimeDescriptor = { version: '3.0.0', entry: 'runtime-entry.js', hostApi: HOST_API, sha256: hash(source), schema: 25 }
+    writeFileSync(join(root, 'lib', PACKAGED_RUNTIME_MANIFEST), JSON.stringify(descriptor))
+    expect(packagedRuntime(root)).toEqual({ descriptor, entry: join(root, 'lib', 'runtime-entry.js') })
+
+    writeFileSync(join(root, 'lib', PACKAGED_RUNTIME_MANIFEST), '{not json')
+    expect(() => packagedRuntime(root)).toThrow(/pnpm build/i)
+  })
+})
+
+describe('package version', () => {
+  it('pins the version module to package.json', () => {
+    const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string }
+    expect(VERSION).toBe(manifest.version)
+  })
+})
+
 describe('loader refusals', () => {
   const host = {} as RuntimeHost
   it('refuses a bundle whose import throws', async () => {
@@ -200,17 +243,18 @@ describe('journal', () => {
     expect(journal.read()).toMatchObject({ status: 'committed', operation: 'drain', current: descriptor })
   })
 
-  it('keeps a failed start recoverable and names rollback', () => {
+  it('keeps a failed start recoverable and names the phase that failed', () => {
     const journal = new Journal(join(runtimeDirectory(directory), 'journal.json'))
     journal.begin('startup')
-    journal.fail('rollback', 'the bundle threw')
-    expect(journal.read()).toMatchObject({ status: 'failed', phase: 'rollback' })
+    journal.fail('load', 'the bundle threw')
+    expect(journal.read()).toMatchObject({ status: 'failed', phase: 'load' })
+    expect(journal.read()!.steps.at(-1)).toMatchObject({ phase: 'load', state: 'failed' })
     expect(journal.interrupted()).toBeUndefined()
   })
 })
 
 describe('frozen runtime host', () => {
-  it('builds API v1 with the injected DSH values and the live services', async () => {
+  it('builds API v1 with the injected DSH values and the live context as the service channel', async () => {
     const ctx = new Context()
     const agents = { marker: 'agents' }
     ctx.reflect.provide('agents', agents)
@@ -220,7 +264,8 @@ describe('frozen runtime host', () => {
     })
     expect(built.host.hostApi).toBe(HOST_API)
     expect(built.host.version).toBe('1.2.3')
-    expect(built.host.services.agents).toBe(agents)
+    expect(built.host.context).toBe(ctx)
+    expect(built.host.context.get('agents')).toBe(agents)
     expect(built.host.values.Service).toBeTypeOf('function')
     expect(built.host.values.MessageId('dsh-superagent:x')).toBe('dsh-superagent:x')
     expect(built.host.values.ReasoningEffortId('high')).toBe('high')
@@ -284,6 +329,51 @@ describe('supervisor', () => {
     await next.start()
     expect(next.versionStatus()).toMatchObject({ version: '2.0.0', source: 'current' })
     expect(started('2.0.0')).toBe('2.0.0')
+    await next.stop()
+  })
+
+  it('bounds readiness, disposes a runtime whose ready never settles, and falls back to the packaged runtime', async () => {
+    deploy('slow', { readyHangs: true })
+    const supervisor = newSupervisor({ readyTimeoutMs: 25 })
+    const began = Date.now()
+    await supervisor.start()
+    expect(Date.now() - began).toBeLessThan(3000)
+    expect(supervisor.versionStatus()).toMatchObject({ version: 'packaged', source: 'packaged' })
+    expect(started('slow')).toBe('slow')
+    expect(readFileSync(join(runtimeDirectory(directory), 'slow', 'disposed.txt'), 'utf8')).toBe('yes')
+    await supervisor.stop()
+  })
+
+  it('bounds a stuck durable log close, releases the lock, and still commits the drain', async () => {
+    deploy('1.0.0')
+    const sink = new LogFileSink({ stateDir: directory })
+    const close = vi.spyOn(sink, 'close').mockReturnValue(new Promise(() => {}))
+    const supervisor = newSupervisor({ logSink: sink, flushLogsMs: 25 })
+    await supervisor.start()
+    const began = Date.now()
+    await supervisor.stop()
+    expect(Date.now() - began).toBeLessThan(3000)
+    expect(close).toHaveBeenCalled()
+    expect(new Journal(join(runtimeDirectory(directory), 'journal.json')).read()).toMatchObject({ status: 'committed', operation: 'drain' })
+    // The lock is released even though the sink close never resolved, so another host can start on the state directory.
+    const next = newSupervisor()
+    await next.start()
+    expect(next.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    await next.stop()
+  })
+
+  it('journals a drain the runtime did not complete, releases the lock, and still reports the phases', async () => {
+    deploy('1.0.0', { incompleteDrain: true })
+    const supervisor = newSupervisor()
+    await supervisor.start()
+    const report = await supervisor.drain('update')
+    expect(report.completed).toBe(false)
+    expect(report.phases).toEqual([expect.objectContaining({ phase: 'intake', status: 'failed' })])
+    expect(new Journal(join(runtimeDirectory(directory), 'journal.json')).read()).toMatchObject({ status: 'failed', operation: 'drain' })
+    await supervisor.stop()
+    const next = newSupervisor()
+    await next.start()
+    expect(next.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
     await next.stop()
   })
 

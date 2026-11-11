@@ -1,10 +1,10 @@
 /**
  * The frozen boundary between the stable supervisor and a versioned domain runtime: API v1.
  *
- * A runtime built by `src/runtime-entry.ts` receives one `RuntimeHost` and nothing else from the process: the DSH services,
- * the DSH value exports it would otherwise import, the machine configuration, the state-directory lock, the log ring and its
- * durable sink, the process lifetime, and the drain/release hooks it must call in order. The supervisor is the only writer of
- * this object; a runtime must treat it as read-only apart from the explicit setters.
+ * A runtime built by `src/runtime-entry.ts` receives one `RuntimeHost` and nothing else from the process: the live DSH context
+ * (the frozen service channel), the DSH value exports it would otherwise import, the machine configuration, the
+ * state-directory lock, the log ring and its durable sink, the process lifetime, and the drain/release hooks it must call in
+ * order. The supervisor is the only writer of this object; a runtime must treat it as read-only apart from the explicit setters.
  *
  * The API is versioned as a whole (`HOST_API`). A runtime bundle declares the API it was built against in its packaged
  * manifest, and the supervisor refuses to load a bundle whose declaration does not match this constant. Adding, removing,
@@ -36,14 +36,6 @@ export const PACKAGED_RUNTIME_ENTRY = 'runtime-entry.js'
 export const PACKAGED_RUNTIME_MANIFEST = 'runtime-manifest.json'
 
 /**
- * The DSH services a runtime is allowed to use. The supervisor passes the live instances; the runtime never reaches into the
- * Cordis context for them. The service keys mirror the plugin's `inject` list plus `settings`.
- */
-export type RuntimeHostServices = Pick<Context,
-  'agents' | 'sessionController' | 'sessionPersistence' | 'workspaceRegistry' | 'permissionPresets' | 'tools'
-  | 'systemPrompt' | 'skills' | 'webServer' | 'llm' | 'subprocess' | 'settings'>
-
-/**
  * The DSH value exports the runtime used to import directly. Injecting them keeps the built runtime free of
  * `@deepseek-ai/*` runtime imports, so the supervisor can load a self-contained bundle from the state directory.
  */
@@ -73,7 +65,7 @@ export interface RuntimeHost {
   readonly hostApi: typeof HOST_API
   /** The version of the runtime bundle that is running, for logs and the update surface. */
   readonly version: string
-  /** The live Cordis context: effects, injection, service lookup for optional services (`schedule`, `subagents`), and the service registration. */
+  /** The live Cordis context: the frozen DSH service channel, plus effects, injection, optional services (`schedule`, `subagents`), and the service registration. */
   readonly context: Context
   /** The validated deployment configuration. */
   readonly machine: Machine
@@ -89,8 +81,6 @@ export interface RuntimeHost {
   readonly logs: Logs
   /** The durable JSONL sink owned by the supervisor; the runtime attaches it once settings exist and flushes it while draining. */
   readonly logSink: LogFileSink
-  /** The DSH services listed in `RuntimeHostServices`, read once from the live context. */
-  readonly services: RuntimeHostServices
   /** The injected DSH value exports. */
   readonly values: RuntimeHostValues
   /** The state directory the supervisor locked; the runtime may open only its database beneath it. */
@@ -119,8 +109,8 @@ export interface DrainPhaseReport {
 }
 
 /**
- * The ordered report of one drain. `completed` is false when any phase failed; a failed phase never stops the later phases,
- * because closing the store and releasing the lock matter more than a clean report.
+ * The ordered report of one drain. `completed` is false when any phase failed or was skipped; a failed phase never stops the
+ * later phases, because closing the store and releasing the lock matter more than a clean report.
  */
 export interface DrainReport {
   readonly reason: string

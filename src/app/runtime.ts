@@ -63,6 +63,7 @@ import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
+import { bounded } from '../infra/bounded.ts'
 import type { DrainPhase, DrainPhaseReport, DrainReport, RuntimeHandle, RuntimeHost } from '../runtime-host.ts'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
@@ -74,6 +75,14 @@ const WATCHDOG_MS = 60_000
 const STALLED_MS = 10 * 60_000
 /** How many recent file-delivery failures Overview keeps, newest last, until the ring drops them. */
 const DELIVERY_FAILURES = 20
+/** How long the drain waits for in-flight passes, effects, agent turns and diagnosis before failing that phase and continuing. */
+export const DRAIN_IN_FLIGHT_MS = 10_000
+
+/** Test seams for the drain; production uses the module constants. */
+export interface RuntimeOptions {
+  /** Bound for the in-flight phase; the later phases run even when it expires. */
+  readonly drainInFlightMs?: number
+}
 
 /**
  * DSH's session-ownership failure, said as the operator's action: which state directory another host holds, and how to
@@ -129,6 +138,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   /** Creates a capture logger per scope over the same ring and Host logger. */
   private readonly capture: (scope: string) => CaptureLogs
   private readonly stopped = new AbortController()
+  /** Bound for the in-flight drain phase, from the options seam. */
+  private readonly drainInFlightMs: number
   private readonly disposers: (() => void)[] = []
   private readonly ctx: Context
   readonly machine: Machine
@@ -155,7 +166,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
    * Builds the runtime over the stable supervisor's frozen host. The supervisor owns the state-directory lock, the log ring,
    * the durable sink and the release order; this constructor only opens the database and composes the application.
    */
-  constructor(private readonly host: RuntimeHost) {
+  constructor(private readonly host: RuntimeHost, options: RuntimeOptions = {}) {
+    this.drainInFlightMs = options.drainInFlightMs ?? DRAIN_IN_FLIGHT_MS
     this.ctx = host.context
     this.machine = host.machine
     this.exit = host.exit
@@ -836,9 +848,10 @@ export class Runtime implements SourceHost, RuntimeHandle {
 /** Idempotent drain; concurrent or repeated calls share the same report. */
   stop(): Promise<DrainReport> { return this.drain('shutdown') }
   /**
-   * Runs the drain contract once: stop intake, cancel the remaining agents, wait for in-flight work, dispose the composition,
-   * flush the durable log, close the Store and release the state-directory lock. A later call returns the first report.
-   * A failed phase is recorded and the later phases still run; `completed` says whether every phase succeeded.
+   * Runs the drain contract once: stop intake, cancel the remaining agents, wait bounded for in-flight work, dispose the
+   * composition, flush the durable log, close the Store and release the state-directory lock. A later call returns the first
+   * report. A failed or skipped phase is recorded and the later phases still run; `completed` is true only when every phase
+   * is `done`.
    */
   drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
     return this.stopping ??= this.shutdown(reason, signal)
@@ -889,9 +902,17 @@ export class Runtime implements SourceHost, RuntimeHandle {
     })
     await phase('in-flight', async () => {
       // The lifetime abort ends a waiting diagnosis; its dispatch is disposed and the record stays bundled for a retry.
-      await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle()), this.diagnosis.idle()])
+      let timedOut: Error | undefined
+      try {
+        await bounded(Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle()), this.diagnosis.idle()]),
+          this.drainInFlightMs, 'the in-flight drain wait')
+      } catch (error) {
+        timedOut = error instanceof Error ? error : new Error(String(error))
+      }
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
+      // The executor's own shutdown is bounded, so a stuck orchestration task still cannot keep the later phases from running.
       await this.executor.shutdown()
+      if (timedOut !== undefined) throw timedOut
     })
     await phase('dispose', async () => {
       try {
@@ -907,6 +928,6 @@ export class Runtime implements SourceHost, RuntimeHandle {
     await phase('logs', () => this.host.flushLogs())
     await phase('store', () => { this.store.close() })
     await phase('lock', () => this.host.releaseStateLock())
-    return { reason, startedAt, durationMs: Date.now() - began, completed: phases.every(item => item.status !== 'failed'), phases }
+    return { reason, startedAt, durationMs: Date.now() - began, completed: phases.every(item => item.status === 'done'), phases }
   }
 }

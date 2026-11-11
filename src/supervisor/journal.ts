@@ -96,11 +96,11 @@ export class Journal {
       ...(info.recovery === undefined ? {} : { recovery: info.recovery }) })
   }
 
-  /** Finish a failed start: the record stays recoverable and names the phase that failed. */
+  /** Finish a failed operation: the record stays recoverable and names the phase that failed. */
   fail(phase: JournalPhase, detail: string): void {
     const previous = this.read()
-    const steps = [...(previous?.steps ?? []), { phase: 'rollback' as const, state: 'failed' as const, at: this.now(), detail }]
-    this.write({ api: API, status: 'failed', operation: previous?.operation ?? 'startup', phase: 'rollback', updatedAt: this.now(), steps,
+    const steps = [...(previous?.steps ?? []), { phase, state: 'failed' as const, at: this.now(), detail }]
+    this.write({ api: API, status: 'failed', operation: previous?.operation ?? 'startup', phase, updatedAt: this.now(), steps,
       ...(previous?.current === undefined ? {} : { current: previous.current }),
       ...(previous?.previous === undefined ? {} : { previous: previous.previous }) })
   }

@@ -47,12 +47,12 @@ export class DrainController {
       report = await handle.drain(reason, signal)
     } catch (error) {
       await this.finish()
-      this.options.journal.fail('rollback', `the runtime drain threw: ${error instanceof Error ? error.message : String(error)}`)
+      this.options.journal.fail('drain', `the runtime drain threw: ${error instanceof Error ? error.message : String(error)}`)
       throw error
     }
     await this.finish()
     if (report.completed) this.options.journal.commit({})
-    else this.options.journal.fail('rollback', 'the runtime drain did not complete every phase')
+    else this.options.journal.fail('drain', 'the runtime drain did not complete every phase')
     return report
   }
 

@@ -10,10 +10,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
-  HOST_API, PACKAGED_RUNTIME_ENTRY, PACKAGED_RUNTIME_MANIFEST, type RuntimeDescriptor, type RuntimeHandle, type RuntimeHost, type RuntimeModule,
+  HOST_API, PACKAGED_RUNTIME_MANIFEST, type RuntimeDescriptor, type RuntimeHandle, type RuntimeHost, type RuntimeModule,
 } from '../runtime-host.ts'
-import { VERSION } from '../version.ts'
-import { readDescriptorFile, sha256File } from './versions.ts'
+import { readDescriptorFile, safeEntry, sha256File } from './versions.ts'
 
 /** The runtime the package itself ships, used when no deployed version verifies. */
 export interface PackagedRuntime {
@@ -46,29 +45,36 @@ export function packageRoot(start = dirname(fileURLToPath(import.meta.url))): st
 }
 
 /**
- * Describe the packaged runtime. An installed package has a signed-by-content `lib/runtime-manifest.json` and the bundled
- * `lib/runtime-entry.js`; a source checkout has neither until it is built, so it uses `src/runtime-entry.ts` directly. The
- * packaged entry is verified by hash exactly like a deployed one; a corrupt package is a packaging error, not a fallback.
+ * Describe the packaged runtime, which is always a built `lib/runtime-manifest.json` plus the bundled `lib/runtime-entry.js`.
+ * There is deliberately no source-checkout fallback: Node's default TypeScript support cannot load `src/runtime-entry.ts`
+ * (it uses parameter properties), so an unbuilt package is a packaging error that names the build command rather than a
+ * runtime that fails on import. The packaged entry is verified by hash exactly like a deployed one; a corrupt package is a
+ * packaging error too, not a fallback.
  */
 export function packagedRuntime(root = packageRoot()): PackagedRuntime {
-  if (root === undefined) throw new Error('dsh-superagent-further cannot locate its package root, so it cannot load its packaged runtime')
+  if (root === undefined) {
+    throw new Error('dsh-superagent-further cannot locate its package root, so it cannot load its packaged runtime; run pnpm build')
+  }
   const lib = join(root, 'lib')
   const manifestPath = join(lib, PACKAGED_RUNTIME_MANIFEST)
-  if (existsSync(manifestPath)) {
-    const read = readDescriptorFile(manifestPath)
-    if (read.descriptor === undefined) throw new Error(`The packaged runtime descriptor is invalid: ${read.reason ?? 'unknown reason'}`)
-    const entry = join(lib, read.descriptor.entry)
-    if (!existsSync(entry)) throw new Error(`The packaged runtime entry ${entry} does not exist`)
-    const actual = sha256File(entry)
-    if (actual !== read.descriptor.sha256) throw new Error(`The packaged runtime entry ${entry} has hash ${actual}, not ${read.descriptor.sha256}`)
-    return { descriptor: read.descriptor, entry }
+  if (!existsSync(manifestPath)) {
+    throw new Error(`The packaged runtime manifest ${manifestPath} does not exist; run pnpm build to create lib/runtime-manifest.json and lib/runtime-entry.js`)
   }
-  const entry = join(root, 'src', PACKAGED_RUNTIME_ENTRY.replace(/\.js$/, '.ts'))
-  if (!existsSync(entry)) throw new Error(`The packaged runtime entry ${entry} does not exist and no ${manifestPath} was found`)
-  return {
-    descriptor: { version: VERSION, entry: 'runtime-entry.ts', hostApi: HOST_API, sha256: sha256File(entry) },
-    entry,
+  const read = readDescriptorFile(manifestPath)
+  if (read.descriptor === undefined) {
+    throw new Error(`The packaged runtime manifest ${manifestPath} is invalid: ${read.reason ?? 'unknown reason'}; run pnpm build`)
   }
+  const safe = safeEntry(lib, read.descriptor.entry)
+  if (safe.path === undefined) {
+    throw new Error(`The packaged runtime manifest ${manifestPath} names an unsafe entry: ${safe.reason ?? 'unknown reason'}; run pnpm build`)
+  }
+  const entry = safe.path
+  if (!existsSync(entry)) throw new Error(`The packaged runtime entry ${entry} does not exist; run pnpm build`)
+  const actual = sha256File(entry)
+  if (actual !== read.descriptor.sha256) {
+    throw new Error(`The packaged runtime entry ${entry} has hash ${actual}, not ${read.descriptor.sha256}; run pnpm build`)
+  }
+  return { descriptor: read.descriptor, entry }
 }
 
 /** Whether a value can be awaited. */

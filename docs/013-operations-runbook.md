@@ -109,7 +109,7 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   them, and stop the Host for a quiescent copy: pausing is not enough, because the pause holds evaluation, dispatch
   and outbound delivery while Sources and health transitions still log. A copy taken while the Host runs (paused or
   not) may gain lines, so treat it as a best-effort backup rather than a consistent snapshot.
-- `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors, one directory per
+- `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors (M35 reads `previous.json`; the update pipeline in M36 writes it), one directory per
   deployed version, and `journal.json`. It belongs in a backup with the database; do not edit a pointer or a version
   directory while the Host runs, and never hand-edit a hash to make a bundle verify.
 - Worktrees live under `<stateDir>/work`; `scripts/clean-worktrees` prunes finished ones by age. Do not delete a
@@ -133,7 +133,8 @@ watches four signals it already has — failed or stopped Assignment ends, the o
 - **A deployed runtime was refused or fell back**: the Logs page (`host` scope) names the descriptor that was rejected
   and why — a missing or unreadable pointer, a bad hash, another host API, or a schema older than the database. Read
   `<stateDir>/runtime/journal.json` for the recorded phase and recovery note. Fix the deployment or remove
-  `current.json` while the Host is stopped to start the packaged runtime; do not delete `previous.json` if it is the last
+  `current.json` while the Host is stopped to start the packaged runtime; M35 writes no `previous.json`, so without one
+  that fallback is the packaged runtime. Do not delete `previous.json` if it is the last
   known-good version.
 - **The journal says `running`**: the previous process stopped during `startup` or `drain`. The next start recovers by
   preferring the recorded current version when it still verifies, then the previous verified version, then the packaged
