@@ -8,6 +8,20 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- A stable supervisor and a versioned domain runtime (ADR-0006, schema 25 unchanged). `src/index.ts` now starts
+  `Supervisor`, which owns the state-directory lock, the `Logs` ring and `LogFileSink`, the machine configuration, the
+  runtime version pointers and journal, the health probe and the drain controller. The domain runtime is reached only
+  through the frozen `RuntimeHost` v1 (`src/runtime-host.ts`): the twelve DSH services, the DSH values the runtime must
+  not import (`Service`, `freezeMessage`, `MessageId`, `ReasoningEffortId`, `scopeParentOf`, schemastery), the machine,
+  restart, logger, lifetime signal, logs, sink, flush and lock release. `src/runtime-entry.ts` exports
+  `createRuntime(host)` and is built as the self-contained `lib/runtime-entry.js` with a `lib/runtime-manifest.json`
+  descriptor; `scripts/check-runtime-bundle.mjs` checks the bundle and is part of `pnpm check`. Startup verifies
+  `<stateDir>/runtime/current.json` (safe entry inside the version directory, SHA-256, host API and a schema that is not
+  older than the database), falls back to the previous verified version and then to the packaged runtime, and records
+  every rejection, recovery and journal phase. The drain is idempotent and ordered — stop intake, cancel remaining
+  agents with their inboxes kept, wait bounded for in-flight work, dispose, flush the logs, close the Store, release the
+  lock, return the phase report — and a crash between steps recovers from `<stateDir>/runtime/journal.json` without ever
+  downgrading the schema. `tests/supervisor.spec.ts` covers the resolution, loader, journal, host-freeze and swap paths.
 - Read-only diagnosis of operational incidents and routing of the conclusion through the existing self-evolution
   outlets (ADR-0005, schema 25 unchanged). A new agent preset `dsh-superagent-further-diagnostician` (order 95, not
   selectable by hand) carries only `agent-instructions`, `time-context` and a `tool-fs` mounted with `write: false`

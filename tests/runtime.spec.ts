@@ -7,9 +7,11 @@ import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { lockSync } from 'proper-lockfile'
 import { hostedElsewhere, Runtime } from '../src/app/runtime.ts'
+import { Supervisor } from '../src/supervisor/supervisor.ts'
 import { AUTOMATION_CONTEXT, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
-import { jobRegistry } from './fixtures/host.ts'
+import { jobRegistry, startTestRuntime } from './fixtures/host.ts'
 import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
@@ -168,7 +170,7 @@ async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}):
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store, accounts); store.close()
   const ctx = new Context()
   for (const [name, service] of Object.entries(schedule === undefined ? services : { ...services, schedule })) ctx.reflect.provide(name, service)
-  runtime = new Runtime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
+  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
   return runtime
 }
 let deliveries: ReturnType<typeof vi.fn<(request: { sessionId: string; mode: 'queue' | 'steer'; id: string; text: string }) => void>>
@@ -320,7 +322,7 @@ beforeEach(async () => {
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
-  runtime = new Runtime(ctx, testMachine({ stateDir: directory }), restarts)
+  runtime = startTestRuntime(ctx, testMachine({ stateDir: directory }), restarts)
   await runtime.ready
   // Source kinds are normally registered by plugins that are not loaded in unit tests.
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
@@ -1590,15 +1592,19 @@ it('says which host holds the orchestrator Session, and how to switch, instead o
   expect(hostedElsewhere(other, 'C:/state/superagent', 'orchestrator-1')).toBe(other)
 })
 
-it('refuses a second process on the same state directory before it opens the database, so it migrates nothing', () => {  // A database the running build would read as schema 10 stays as it is.
+it('refuses a second host on the same state directory before it opens the database, so it migrates nothing', async () => {  // A database the running build would read as schema 10 stays as it is.
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='10' WHERE key='schema'").run()
   db.close()
-  const ctx = new Context()
-  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
-  expect(() => new Runtime(ctx, testMachine({ stateDir: directory }), vi.fn())).toThrow(/already hosted for/)
-  expect(runtime.store.get(KV.store.schema)).toBe(10)
-  runtime.store.set(KV.store.schema, SCHEMA_VERSION)
+  const release = lockSync(directory)
+  try {
+    const supervisor = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }) })
+    await expect(supervisor.start()).rejects.toThrow(/already hosted for/)
+    expect(runtime.store.get(KV.store.schema)).toBe(10)
+    runtime.store.set(KV.store.schema, SCHEMA_VERSION)
+  } finally {
+    await release()
+  }
 })
 
 it('applies a changed prompt size limit to the next save and request without a restart', async () => {
@@ -1625,20 +1631,24 @@ it('applies a changed prompt size limit to the next save and request without a r
   expect(restarts).not.toHaveBeenCalled()
 })
 
-it('releases the database and the state directory lock when it fails to start, so it can start again in this process', async () => {
+it('releases the database and the state directory lock when a start fails, so it can start again in this process', async () => {
   await runtime.stop()
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='99' WHERE key='schema'").run()
   db.close()
   const context = () => { const ctx = new Context(); for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service); return ctx }
-  expect(() => new Runtime(context(), testMachine({ stateDir: directory }), vi.fn())).toThrow('Unsupported orchestrator database version 99')
+  const failed = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }) })
+  await expect(failed.start()).rejects.toThrow('Unsupported orchestrator database version 99')
+  // A lock kept by the failed start would make this throw that the lock is already held.
+  const release = lockSync(directory)
+  await release()
   const fixed = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   fixed.prepare('UPDATE kv SET value=? WHERE key=?').run(String(SCHEMA_VERSION), 'schema')
   fixed.close()
-  // A lock kept by the failed start would make this throw that the lock is already held.
-  runtime = new Runtime(context(), testMachine({ stateDir: directory }), vi.fn())
-  await runtime.ready
-  expect(runtime.store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  const next = new Supervisor({ context: context(), machine: testMachine({ stateDir: directory }) })
+  await next.start()
+  expect(next.versionStatus()).toMatchObject({ source: 'packaged', hostApi: 1 })
+  await next.stop()
 })
 
 it('tells the conversation that the PR merged when work a restart recovered ends with it later', async () => {
@@ -2341,3 +2351,13 @@ it('reports a completed root project request once through the Channel its chain 
 })
 
 
+
+it('reports the drain phases in contract order and returns the first report on a second call', async () => {
+  await restart()
+  await runtime.ready
+  const first = await runtime.stop()
+  expect(first.phases.map(phase => phase.phase)).toEqual(['intake', 'cancel', 'in-flight', 'dispose', 'logs', 'store', 'lock'])
+  expect(first.phases.every(phase => phase.status === 'done')).toBe(true)
+  expect(first.completed).toBe(true)
+  expect(await runtime.stop()).toBe(first)
+})

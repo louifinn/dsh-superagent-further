@@ -237,10 +237,22 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, and, by default, the Ticket directories in `work`. It is system-owned and is never the main Session's workspace. Back it up before upgrades |
+| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, the versioned runtime pointers in `runtime/`, and, by default, the Ticket directories in `work`. It is system-owned and is never the main Session's workspace. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
+
+### Runtime versions and recovery
+
+The stable supervisor in the package starts a versioned domain runtime, so a business update is a file swap rather than a host restart. The supervisor keeps its own state under `<stateDir>/runtime/`:
+
+- `current.json` names the runtime that should start: `{version, entry, hostApi, sha256, schema}`. The entry is relative to `<stateDir>/runtime/<version>/`, and the supervisor checks the path stays inside that directory, the file exists, its SHA-256 matches, its host API is the one the supervisor implements, and its schema is not older than the open database.
+- `previous.json` names the last known-good version, which a failed start falls back to.
+- `journal.json` records the latest startup or drain and its phase. It is written with a temporary file, fsync and rename, so a crash never leaves a half-written record.
+
+The packaged runtime (`lib/runtime-entry.js` in the installed plugin) is always the last resort. A missing, invalid, mismatched or broken deployed version is a warning in the Logs page and a fallback to the previous version or the package; it does not stop the supervisor and it never changes the database schema downward. Startup records a recovery in the journal and the log when it had to abandon an interrupted version.
+
+Stopping normally drains the runtime in a fixed order: no new work, remaining agents cancelled as a `user` stop with their inboxes kept, a bounded wait for in-flight effects and deliveries, the components disposed, the log files flushed, the Store closed and only then the state-directory lock released. The pending version stage/deploy/update surface arrives in M36; until then, an operator who needs to roll back can stop the instance and replace `current.json` with `previous.json` (or remove it) to start the packaged runtime.
 
 ## Start and stop
 

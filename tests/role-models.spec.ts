@@ -5,6 +5,7 @@ import { agentEvents, installModelSelection, type Agent, type ModelSelection, ty
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { initializeRoleModel } from '../src/app/role-models.ts'
+import { testValues } from './fixtures/values.ts'
 const contexts: Context[] = []
 afterEach(async () => { await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose())); vi.restoreAllMocks() })
 async function fixture() {
@@ -23,7 +24,7 @@ async function fixture() {
 }
 it('keeps prompt variables and initial routing on the role model without saving the host default', async () => {
   const { ctx, agent, request, record, flush } = await fixture()
-  await initializeRoleModel(ctx, agent, { provider: 'worker-provider', model: 'worker-model' })
+  await initializeRoleModel(ctx, agent, { provider: 'worker-provider', model: 'worker-model' }, testValues)
   expect((await ctx.systemPrompt.assemble()).variables).toMatchObject({ provider: 'worker-provider', model: 'worker-model' })
   const selected = await request()
   expect(selected).toEqual({ provider: 'worker-provider', model: 'worker-model' })
@@ -37,7 +38,7 @@ it('keeps prompt variables and initial routing on the role model without saving 
 })
 it('lets a later explicit selection win without changing the in-flight assembled step', async () => {
   const { ctx, agent, host, request } = await fixture()
-  await initializeRoleModel(ctx, agent, { provider: 'worker', model: 'one' })
+  await initializeRoleModel(ctx, agent, { provider: 'worker', model: 'one' }, testValues)
   await ctx.systemPrompt.assemble()
   const manual = { provider: 'manual', model: 'two', reasoningEffort: ReasoningEffortId('low') }
   Object.defineProperty(host, 'current', { value: manual, configurable: true })
@@ -51,15 +52,15 @@ it.each(['header', 'selection'])('preserves a resumed Session with existing %s',
   const existing = { provider: 'existing', model: 'keep' }
   if (kind === 'header') agent.session.append('request/header', { header: { config: existing }, reason: 'initial' })
   else agent.session.append('model/selection', existing)
-  await initializeRoleModel(ctx, agent, { provider: 'worker', model: 'new' })
+  await initializeRoleModel(ctx, agent, { provider: 'worker', model: 'new' }, testValues)
   expect(resolve).not.toHaveBeenCalled()
 })
 it('inherits the host when unset and fails unavailable routes before recording a selection', async () => {
   const { ctx, agent, resolve, request } = await fixture()
-  await initializeRoleModel(ctx, agent, null)
+  await initializeRoleModel(ctx, agent, null, testValues)
   await ctx.systemPrompt.assemble()
   expect(await request()).toMatchObject({ provider: 'host', model: 'default' })
   resolve.mockRejectedValueOnce(new Error('unknown provider'))
-  await expect(initializeRoleModel(ctx, agent, { provider: 'unknown', model: 'x' })).rejects.toThrow('unknown provider')
+  await expect(initializeRoleModel(ctx, agent, { provider: 'unknown', model: 'x' }, testValues)).rejects.toThrow('unknown provider')
   expect(agent.session.snapshotEvents().some(event => event.type === 'model/selection')).toBe(false)
 })

@@ -1,5 +1,5 @@
 /** Application composition root and lifecycle manager for dsh-superagent-further. */
-import { Service, type Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -10,10 +10,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
-import { mkdirSync } from 'node:fs'
-import { restrictToOwner } from '../infra/acl.ts'
 import { join } from 'node:path'
-import { lockSync } from 'proper-lockfile'
 import { Engine, key, projectRequestOpen, reasonText, runningAssignment, threadKey,
   type DomainEvent, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
@@ -29,8 +26,8 @@ import { KV } from '../kv.ts'
 import { Store } from './store.ts'
 import { evalsHealth, type DeliveryFailure, type LeadRow } from './views/overview.ts'
 import { TextCache } from './cache.ts'
-import { captureLogs, captureScopes, Logs, type CaptureLogs, type HostLogger } from './logs.ts'
-import { LogFileSink } from './log-files.ts'
+import { captureLogs, captureScopes, type CaptureLogs, type Logs } from './logs.ts'
+import type { LogFileSink } from './log-files.ts'
 import { decideEscalation, type EscalationDecisionInput, type EscalationDecisionResult } from './escalations.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
@@ -66,6 +63,7 @@ import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import type { SubagentService } from '../executor/lead-dispatch.ts'
 import { setTimeout as delay } from 'node:timers/promises'
+import type { DrainPhase, DrainPhaseReport, DrainReport, RuntimeHandle, RuntimeHost } from '../runtime-host.ts'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
@@ -92,7 +90,7 @@ export function hostedElsewhere(error: unknown, stateDir: string, masterId: stri
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
  * Locks the state directory before opening SQLite so concurrent processes cannot corrupt or double-migrate state.
  */
-export class Runtime extends Service implements SourceHost {
+export class Runtime implements SourceHost, RuntimeHandle {
   readonly store: Store
   readonly setup: Setup
   readonly prompts: Prompts
@@ -122,18 +120,23 @@ export class Runtime extends Service implements SourceHost {
   readonly automations?: Automations
   private readonly sourceLinks = new TextCache(200_000)
   /** Bounded in-memory log of the plugin host's own messages; the panel reads it through `GET logs`. */
-  readonly logs = new Logs()
+  readonly logs: Logs
   /** The durable JSONL files' health: a failed write reports here once, and its recovery reports ready. */
   private readonly logsHealth = this.board.claim('logs', { state: 'ready', detail: '' })
-  private logsSink?: LogFileSink
+  /** The durable sink owned by the supervisor; this runtime attaches and flushes it but never closes the state directory. */
+  private readonly logsSink: LogFileSink
   private readonly log: CaptureLogs
   /** Creates a capture logger per scope over the same ring and Host logger. */
   private readonly capture: (scope: string) => CaptureLogs
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
-  private releaseLock?: () => Promise<void>
+  private readonly ctx: Context
+  readonly machine: Machine
+  private readonly exit: (code: number) => void
+  /** Unregisters the `orchestrator` service; set once the constructor has built the runtime. */
+  private unprovide?: () => void
   private closingFlag = false
-  private stopping?: Promise<void>
+  private stopping?: Promise<DrainReport>
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** The stalled Assignments the watchdog reported, by Ticket: the Assignment, its attention, and the Report that raised it. */
@@ -148,31 +151,32 @@ export class Runtime extends Service implements SourceHost {
   private readonly deliveries: DeliveryFailure[] = []
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
-  constructor(ctx: Context, readonly machine: Machine, restart: () => void,
-    /** Ends the host process once a management shutdown has stopped the runtime (injected so tests can observe it). */
-    private readonly exit: (code: number) => void = code => { process.exit(code) }) {
-    super(ctx, 'orchestrator')
-    const host = ctx.logger as unknown as HostLogger
-    this.log = captureLogs(this.logs, host, 'host')
-    this.capture = captureScopes(this.logs, host)
+  /**
+   * Builds the runtime over the stable supervisor's frozen host. The supervisor owns the state-directory lock, the log ring,
+   * the durable sink and the release order; this constructor only opens the database and composes the application.
+   */
+  constructor(private readonly host: RuntimeHost) {
+    this.ctx = host.context
+    this.machine = host.machine
+    this.exit = host.exit
+    this.logs = host.logs
+    this.logsSink = host.logSink
+    const ctx = this.ctx
+    const machine = this.machine
+    this.log = captureLogs(this.logs, host.logger, 'host')
+    this.capture = captureScopes(this.logs, host.logger)
+    // The supervisor aborts its lifetime when the state-directory lock is lost; stop writing before the new writer starts.
+    host.lifetime.addEventListener('abort', () => {
+      this.runtimeHealth.set({ state: 'error', detail: 'The state-directory lock was lost; the runtime stopped to avoid concurrent writes' })
+      this.stopped.abort()
+    }, { once: true })
+    host.onLogState((state, detail) => { this.logsHealth.set({ state, detail }) })
     const runtime = this
-    // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
-    mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
-    // Windows ignores the mode above: an owner-only ACL takes its place, and a failure is reported rather than fatal.
-    try { restrictToOwner(machine.stateDir, true) } catch (error) { this.log.warn('dsh-superagent-further: %s', String(error)) }
-    const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
-    let release: (() => unknown) | undefined
-    try {
-      release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
-    } catch (error) {
-      throw new Error(`dsh-superagent-further is already hosted for ${machine.stateDir}. Stop the other host: scripts/dsh-superagent-further stop for the service, or disable the dsh-superagent-further plugin in the profile that runs it, then start this one.`, { cause: error })
-    }
-    this.releaseLock = async () => { await release?.() }
     let opened: Store | undefined
     try {
       const report = (error: unknown) => { this.log.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart, log: this.capture('setup') })
+      const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart: () => host.restart(), log: this.capture('setup') })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
@@ -210,20 +214,16 @@ export class Runtime extends Service implements SourceHost {
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
-      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
+      const sessions = this.sessions = new Sessions({ context: ctx, values: host.values, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
-      this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
+      this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
-      // The durable sink is attached once settings exist, so its retention and the ring's minimum level apply from the first
-      // entry the panel would show. Entries recorded before this point stay in the ring only.
-      this.logsSink = new LogFileSink({
-        stateDir: machine.stateDir,
-        retentionDays: () => store.settings().executor.logRetentionDays,
-        onState: (state, detail) => { this.logsHealth.set({ state, detail }) },
-      })
+      // The supervisor owns the durable sink; this runtime attaches it once settings exist, so its retention and the ring's
+      // minimum level apply from the first entry the panel would show. Entries recorded before this point stay in the ring only.
+      host.setLogRetention(() => store.settings().executor.logRetentionDays)
       this.logs.attach(this.logsSink)
       this.logs.setMinLevel(() => store.settings().executor.logLevel)
       // The self-evolution Issue outlet (docs/014 D3): its gate lives in the Eval settings, its records in schema 24, and a
@@ -443,9 +443,10 @@ export class Runtime extends Service implements SourceHost {
         child.effect(() => child.tools.register(sessionSubmitTool(sessionHost)), 'session: submission tool'))
       this.disposers.push(() => { void sessionTool.dispose().catch(() => {}) })
       this.ready = this.initialize()
+      this.unprovide = ctx.provide('orchestrator', this)
     } catch (error) {
-      // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
-      try { opened?.close() } finally { void release?.() }
+      // Release the database if initialization fails; the supervisor releases the state lock and the sink.
+      try { opened?.close() } catch { /* The original failure is the one to report. */ }
       throw error
     }
   }
@@ -832,56 +833,80 @@ export class Runtime extends Service implements SourceHost {
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
       requestShutdown: () => { runtime.requestShutdown() } }
   }
-  /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
-  stop(): Promise<void> { return this.stopping ??= this.shutdown() }
+/** Idempotent drain; concurrent or repeated calls share the same report. */
+  stop(): Promise<DrainReport> { return this.drain('shutdown') }
+  /**
+   * Runs the drain contract once: stop intake, cancel the remaining agents, wait for in-flight work, dispose the composition,
+   * flush the durable log, close the Store and release the state-directory lock. A later call returns the first report.
+   * A failed phase is recorded and the later phases still run; `completed` says whether every phase succeeded.
+   */
+  drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    return this.stopping ??= this.shutdown(reason, signal)
+  }
+  /** The `RuntimeHandle` view of `drain`, for a loader that only needs disposal. */
+  async dispose(): Promise<void> { await this.drain('dispose') }
   /**
    * Stops the runtime and then ends the host process. `scripts/dsh-superagent-further stop` requests this over the management API
    * because Windows cannot deliver a graceful signal to a detached process; POSIX stops send SIGINT and never take this path.
    */
   requestShutdown(): void {
     if (this.stopping) return
-    void this.stop().then(() => { this.exit(0) }, (error: unknown) => {
+    void this.drain('request').then(() => { this.exit(0) }, (error: unknown) => {
       this.log.error('dsh-superagent-further shutdown failed: %s', String(error))
       this.exit(1)
     })
   }
-  private async shutdown(): Promise<void> {
-    this.closingFlag = true; this.detachIncidentLogs?.(); this.detachIncidentLogs = undefined; this.incidentsReady = false
-    const passes = this.passes.stop(); this.stopped.abort()
-    try {
+  private async shutdown(reason: string, signal?: AbortSignal): Promise<DrainReport> {
+    const startedAt = now(); const began = Date.now()
+    const phases: DrainPhaseReport[] = []
+    const phase = async (name: DrainPhase, run: () => void | Promise<void>): Promise<void> => {
+      const at = now(); const tick = Date.now()
+      if (signal?.aborted) {
+        phases.push({ phase: name, status: 'skipped', startedAt: at, durationMs: 0, detail: 'the drain signal was already aborted' })
+        return
+      }
+      try {
+        await run()
+        phases.push({ phase: name, status: 'done', startedAt: at, durationMs: Date.now() - tick })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        phases.push({ phase: name, status: 'failed', startedAt: at, durationMs: Date.now() - tick, detail })
+        this.log.warn('dsh-superagent-further drain phase %s failed: %s', name, detail)
+      }
+    }
+    this.closingFlag = true
+    let passes: Promise<unknown> | undefined
+    await phase('intake', () => {
+      this.detachIncidentLogs?.(); this.detachIncidentLogs = undefined; this.incidentsReady = false
+      passes = this.passes.stop(); this.stopped.abort()
+    })
+    let agents: Agent[] = []
+    await phase('cancel', () => {
       this.assessor.stop()
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
-      const agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
+      agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
       for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
+    })
+    await phase('in-flight', async () => {
       // The lifetime abort ends a waiting diagnosis; its dispatch is disposed and the record stays bundled for a retry.
       await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle()), this.diagnosis.idle()])
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
-      this.executor.dispose()
-      this.sessions.dispose()
-      for (const dispose of this.disposers.reverse()) dispose()
-      await this.ctx.sessionPersistence.flush()
-    } finally {
-      // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
-      this.setup.restore()
-      // Flush the durable log before the Store closes: the sink needs no Store, but closing first keeps every shutdown entry
-      // that preceded it on disk. close() accepts nothing from its first line and writes the last batch with asynchronous
-      // appends, so the timer can actually fire; the bound gives up waiting on a stuck disk without blocking the event loop.
-      const sink = this.logsSink
-      if (sink) {
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000); timer.unref?.() })
-        try {
-          await Promise.race([sink.close(), bound])
-        } finally {
-          if (timer !== undefined) clearTimeout(timer)
-        }
+    })
+    await phase('dispose', async () => {
+      try {
+        this.executor.dispose()
+        this.sessions.dispose()
+        for (const dispose of this.disposers.reverse()) dispose()
+        this.unprovide?.(); this.unprovide = undefined
+        await this.ctx.sessionPersistence.flush()
+      } finally {
+        this.setup.restore()
       }
-      try { this.store.close() } finally {
-        const unreleased = (error: unknown) => { this.log.warn('dsh-superagent-further could not release its state directory lock: %s',
-          String(error)) }
-        await this.releaseLock?.().catch(unreleased)
-      }
-    }
+    })
+    await phase('logs', () => this.host.flushLogs())
+    await phase('store', () => { this.store.close() })
+    await phase('lock', () => this.host.releaseStateLock())
+    return { reason, startedAt, durationMs: Date.now() - began, completed: phases.every(item => item.status !== 'failed'), phases }
   }
 }

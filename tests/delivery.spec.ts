@@ -4,6 +4,7 @@ import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { expect, it, vi } from 'vitest'
 import { AgentDelivery } from '../src/app/delivery.ts'
+import { testValues } from './fixtures/values.ts'
 
 function fixture(history: UserMessage[] = []) {
   const ctx = new Context()
@@ -21,7 +22,7 @@ function fixture(history: UserMessage[] = []) {
   const agents = new Map([[agent.id, agent]])
   ctx.reflect.provide('agents', agents)
   ctx.reflect.provide('sessionPersistence', { open, flush })
-  const delivery = new AgentDelivery(ctx)
+  const delivery = new AgentDelivery(ctx, testValues)
   const signal = new AbortController()
   const send = (id = 'request', mode: 'queue' | 'steer' = 'steer') => delivery.send(agent, id, '{"event_id":"event"}', mode, signal.signal)
   const inject = (id: string, summary: string) => delivery.send(agent, id, '{"settings_saved":"policy"}', { inject: summary }, signal.signal)
