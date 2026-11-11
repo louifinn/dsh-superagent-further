@@ -5,7 +5,7 @@
  * map and exposes its spies to assertions. A workspace's id is its path, like the production registry's stable id, so a
  * Session's `workspaceId` in a test reads as the directory it was created in.
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { vi } from 'vitest'
@@ -27,9 +27,14 @@ export interface FakeWorkspaceRegistry {
   unarchiveSession(sessionId: string): Promise<void>
 }
 
-/** A fresh directory for an operator's workspace, outside every test's state directory. */
+/**
+ * A fresh directory for an operator's workspace, outside every test's state directory, in the canonical spelling the
+ * settings block persists (`Setup.verifyWorkspace` canonicalizes before saving): a runner's `tmpdir()` can sit behind an
+ * 8.3 short name (Windows) or the `/var` symlink (macOS), while the runtime derives its registrations, session ids and
+ * prompts from the canonical path.
+ */
 export function workspaceDirectory(prefix = 'orchestrator-workspace-'): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)))
 }
 
 export interface FakeWorkspaces {

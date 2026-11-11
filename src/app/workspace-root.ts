@@ -97,6 +97,23 @@ function within(parent: string, child: string): boolean {
 /** Two paths overlap when either contains the other; a workspace may never share ground with a forbidden location. */
 const overlaps = (a: string, b: string): boolean => within(a, b) || within(b, a)
 
+/**
+ * Resolve the nearest existing ancestor of `lexical`, then append the missing names, so a path that does not exist yet
+ * still carries the canonical spelling of everything above it. Returns `undefined` when no ancestor exists at all.
+ */
+function anchored(lexical: string, exists: (path: string) => boolean, realpath: (path: string) => string):
+{ base: string; missing: string[] } | undefined {
+  let ancestor = lexical
+  const missing: string[] = []
+  while (!exists(ancestor)) {
+    const parent = dirname(ancestor)
+    if (parent === ancestor) return undefined
+    missing.unshift(basename(ancestor))
+    ancestor = parent
+  }
+  return { base: realpath(ancestor), missing }
+}
+
 /** Canonicalize an existing path the way `WorkspaceRegistry.create` will, without requiring the path to exist. */
 function canonical(path: string, deps: WorkspaceDeps): { path: string; existed: boolean } {
   const exists = deps.exists ?? existsSync
@@ -104,15 +121,9 @@ function canonical(path: string, deps: WorkspaceDeps): { path: string; existed: 
   const lexical = resolve(path)
   if (exists(lexical)) return { path: realpath(lexical), existed: true }
   // Resolve the nearest existing ancestor, then append the missing names so the result is canonical even before creation.
-  let ancestor = lexical
-  const missing: string[] = []
-  while (!exists(ancestor)) {
-    const parent = dirname(ancestor)
-    if (parent === ancestor) throw new WorkspaceSetupError('workspaceInvalid', { path, reason: 'no existing parent directory' })
-    missing.unshift(basename(ancestor))
-    ancestor = parent
-  }
-  return { path: resolve(realpath(ancestor), ...missing), existed: false }
+  const anchor = anchored(lexical, exists, realpath)
+  if (anchor === undefined) throw new WorkspaceSetupError('workspaceInvalid', { path, reason: 'no existing parent directory' })
+  return { path: resolve(anchor.base, ...anchor.missing), existed: false }
 }
 
 /**
@@ -146,8 +157,18 @@ export async function prepareWorkspace(input: WorkspaceInput, deps: WorkspaceDep
   const dshHome = environment.DSH_HOME?.trim() || join(home, '.dsh')
   const profile = environment.DSH_PROFILE_DIR?.trim() || join(dshHome, 'profiles', environment.DSH_PROFILE?.trim() || 'desktop')
   const repository = input.repository ?? packageRoot()
-  /** Ensure an existing forbidden path is compared canonically; a path that does not exist is compared lexically. */
-  const root = (path: string): string => exists(path) ? realpath(path) : resolve(path)
+  /**
+   * Canonicalize a forbidden path to the spelling the selected target was canonicalized to: an existing path through
+   * `realpath`, a missing one through its nearest existing ancestor, so an 8.3 short name (Windows) or a symlinked
+   * component (macOS `/var`) cannot hide an overlap between the two sides of the comparison. A path with no existing
+   * ancestor at all stays lexical, as before.
+   */
+  const root = (path: string): string => {
+    const lexical = resolve(path)
+    if (exists(lexical)) return realpath(lexical)
+    const anchor = anchored(lexical, exists, realpath)
+    return anchor === undefined ? lexical : resolve(anchor.base, ...anchor.missing)
+  }
   const forbidden: [string, string][] = [
     [root(input.stateDir), 'the state directory'],
     [root(dshHome), 'the DSH home'],

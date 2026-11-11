@@ -82,7 +82,8 @@ describe('workspace validation', () => {
     expect((await prepareWorkspace({ path: empty, stateDir, projects: [] })).path).toBe(realpathSync.native(empty))
     expect((await prepareWorkspace({ path: marked, stateDir, projects: [] })).path).toBe(realpathSync.native(marked))
     const problem = await rejection(async () => await prepareWorkspace({ path: occupied, stateDir, projects: [] }), 'workspaceNotEmpty')
-    expect(problem.detail).toContain(occupied)
+    // The problem quotes the canonical path, which can differ from the literal spelling on a runner (8.3 names, /var).
+    expect(problem.detail).toContain(realpathSync.native(occupied))
   })
 
   test('rejects relative, UNC, drive-root and non-directory selections', async () => {
@@ -135,6 +136,20 @@ describe('workspace validation', () => {
     const checkout = await rejection(async () => await prepareWorkspace({ path: join(project, '..workspace'), stateDir,
       projects: [{ workspace: project }] }), 'workspaceInvalid')
     expect(checkout.detail).toContain('a project checkout')
+  })
+
+  test('rejects a non-existent forbidden path reached through another spelling of its ancestor', async () => {
+    const { prepareWorkspace } = await workspaceRoot()
+    const root = temporary('workspace-root-'), stateDir = temporary('workspace-state-')
+    const link = join(root, 'link')
+    symlinkSync(stateDir, link, process.platform === 'win32' ? 'junction' : 'dir')
+
+    // The selection spells the state directory's descendant canonically while the state directory is given through the
+    // link, as a runner's 8.3 short name or `/var` spelling does; neither path exists yet, so only canonicalizing both
+    // sides through their nearest existing ancestor can see they name the same directory.
+    const problem = await rejection(async () => await prepareWorkspace({ path: join(stateDir, 'nested'),
+      stateDir: join(link, 'nested'), projects: [] }), 'workspaceInvalid')
+    expect(problem.detail).toContain('the state directory')
   })
 
   test('rejects the DSH home, the DSH profile and its session store, the source checkout and project checkouts', async () => {
