@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/index.ts'
@@ -199,14 +200,19 @@ export class Sessions {
       if (projectId !== undefined) void this.lead.turnEnded(projectId).catch(() => { /* the durable record stays for recovery */ })
     })
   }
-  /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
-  async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'lead'): Promise<Agent> {
+  /**
+   * Resolves or creates session `id` in a workspace, initializes its role model, decorates it with prompts/skills/tools,
+   * sets `danger-full-access` permissions, and renames it to `title`. The workspace is either a path whose DSH registration
+   * is ensured here (project Leads and their checkouts) or an already-registered workspace (the master Session's user
+   * workspace), which keeps startup from ever registering a path it has not validated.
+   */
+  async ensure(id: string, target: string | { id: string }, title: string, role: 'orchestrator' | 'worker' | 'lead'): Promise<Agent> {
     const ctx = this.ctx
     let result = await ctx.sessionController.resolveAgent(id as SessionId)
     if ('error' in result && result.error.code === 'session/not-found') {
-      const workspace = await ctx.workspaceRegistry.create(cwd)
+      const workspace = typeof target === 'string' ? await ctx.workspaceRegistry.create(target) : target
       // A Session keeps the preset it was created with, one of the bundle's own (cordis.patch.yml).
-      await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id,
+      await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id as WorkspaceId,
         agentPreset: role === 'worker' ? WORKER_PRESET : role === 'lead' ? LEAD_PRESET : ROUTER_PRESET })
       result = await ctx.sessionController.resolveAgent(id as SessionId)
     }

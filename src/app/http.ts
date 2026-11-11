@@ -16,6 +16,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, SettingsRevisionNotFound, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
+import { WorkspaceSetupError } from './workspace-root.ts'
 import { UserError, latestAssignment, runningAssignment, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import { workerSessionId, type DshExecutor } from '../executor/dsh.ts'
@@ -66,6 +67,8 @@ export interface HttpHost {
   readonly deployment: Deployment
   readonly setupProblem?: SetupProblem | undefined
   readonly feishuProblem?: SetupProblem | undefined
+  /** The prepared orchestrator workspace, shown by the panel; null until the operator selects one. */
+  readonly workspace?: { path: string; title: string } | null
   configured(): boolean
   links(): LinkTarget
   ticketEnvironment(ticket: Ticket): Variable[]
@@ -105,6 +108,7 @@ function failure(error: unknown): [number, Record<string, unknown>] {
     return [400, { error: `Invalid settings: ${issues.map(issue => issue.path).join(', ')}`, issues }]
   }
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
+  if (error instanceof WorkspaceSetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UnknownProjectError) return [400, { error: error.message, code: 'projectNotRegistered' }]
   if (error instanceof UnknownAutomationError) return [404, { error: error.message }]
@@ -126,6 +130,7 @@ function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
     machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
+    workspace: runtime.workspace ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }
@@ -134,10 +139,14 @@ function setupView(runtime: HttpHost) {
  * A missing record is what makes a first run open the wizard, so it survives panel reloads without touching Settings.
  */
 const WizardRecord = record<{ at: string; skipped: boolean }>('setup-wizard')
-/** First-run state of the setup wizard: it opens while no project is registered and was never finished or skipped. */
+/**
+ * First-run state of the setup wizard: it opens while no workspace is selected, and while no project is registered and the
+ * operator never finished or skipped it. A workspace is mandatory, so an upgrade pauses here until the operator chooses one.
+ */
 function wizardView(runtime: HttpHost) {
   const done = runtime.store.get(WizardRecord)
-  return { firstRun: runtime.store.settings().executor.projects.length === 0 && done === undefined, skipped: done?.skipped ?? false }
+  return { firstRun: runtime.store.settings().workspace.path === '' || (runtime.store.settings().executor.projects.length === 0 && done === undefined),
+    skipped: done?.skipped ?? false }
 }
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent-further status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {
@@ -214,7 +223,7 @@ const LogsQuery = z.object({ level: z.enum(['all', 'warn', 'error']).catch('all'
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
   offset: count.default(0), limit: limit(20, 200) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
-const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language']), SourceBlock])
+const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'memory', 'language', 'workspace']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
 const RestoreRequest = z.object({ revision: z.number().int().nonnegative(), reason: z.string().trim().max(280).optional() })
 
@@ -320,6 +329,9 @@ function routes(runtime: HttpHost): Routes {
     // may have skipped it deliberately and can reopen it from the panel header.
     'PUT wizard': async ({ body }) => {
       const { skipped } = z.object({ skipped: z.boolean() }).parse(await body())
+      // A workspace is mandatory: skipping or finishing the wizard before one is selected must fail closed, so a reload
+      // cannot present the first-run state as answered while the host is paused without a workspace.
+      if (store.settings().workspace.path === '') throw new WorkspaceSetupError('workspaceRequired')
       store.set(WizardRecord, { at: new Date().toISOString(), skipped })
       return wizardView(runtime)
     },

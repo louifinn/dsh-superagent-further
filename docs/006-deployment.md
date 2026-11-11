@@ -8,7 +8,7 @@ Use this guide to install, configure and operate dsh-superagent-further. It cove
 - **An agent GitHub account.** The agent comments, pushes branches and opens pull requests as this account, through a GitHub CLI signed in only as that account.
 - **Optional:** a Feishu bot for chat requests.
 
-Plugin configuration holds the state directory and machine limits. Use the panel for everything else: Sources for the agent accounts, Policy for allowed lists, and Execution for the projects, worker directories and commands.
+Plugin configuration holds the state directory and machine limits. Use the panel for everything else: the Orchestrator workspace, Sources for the agent accounts, Policy for allowed lists, and Execution for the projects, worker directories and commands.
 
 ### Permissions and isolation
 
@@ -20,11 +20,14 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
 On Windows, POSIX file modes restrict nothing, so the state directory and the database are given an ACL that removes inherited permissions and gives the operator's account full control (`icacls`), the Windows equivalent of the `0700` directory and `0600` file used elsewhere. Explicit entries the path already carries, such as `SYSTEM`'s, stay. If Windows refuses the change, the log says so and the files keep the permissions they inherit.
 
+The first start after installing or upgrading does not begin polling: the main Session needs an Orchestrator workspace that the operator selects. Open the panel, and the setup wizard's first step asks for an absolute path to an empty directory (or one this tool already marked with `.dsh-superagent-workspace`). The host registers that directory as the DeepSeek Harness workspace `dsh-superagent-further · <directory name>` and creates the master Session there. The state directory, the DSH home and profile, a source checkout or a project workspace cannot be selected, and no default path exists. Until a workspace is saved the runtime stays `paused`/`setupPending`: no Source polls, no Executor starts, no DSH workspace is registered and no master Session is created. An upgrade from a build without workspace identity keeps the old master Session as archived, readable history and starts a new one in the selected workspace; a Session's cwd cannot be changed, so the main conversation does not continue. A workspace selected again after switching away is unarchived and resumed under its own workspace-derived master id instead of being recreated.
+
 ## Prerequisites
 
 - Node.js 22.19+ or 24+, pnpm and git 2.32+. macOS, Linux and Windows 10/11 are supported: the service script is plain Node, so Python and tmux are no longer needed. On Windows run it as `scripts\dsh-superagent-further.cmd` (the `.cmd` wrapper runs the same script)
 - GitHub CLI (`gh`) 2.48 or later. Source CLI fields must point to `gh` or `lark-cli` wrappers; the host relies on their subcommands and output formats.
 - A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
+- A user-owned directory for the Orchestrator workspace: absolute, empty (or already marked by this tool), outside the state directory, the DSH home and profile, and the source checkout. Worker checkouts and logs stay under the state directory; the workspace is the project the main Session works in.
 - A model provider configured for DeepSeek Harness. dsh-superagent-further uses the profile's default model unless the Eval or Execution settings name another.
 - For Feishu: `lark-cli` (tested with 1.0.90) and a Feishu or Lark app with a bot
 
@@ -234,7 +237,7 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, and, by default, the Ticket directories in `work`. Back it up before upgrades |
+| `stateDir` | yes | Absolute path: the database `orchestrator.sqlite`, the lock, the command shims in `worker-bin`, the agent's git configuration, the operational log files in `logs`, and, by default, the Ticket directories in `work`. It is system-owned and is never the main Session's workspace. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
@@ -413,8 +416,8 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 
 | Request | Answer |
 | --- | --- |
-| `GET state` | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; `proposals`, the count of pending settings proposals the Settings badge shows; and `masterId` |
-| `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
+| `GET state` | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, `accounts` once setup resolved them, and `workspace` (`{path, title}` when setup prepared one, otherwise `null`); `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; `proposals`, the count of pending settings proposals the Settings badge shows; and `masterId` |
+| `GET settings` | `blocks`: `workspace`, `policy`, `eval`, `executor`, `memory` and `language`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
 | `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST settings/<block>/restore` with `{"revision": n}` | Restores that block from saved settings revision `n` through the panel save path: the block's new `revision`, `restarting`, and `restoredFrom`, the revision it read. An optional `reason` is recorded on the new revision. A block or revision that is not retained answers 404; a restore that changes nothing answers 409 |
@@ -472,7 +475,7 @@ curl -s -X PUT -H 'x-orchestrator-request: 1' -H 'content-type: application/json
 
 Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN.
 
-Setup verifies the agent's account and its push access to the primary repository (the first project's), writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
+Setup verifies the Orchestrator workspace first: the path must be absolute, empty or marked, writable and owner-only, and must not overlap the state directory, the DSH home and profile, the source checkout or a project workspace. A missing path is `workspaceRequired`; any other refusal is `workspaceInvalid`, `workspaceNotEmpty`, `workspaceNotWritable` or `workspaceUnsafe` and leaves the installation paused. Setup then verifies the agent's account and its push access to the primary repository (the first project's), writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
 The process environment that setup writes:
 
@@ -495,7 +498,8 @@ and starts a replacement with a recovery note.
 2. Copy `<stateDir>/orchestrator.sqlite` (with its `-wal` and `-shm` files if present) somewhere you can restore it from.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
-5. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 23 (current)`, or
+5. If the installation predates workspace identity, it starts paused at `workspaceRequired`: open the panel and finish the workspace step of the setup wizard (or save the workspace block on **Execution → Settings**). The host registers the new DSH workspace and creates a new master Session; the old master Session is archived and readable, and the main conversation does not continue. An installation that already has a workspace skips this step. Selecting a previously used workspace later unarchives and resumes that workspace's own master Session.
+6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 23 (current)`, or
    `schema 22 migrates to 23 on start` when the next start is the one that upgrades the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved

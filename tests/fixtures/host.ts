@@ -18,6 +18,7 @@ import { credentialHelper, workerGitConfig } from '../../src/infra/environment.t
 import type { Trigger } from '../../src/core/index.ts'
 import type { JobEvent, JobView } from '../../src/executor/background.ts'
 import { testMachine } from './deployment.ts'
+import { fakeWorkspaces, workspaceDirectory, type FakeWorkspaces } from './workspaces.ts'
 
 export const MEMBER = 'ou_alice'
 export const CHAT = 'oc_team'
@@ -32,7 +33,7 @@ export function feishu(id: string, text: string, overrides: Record<string, unkno
 }
 
 type RegisteredTool = { name: string; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
-type FakeAgent = {
+export type FakeAgent = {
   id: string; status: string; inbox: { nextTurn: UserMessage[]; nextStep: UserMessage[] }
   cancel: Mock; inject: Mock<(message: UserMessage) => void>; steer: Mock<(message: UserMessage) => void>; followup: Mock<(message: UserMessage) => void>
   /** Resolves when the turn ends, which a test controls by setting `status = 'idle'`, as DSH's idle does. */
@@ -207,9 +208,29 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     } }
 }
 
+/** State a restart test hands from one start to the next, so a second Runtime opens the first one's database, registry and Sessions. */
+export interface HostOptions {
+  /** The state directory to reopen; a fresh temporary one is created when omitted. */
+  directory?: string
+  /** The workspace this start's settings select; a fresh temporary one is created when omitted. */
+  workspace?: string
+  /** The workspace registry shared across starts, so its registrations and archive set persist. */
+  workspaces?: FakeWorkspaces
+  /** The Session map shared across starts, so a Session an earlier start created resolves instead of being recreated. */
+  agents?: Map<string, FakeAgent>
+  /** Session ids that already exist before the Runtime starts, as an upgrade finds a previous build's master Session. */
+  existingSessions?: readonly string[]
+  /** Keep the state and workspace directories on `stop()`, so a test can start again on the same state. */
+  keep?: boolean
+}
+
 /** @param seed - writes to the database before the Runtime opens it, such as records an earlier version stored. */
-export async function startRuntime(seed?: (store: Store) => void) {
-  const directory = mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+export async function startRuntime(seed?: (store: Store) => void, options: HostOptions = {}) {
+  const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'orchestrator-host-'))
+  // An operator's workspace is a directory of its own, never the state directory; the fake registry also holds the state
+  // directory's registration an earlier build would have created, so retirement is exercised on every start.
+  const workspaceRoot = options.workspace ?? workspaceDirectory()
+  const workspaces = options.workspaces ?? fakeWorkspaces(directory)
   const AGENT = join(directory, 'agent-gh'), BOT = join(directory, 'lark-bot')
   const repository = { default_branch: 'master', permissions: { push: true } }
   vi.spyOn(Commands.prototype, 'gh').mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' } : repository)
@@ -236,7 +257,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
     const done = argv[0] === SHELL && hooks.prepare ? hooks.prepare.then(() => exited) : Promise.resolve(exited)
     return { done, collected: { stdout: reader(answers[argv.join(' ')] ?? ''), stderr: reader('') } }
   }) }
-  const agents = new Map<string, FakeAgent>()
+  const agents = options.agents ?? new Map<string, FakeAgent>()
   /** Each Session's next step, which takes the messages that wait for one. */
   const steps = new Map<string, () => void>(), claims = new Map<string, () => void>()
   const tools = new Map<string, Map<string, RegisteredTool>>()
@@ -318,6 +339,11 @@ export async function startRuntime(seed?: (store: Store) => void) {
     prompt: vi.fn(() => { throw new Error('Plugin delivery must not use user RPC') }),
     inspect: vi.fn(async () => ({ events: [] })),
   }
+  // Sessions that predate this start, as a migration finds an earlier build's master: they resolve, so retirement can archive
+  // them, even though no code decorated them yet.
+  for (const sessionId of options.existingSessions ?? []) {
+    await (controller.create as (options: { sessionId: string }) => Promise<void>)({ sessionId })
+  }
   const reader = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
   const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async () => reader) }
   const webServer = { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }
@@ -335,7 +361,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
       ?.followup({ id: 'activation-' + id, role: 'user', content, source: { kind: 'dsh-superagent-further', form: 'relay' } }),
   })
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
-    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,
+    sessionPersistence: persistence, workspaceRegistry: workspaces.registry, permissionPresets: { set: () => {} }, subprocess, webServer,
     jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
   hostCtx.ctx = ctx
@@ -343,7 +369,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const seeded = new Store(join(directory, 'orchestrator.sqlite'))
   const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT } } }
-  seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), sources }))
+  seeded.saveSettings(SettingsSchema.parse({ ...seeded.settings(), workspace: { path: workspaceRoot }, sources }))
   seed?.(seeded)
   // Every Ticket runs under a registered project's Lead, so a fixture starts with the deployment repository registered as one.
   const settled = seeded.settings()
@@ -402,12 +428,17 @@ export async function startRuntime(seed?: (store: Store) => void) {
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
-  async function stop() { await runtime.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) }
+  async function stop() {
+    await runtime.stop(); vi.restoreAllMocks()
+    if (options.keep) return
+    rmSync(directory, { recursive: true, force: true })
+    rmSync(workspaceRoot, { recursive: true, force: true })
+  }
   /** The Session's model takes its next step, which takes the messages steered in since its last. */
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
+  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
     jobs, subagents, step, claim }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

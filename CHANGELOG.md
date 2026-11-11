@@ -8,6 +8,23 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The Orchestrator workspace is mandatory and first-class. The main Session now runs in an operator-selected, explicitly
+  titled DeepSeek Harness workspace (`dsh-superagent-further · <directory name>`) instead of the plugin's `stateDir`; the
+  path is a tier-A `workspace` settings block, validated and canonicalized by `src/app/workspace-root.ts` (absolute, empty
+  or carrying `.dsh-superagent-workspace`, owner-only `0700`/ACL, no overlap with the state directory and its `work/`, the
+  DSH home/profile/session store, the checkout or a project workspace; no symlink, UNC or root path). The master Session id
+  is derived from the workspace (`orchestrator-<hash>`), and setup resolves the workspace before projects, accounts and the
+  worker environment. A missing or invalid workspace is `workspaceRequired`, `workspaceInvalid`, `workspaceNotEmpty`,
+  `workspaceNotWritable` or `workspaceUnsafe`, and startup stays `paused`/`setupPending` with no workspace registration, no
+  master Session, no Source polling and no Executor. An upgrade archives the old master Session with `stopActivity`, deletes
+  the legacy `stateDir` DSH workspace registration without deleting a Session, creates the new master Session in the selected
+  workspace and publishes the new id in one `store.atomic` write; retiring the previous master is best-effort, so an archive
+  or delete failure is logged as a warning, leaves the old Session and registration intact and readable, and startup still
+  reaches `ready`. The setup wizard's workspace step is mandatory — skip,
+  close and finish are inert until a workspace is saved, and `PUT wizard` refuses a skip — the Execution settings page shows
+  the titled workspace card, and `GET state`/`GET settings` expose `setup.workspace` and `blocks.workspace`.
+  `docs/adr/0003-workspace-identity.md` records the decision. Covered by `tests/workspace-identity.spec.ts` and the extended
+  runtime, http, policy, model-surface and panel specs.
 - Design document 014 — self-evolution: discovering superagent's own problems in flight and routing them by
   jurisdiction to a self-fix Ticket (repository registered) or a GitHub Issue on the self repository, with a
   gated Issue outlet and a switchable scheduled self-inspection. Approved by the operator on 2026-11-10 with
@@ -100,6 +117,22 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   docs/007 names `TicketEndBy`/`TicketEndCause` and the grace, docs/014 plans the future `self_report` at schema 24
   (schema 23 is the cause backfill), the roadmap carries the current counts and a Sprint 36 checklist, and numbered docs
   may link to `docs/adr/*.md`.
+
+### Fixed
+
+- Selecting a previously used workspace after switching away no longer leaves the Orchestrator silently disabled. Switching
+  away archived that workspace's deterministic master Session, and DSH's archived-session gate then rejected every step
+  while startup still reported `ready`. Startup now unarchives the desired workspace-derived master before resolving it, so
+  the workspace resumes its own identity and conversation instead of resuming a dead Session; the legacy `stateDir`-derived
+  master stays archived and is never resumed, and an unarchive failure fails closed with `workspaceUnsafe` rather than
+  starting an orchestrator that cannot take a step. Covered by the A → B → A restart test in
+  `tests/workspace-identity.spec.ts`.
+- A workspace path that merely starts with `..` is no longer mistaken for a parent escape. The overlap check treated any
+  `relative()` result beginning with `..` as outside, so a directory inside a forbidden location whose own name begins
+  with two dots — `<stateDir>/..workspace`, a DSH-home descendant or a project-checkout descendant — was accepted as the
+  agent cwd and DSH workspace. Only the `..` parent entry itself or a path beginning with `..` plus the separator is now
+  treated as outside, so every descendant of the state directory, the DSH home/profile/session store, the checkout and
+  the project checkouts is rejected. Covered by `tests/workspace-identity.spec.ts`.
 
 ## [0.4.0] - 2026-11-10
 

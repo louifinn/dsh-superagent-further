@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import { UserError, type EngineForSettings } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, fieldTier, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, LanguageConfigSchema, MemoryConfigSchema, PolicyConfigSchema, SettingsSchema, WorkspaceConfigSchema, fieldTier, policyEffects, policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -52,7 +52,7 @@ interface Block {
   merge(settings: SettingsValue, value: unknown, id: string): SettingsValue
   guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin): void
 }
-const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'source', Block> = {
+const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'workspace' | 'source', Block> = {
   policy: {
     parse: (value, sources) => {
       const policy = PolicyConfigSchema.parse(value)
@@ -82,6 +82,11 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'memory' | 'language' | 's
     guard: (current, candidate, origin) => {
       if (origin !== 'panel' && JSON.stringify(current.language) !== JSON.stringify(candidate.language)) throw new UserError('panelOnlyLanguage')
     },
+  },
+  workspace: {
+    // The path itself is validated and canonicalized by `Setup.verifyWorkspace` in `save`; this schema only keeps the shape.
+    parse: value => WorkspaceConfigSchema.parse(value),
+    merge: (settings, value) => ({ ...settings, workspace: value as SettingsValue['workspace'] }),
   },
   source: {
     parse: (value, sources, id) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown() }).parse(value)),
@@ -130,8 +135,8 @@ export interface SettingsHost {
   readonly sessions: Pick<Sessions, 'notify' | 'delivery'>
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
-  /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'blockCommands' | 'restart'>
+  /** Setup state, account/command checks, workspace validation, and restart trigger when setup-read fields change. */
+  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'blockCommands' | 'restart' | 'verifyWorkspace'>
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -182,6 +187,7 @@ export class Settings {
       executor: { revision: revision('executor'), value: settings.executor },
       memory: { revision: revision('memory'), value: settings.memory },
       language: { revision: revision('language'), value: settings.language },
+      workspace: { revision: revision('workspace'), value: settings.workspace },
       policy: { revision: revision('policy'), rules: rules.map(rule => ({ id: rule.id, name: rule.name, enabled: rule.enabled })),
         allowed: Object.fromEntries(Object.entries(parts).map(([id, part]) => [id, part.allowed.length])), read: 'settings/policy' },
       sources: sources.instances(settings).map(({ id, kind, enabled, installed }) =>
@@ -197,7 +203,7 @@ export class Settings {
     const settings = store.settings(), id = block.startsWith('source:') ? block.slice('source:'.length) : undefined
     const instance = id === undefined ? undefined : sources.instances(settings).find(item => item.id === id)
     const value = block === 'pause' ? { paused: settings.paused } : block === 'policy' || block === 'eval' || block === 'executor'
-      || block === 'memory' || block === 'language' ? settings[block]
+      || block === 'memory' || block === 'language' || block === 'workspace' ? settings[block]
       : instance ? { enabled: instance.enabled, config: instance.config } : undefined
     if (value === undefined) throw new UserError('unknownBlock', { block })
     return { block, revision: store.blockRevision(block as SettingsSave), value }
@@ -225,7 +231,7 @@ export class Settings {
     const stored = kind === 'source' ? snapshot.settings.sources[id] : undefined
     const value = kind === 'source'
       ? stored === undefined ? undefined : { enabled: stored.enabled, config: stored.config }
-      : snapshot.settings[block as 'policy' | 'eval' | 'executor' | 'memory' | 'language']
+      : snapshot.settings[block as 'policy' | 'eval' | 'executor' | 'memory' | 'language' | 'workspace']
     if (value === undefined) throw new SettingsRevisionNotFound(`Settings revision ${revision} does not contain ${block}`)
     const saved = await this.save(block, value, store.blockRevision(block), 'panel',
       { ...audit, restore: { block, from: revision } })
@@ -362,6 +368,11 @@ export class Settings {
     if (kind === 'source' && !sources.kind(id)) throw new UserError('sourceNotInstalled', { source: id })
     const parsed = rules.parse(value, sources, id)
     const current = store.settings()
+    // A workspace save is validated and canonicalized by the same rules startup enforces, so a stored path is always the
+    // canonical directory DSH registers and the master session derives its identity from. Validation is a side effect:
+    // it may create and mark the directory before the no-op and final stale checks below, so an unchanged or rejected save
+    // can leave a prepared empty directory behind. That directory is harmless (nothing is registered or started from it).
+    if (kind === 'workspace') (parsed as SettingsValue['workspace']).path = await this.host.setup.verifyWorkspace((parsed as SettingsValue['workspace']).path, current)
     const candidate = rules.merge(current, parsed, id)
     if (origin === 'tool') refuseToolFields(block, id, current, candidate, sources)
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' ? candidate.executor.model : null
