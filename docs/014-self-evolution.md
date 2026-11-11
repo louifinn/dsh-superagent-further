@@ -91,7 +91,9 @@ One chokepoint on the main Session, for installations where the self repository 
 - **Fixed target.** The constant `SELF_REPOSITORY = 'louifinn/dsh-superagent-further'` in code, not a setting;
   a fork of this fork changes the constant.
 - **Jurisdiction refusal.** When the self repository *is* registered here, the tool refuses and names the
-  Ticket outlet — the routing rule is enforced by the tool, not left to prompt discipline.
+  Ticket outlet — the routing rule is enforced by the tool, not left to prompt discipline. The same check
+  runs again when a person approves a draft: a draft raised before the repository was registered cannot
+  file either, though it can still be dismissed.
 - **A three-state gate** beside the accept mode on the Eval settings: `off` records nothing; `observe`
   (default) records a draft and files nothing; `auto` files directly within the limits. This mirrors how the
   intake side starts narrow.
@@ -101,7 +103,10 @@ One chokepoint on the main Session, for installations where the self repository 
   and the panel says so.
 - **Content rules.** The body follows the repository's language and conventions, opens with the automated-agent
   disclosure, states evidence, reproduction and the running version, and carries no Feishu content, credentials
-  or private local paths. Labels only ones that already exist, none by default.
+  or private local paths. Feishu content covers chat, message, user, union and app ids; local paths cover
+  drive-letter and UNC paths with Unicode names and the POSIX homes and system roots (`/root`, `/opt`, `/srv`,
+  `/var`, `/tmp`, `/mnt`, `/Volumes`, `/private`); an ordinary URL or a repository-relative path stays valid.
+  Labels only ones that already exist, none by default.
 - **Audit record.** Schema 24 adds `self_report` (schema 23 is the ended-Ticket `cause` backfill):
   `{ id, title, body, evidence, raised_by { session, ticket? }, target_repo, status: 'draft' | 'filed' | 'dismissed', issue_number?, filed_at?, created_at }`.
   Drafts are what a person approves; the filed history is the remote repository itself, so no history page is

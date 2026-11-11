@@ -113,7 +113,7 @@ Explicit requests work in every mode. Start in `observe` and switch to `auto` af
 
 ## The self-report gate
 
-A concrete, checkable problem in superagent itself is a self-finding. Inside a project's jurisdiction it becomes work through `orchestrator_request_create` with `via: 'discovery'`; outside every registered project's repository it may leave as a public Issue through `orchestrator_issue_create`. The Issue outlet targets the fixed repository `louifinn/dsh-superagent-further`, and it refuses when that repository is registered here as a project, naming the discovery route instead.
+A concrete, checkable problem in superagent itself is a self-finding. Inside a project's jurisdiction it becomes work through `orchestrator_request_create` with `via: 'discovery'`; outside every registered project's repository it may leave as a public Issue through `orchestrator_issue_create`. The Issue outlet targets the fixed repository `louifinn/dsh-superagent-further`, and it refuses when that repository is registered here as a project, naming the discovery route instead. Approving a draft runs the same jurisdiction check, so a draft raised before that registration cannot file either (it can still be dismissed).
 
 The Eval settings hold the self-report gate beside the accept mode:
 
@@ -123,7 +123,7 @@ The Eval settings hold the self-report gate beside the accept mode:
 | `observe` (default) | It records a draft and files nothing; a person approves or dismisses the draft in Overview |
 | `auto` | It files an Issue directly, within the limits below |
 
-Before filing, the outlet searches the target repository's open Issues and this installation's filed reports from the last 14 days, and links a hit instead of filing another Issue; it files at most three Issues per installation per day, and a finding beyond the cap stays a draft. The body follows the repository's language and opens with an automated-agent disclosure; it must carry evidence, reproduction steps and the running version, and it may never carry Feishu content, credentials or private local paths. Labels are only ones the repository already has, and none by default. The tool only creates Issues — it never closes, edits or merges one — and findings are recorded silently, never sent as messages. The gate is a revisioned tier-B setting: the Agent proposes a change and the operator confirms it.
+Before filing, the outlet searches the target repository's open Issues and this installation's filed reports from the last 14 days, and links a hit instead of filing another Issue; it files at most three Issues per installation per day, and a finding beyond the cap stays a draft. The body follows the repository's language and opens with an automated-agent disclosure; it must carry evidence, reproduction steps and the running version, and it may never carry Feishu content (chat, message, user, union or app ids), credentials or private local paths (Unicode drive-letter and UNC paths, and the POSIX homes and system roots), while URLs and repository-relative paths stay valid. Labels are only ones the repository already has, and none by default. The tool only creates Issues — it never closes, edits or merges one — and findings are recorded silently, never sent as messages. The gate is a revisioned tier-B setting: the Agent proposes a change and the operator confirms it.
 
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
 

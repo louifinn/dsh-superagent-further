@@ -171,9 +171,12 @@ Two block fields deserve their own sentence:
   records nothing, `observe` (the default) records a draft a person approves in Overview, and
   `auto` files an Issue through the existing `gh` command path. The outlet's target repository is
   the fixed `SELF_REPOSITORY` constant, not a setting, and the tool refuses when that repository
-  is registered as a project, naming the discovery Request route instead. Filing is bounded by the
+  is registered as a project, naming the discovery Request route instead; approving a draft
+  re-checks the same rule. Filing is bounded by the
   open-Issue and 14-day deduplication, the three-a-day cap, the content rules that refuse Feishu
-  content, credentials and private local paths, and labels that must already exist. The field is
+  content (chat, message, user, union and app ids), credentials and private local paths (Unicode
+  drive-letter and UNC paths and the POSIX homes and system roots, with URLs and repository-relative
+  paths staying valid), and labels that must already exist. The field is
   tier B, so a Session proposes it and the operator confirms it.
 - `eval.model` and `executor.model` are not hot. `initializeRoleModel` only seeds the model onto a
   brand-new Session and leaves later selections intact (`src/app/role-models.ts:14-17`), and the

@@ -137,13 +137,15 @@ export class SelfReports {
   }
 
   /**
-   * Approve a draft: file it under the same deduplication and daily limits, or link it to the Issue that already tracks it.
-   * @throws UserError when the report is unknown, is not a draft, or the daily cap is reached.
+   * Approve a draft: re-check the exclusive jurisdiction rule and file it under the same deduplication and daily limits,
+   * or link it to the Issue that already tracks it. A draft raised before the self repository was registered must not file.
+   * @throws UserError when the report is unknown, is not a draft, the jurisdiction changed, or the daily cap is reached.
    */
   async approve(id: string): Promise<SelfReportOutcome> {
     const report = this.records().get(id)
     if (!report) throw new UserError('selfReportUnknown', { report: id })
     if (report.status !== 'draft') throw new UserError('selfReportNotDraft')
+    this.jurisdiction()
     return this.file(report, [])
   }
 

@@ -25,8 +25,10 @@ class FakeCommands {
   issues: { number: number; title?: string; pull_request?: unknown }[] = []
   labels: string[] = []
   readonly writes: { repository: string; method: 'POST' | 'DELETE'; path: string; body?: unknown }[] = []
+  readonly reads: string[][] = []
   fail: Error | undefined
   async gh<T>(args: string[]): Promise<T> {
+    this.reads.push(args)
     if (args[1]?.includes('/issues?state=open')) return this.issues as T
     if (args[1]?.includes('/labels?per_page=')) return this.labels.map(name => ({ name })) as T
     throw new Error(`unexpected gh call: ${args.join(' ')}`)
@@ -164,6 +166,26 @@ describe('self report outlet service', () => {
     expect(h.service.drafts()).toEqual([])
     await expect(h.service.approve(draft.report.id)).rejects.toMatchObject({ code: 'selfReportNotDraft' })
     await expect(h.service.approve('srep-unknown')).rejects.toMatchObject({ code: 'selfReportUnknown', missing: true })
+  })
+
+  it('refuses approval once the self repository becomes a registered project, files nothing, and still dismisses', async () => {
+    const projects: { repository?: string }[] = []
+    const h = outlet({ mode: 'observe', projects })
+    const draft = await h.service.raise(finding) as Extract<SelfReportOutcome, { status: 'draft' }>
+    expect(draft.status).toBe('draft')
+    // The draft predates the registration: approving it would publish content the mission says must become a Request instead.
+    projects.push({ repository: SELF_REPOSITORY })
+    h.commands.reads.length = 0
+    await expect(h.service.approve(draft.report.id)).rejects.toMatchObject({ code: 'selfReportJurisdiction',
+      values: { repository: SELF_REPOSITORY }, missing: false })
+    expect(h.commands.reads).toEqual([])
+    expect(h.commands.writes).toEqual([])
+    expect(h.service.drafts()).toEqual([draft.report])
+    // The automatic path stays refused as well, and the draft can still be dismissed.
+    await expect(h.service.raise({ ...finding, title: 'The watcher crashes on a second start' }))
+      .rejects.toMatchObject({ code: 'selfReportJurisdiction' })
+    expect(h.service.drafts()).toHaveLength(1)
+    expect(h.service.dismiss(draft.report.id)).toMatchObject({ status: 'dismissed' })
   })
 
   it('dismisses a draft and refuses to dismiss a filed report', async () => {

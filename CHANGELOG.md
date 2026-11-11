@@ -16,15 +16,19 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   naming the discovery route instead. The Eval settings gain the tier-B `selfReport` gate — `off` records nothing,
   `observe` (default) keeps a draft, `auto` files through the existing `gh` command path — bounded by deduplication
   against the target's open Issues and this installation's filed reports of the last 14 days, at most three filed
-  Issues per day, required title/evidence/reproduction, the automated-agent disclosure, no Feishu content,
-  credentials or private local paths, and only labels the repository already has. Drafts appear in Overview with
-  their target repository, an evidence preview and age, and Approve and file or Dismiss actions recorded in the
-  audit log. `orchestrator_request_create` accepts `via: 'discovery'` (mutually exclusive with `automation`), so an
+  Issues per day, required title/evidence/reproduction, the automated-agent disclosure, no Feishu content
+  (chat, message, user, union and app ids), credentials or private local paths (Unicode drive-letter and UNC
+  paths and the POSIX homes and system roots, while URLs and repository-relative paths stay valid), and only
+  labels the repository already has. Drafts appear in Overview with their target repository, an evidence
+  preview and age, and Approve and file or Dismiss actions recorded in the audit log; approving re-checks the
+  exclusive jurisdiction rule, so a draft raised before the self repository was registered cannot file.
+  `orchestrator_request_create` accepts `via: 'discovery'` (mutually exclusive with `automation`), so an
   in-jurisdiction finding becomes a Request and a Ticket under the Mandate basis `{ via: 'discovery' }`, which
   revalidation trusts like the installation basis; the Orchestrator prompt routes self-findings through these two
   outlets instead of the interim `memory_write` tag. Covered by `tests/self-reports.spec.ts`,
-  `tests/self-reports-app.spec.ts`, the extended tool, policy, migration, properties, prompt, view, panel and
-  model-surface specs, and the regenerated `docs/reference` pages.
+  `tests/self-reports-app.spec.ts`, `tests/http.spec.ts` (the real approve/dismiss routes and their audit entries),
+  the extended tool, policy, migration, properties, prompt, view, panel and model-surface specs, and the regenerated
+  `docs/reference` pages.
 - The Orchestrator workspace is mandatory and first-class. The main Session now runs in an operator-selected, explicitly
   titled DeepSeek Harness workspace (`dsh-superagent-further · <directory name>`) instead of the plugin's `stateDir`; the
   path is a tier-A `workspace` settings block, validated and canonicalized by `src/app/workspace-root.ts` (absolute, empty

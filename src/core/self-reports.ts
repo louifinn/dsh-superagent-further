@@ -57,8 +57,11 @@ export type SelfReportText = SelfReportTextInput
 export type SelfReportRule = 'Feishu content' | 'credentials' | 'private local paths'
 
 const RULES: readonly { rule: SelfReportRule; pattern: RegExp }[] = [
-  // Feishu open ids (chat, message and user ids) never belong in a public Issue.
+  // Feishu open ids (chat, message and user), union ids and app ids never belong in a public Issue. The union and app
+  // forms require a digit, so an ordinary code identifier such as `on_keydown` stays valid.
   { rule: 'Feishu content', pattern: /\b(?:oc|om|ou)_[0-9a-f]{8,}\b/i },
+  { rule: 'Feishu content', pattern: /\bon_(?=[0-9a-z]*\d)[0-9a-z]{8,}\b/i },
+  { rule: 'Feishu content', pattern: /\bcli_(?=[0-9a-z]*\d)[0-9a-z]{8,}\b/i },
   // Credentials of every kind the agent may see in its environment.
   { rule: 'credentials', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/ },
   { rule: 'credentials', pattern: /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}\b/ },
@@ -66,10 +69,11 @@ const RULES: readonly { rule: SelfReportRule; pattern: RegExp }[] = [
   { rule: 'credentials', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
   { rule: 'credentials', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b/i },
   { rule: 'credentials', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  // Absolute paths of the operator's machine, which a public Issue must not publish.
-  { rule: 'private local paths', pattern: /\b[A-Za-z]:[\\/][\w.$ -]+(?:[\\/][\w.$ -]+)*/ },
-  { rule: 'private local paths', pattern: /\\\\[\w.$-]+\\[\w.$-]+/ },
-  { rule: 'private local paths', pattern: /(?:^|[\s("'`])\/(?:home|Users)\/[\w.$-]+/ },
+  // Absolute paths of the operator's machine, which a public Issue must not publish. The drive-letter and UNC patterns
+  // accept Unicode segment names, the POSIX pattern names the homes and system roots, and none matches an ordinary URL.
+  { rule: 'private local paths', pattern: /\b[A-Za-z]:[\\/][^\s"'`<>|?*]+/u },
+  { rule: 'private local paths', pattern: /\\\\[\p{L}\p{N}][\p{L}\p{N}._-]*\\[^\s"'`<>|?*]+/u },
+  { rule: 'private local paths', pattern: /(?:^|[\s("'`])\/(?:home|Users|root|opt|srv|var|tmp|mnt|Volumes|private)\/[\p{L}\p{N}._$-]+/u },
 ]
 
 /**

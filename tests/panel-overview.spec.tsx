@@ -317,4 +317,9 @@ it('shows observe-mode self report drafts and approves or dismisses them from th
     .find(button => button.textContent === zh.selfReportDismiss)!)
   expect(server.selfReports).toEqual([])
   expect(text()).not.toContain(zh.selfReportsTitle)
+  // The buttons must reach the documented routes with no body; the fixture answers only registered requests.
+  expect(server.requests.filter(request => request.path.startsWith('self-reports/'))
+    .map(request => ({ method: request.method, path: request.path, body: request.body }))).toEqual([
+    { method: 'POST', path: 'self-reports/srep-1/approve', body: undefined },
+    { method: 'POST', path: 'self-reports/srep-2/dismiss', body: undefined }])
 })
