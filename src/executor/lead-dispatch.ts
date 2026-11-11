@@ -139,7 +139,7 @@ export class LeadActivations {
 
   /** Disposes one activation by child id, if it is still held. */
   async dispose(childId: string): Promise<void> {
-    await this.take(childId)?.dispose().catch(() => {})
+    await Promise.resolve(this.take(childId)?.dispose()).catch(() => {})
   }
 
   /** Disposes every activation; used when the host stops. */

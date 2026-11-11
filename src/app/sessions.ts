@@ -389,7 +389,8 @@ export class Sessions {
       binding.skills = undefined
       this.bindSkills(binding, host.prompts.current())
     })
-    binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
+    // The host's scope `dispose()` may resolve undefined instead of a Promise, so the result is always wrapped.
+    binding.disposers.push(() => { void Promise.resolve(skillScope.dispose()).catch((error: unknown) => { this.warn('dsh-superagent-further could not release a skill scope: %s', String(error)) }) })
     await skillScope
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return

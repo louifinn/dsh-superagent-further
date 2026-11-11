@@ -67,6 +67,17 @@ describe('the activations a host keeps', () => {
     expect(leads.size).toBe(0)
   })
 
+  it('disposes an activation whose dispose() returns undefined instead of a Promise, as the DSH host does', async () => {
+    const dispose = vi.fn(() => undefined)
+    const start = vi.fn(async () => ({ childId: 'worker-a', result: new Promise(() => {}), dispose }) as unknown as Activation)
+    const leads = new LeadActivations(() => service(start))
+    await leads.start(executorActivation({ childId: 'worker-a', title: 'a', cwd: '/w', text: 'x', lead, signal, preset: 'p' }))
+    // The host's dispose() resolving undefined must not turn the release into a TypeError.
+    await expect(leads.dispose('worker-a')).resolves.toBeUndefined()
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(leads.size).toBe(0)
+  })
+
   it('wakes the durable child of a retried Ticket instead of starting a second', async () => {
     const sendMessage = vi.fn(async () => 'message-1')
     const interrupt = vi.fn()
