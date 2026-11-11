@@ -125,6 +125,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   master stays archived and is never resumed, and an unarchive failure fails closed with `workspaceUnsafe` rather than
   starting an orchestrator that cannot take a step. Covered by the A → B → A restart test in
   `tests/workspace-identity.spec.ts`.
+- A workspace path that merely starts with `..` is no longer mistaken for a parent escape. The overlap check treated any
+  `relative()` result beginning with `..` as outside, so a directory inside a forbidden location whose own name begins
+  with two dots — `<stateDir>/..workspace`, a DSH-home descendant or a project-checkout descendant — was accepted as the
+  agent cwd and DSH workspace. Only the `..` parent entry itself or a path beginning with `..` plus the separator is now
+  treated as outside, so every descendant of the state directory, the DSH home/profile/session store, the checkout and
+  the project checkouts is rejected. Covered by `tests/workspace-identity.spec.ts`.
 
 ## [0.4.0] - 2026-11-10
 

@@ -109,6 +109,34 @@ describe('workspace validation', () => {
     await rejection(async () => await prepareWorkspace({ path: join(root, 'scratch'), stateDir: join(root, 'scratch'), projects: [] }), 'workspaceInvalid')
   })
 
+  test('rejects a state-directory descendant whose name merely starts with ".." instead of escaping', async () => {
+    const { prepareWorkspace } = await workspaceRoot()
+    const stateDir = temporary('workspace-state-')
+
+    // `..workspace` is a single path component that the filesystem treats as a descendant; it must not be read as a parent
+    // escape, which would let a state-owned directory become the agent cwd and the DSH workspace.
+    const dotted = await rejection(async () => await prepareWorkspace({ path: join(stateDir, '..workspace'), stateDir, projects: [] }), 'workspaceInvalid')
+    expect(dotted.detail).toContain('the state directory')
+    // The ordinary descendant keeps rejecting too, so the explicit parent case did not regress.
+    const scratch = await rejection(async () => await prepareWorkspace({ path: join(stateDir, 'work'), stateDir, projects: [] }), 'workspaceInvalid')
+    expect(scratch.detail).toContain('the state directory')
+  })
+
+  test('rejects a ".."-prefixed descendant of the DSH home and of a project checkout', async () => {
+    const { prepareWorkspace } = await workspaceRoot()
+    const root = temporary('workspace-root-'), stateDir = temporary('workspace-state-')
+    const home = join(root, 'home'), dshHome = join(home, '.dsh'), profile = join(dshHome, 'profiles', 'desktop')
+    mkdirSync(profile, { recursive: true })
+    const project = join(root, 'project')
+
+    const dsh = await rejection(async () => await prepareWorkspace({ path: join(dshHome, '..workspace'), stateDir, projects: [], home,
+      environment: { DSH_HOME: dshHome, DSH_PROFILE_DIR: profile, DSH_PROFILE: 'desktop' } }), 'workspaceInvalid')
+    expect(dsh.detail).toContain('the DSH home')
+    const checkout = await rejection(async () => await prepareWorkspace({ path: join(project, '..workspace'), stateDir,
+      projects: [{ workspace: project }] }), 'workspaceInvalid')
+    expect(checkout.detail).toContain('a project checkout')
+  })
+
   test('rejects the DSH home, the DSH profile and its session store, the source checkout and project checkouts', async () => {
     const { prepareWorkspace } = await workspaceRoot()
     const root = temporary('workspace-root-'), stateDir = temporary('workspace-state-')

@@ -8,7 +8,7 @@
  */
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { restrictToOwner } from '../infra/acl.ts'
 import { isAbsolutePath, packageRoot } from '../infra/paths.ts'
 import { fill } from '../infra/text.ts'
@@ -84,10 +84,15 @@ export interface WorkspaceInput {
 export interface PreparedWorkspace { path: string; title: string; created: boolean }
 
 const fold = (path: string): string => process.platform === 'win32' ? path.toLowerCase() : path
-/** Whether `child` is `parent` or lies below it, after canonicalization and case folding on Windows. */
+/**
+ * Whether `child` is `parent` or lies below it, after canonicalization and case folding on Windows. Only the `..` parent
+ * entry itself (or a path that begins with it) is outside: `relative` also returns a single descendant component such as
+ * `..workspace`, and treating that as a parent escape would let a directory inside a forbidden root be selected.
+ */
 function within(parent: string, child: string): boolean {
   const rest = relative(fold(resolve(parent)), fold(resolve(child)))
-  return rest === '' || (!rest.startsWith('..') && !isAbsolute(rest))
+  const outside = rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)
+  return rest === '' || !outside
 }
 /** Two paths overlap when either contains the other; a workspace may never share ground with a forbidden location. */
 const overlaps = (a: string, b: string): boolean => within(a, b) || within(b, a)
