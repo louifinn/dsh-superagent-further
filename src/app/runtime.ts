@@ -143,7 +143,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   private readonly stopped = new AbortController()
   /** Bound for the in-flight drain phase, from the options seam. */
   private readonly drainInFlightMs: number
-  private readonly disposers: (() => void)[] = []
+  /** The runtime's own registrations, released newest first at drain; each is named so a failure during drain says which one it was. */
+  private readonly disposers: { name: string; dispose: () => void }[] = []
   private readonly ctx: Context
   readonly machine: Machine
   private readonly exit: (code: number) => void
@@ -453,12 +454,14 @@ export class Runtime implements SourceHost, RuntimeHandle {
         // Master, project Lead and ticket worker Sessions are managed by this plugin; their models call its tools.
         managed: (sessionId: string) => sessionId === masterId || sessionId.startsWith('lead-') || sessionId.startsWith('worker-'),
       }
-      this.disposers.push(this.sources.register(sessionKind((sessionId, requestId, text) =>
-        this.sessions.prompt(sessionId, requestId, text, 'queue'))))
+      this.disposers.push({ name: 'the session Source kind',
+        dispose: this.sources.register(sessionKind((sessionId, requestId, text) =>
+          this.sessions.prompt(sessionId, requestId, text, 'queue'))) })
       // A Session's model only sees a global tool; agent-scoped registrations exist only in managed Sessions.
       const sessionTool = ctx.inject(['tools'], child =>
         child.effect(() => child.tools.register(sessionSubmitTool(sessionHost)), 'session: submission tool'))
-      this.disposers.push(() => { void sessionTool.dispose().catch(() => {}) })
+      this.disposers.push({ name: 'the session submission tool',
+        dispose: () => { void Promise.resolve(sessionTool.dispose()).catch(() => {}) } })
       this.ready = this.initialize()
       this.unprovide = ctx.provide('orchestrator', this)
     } catch (error) {
@@ -554,7 +557,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
   private paused(): boolean { return !this.setup.configured() || this.store.settings().paused }
   private async initialize(): Promise<void> {
     // Register management HTTP routes before setup completes so operators can fix setup problems in the UI.
-    this.disposers.push(registerHttp(this.ctx, this.httpHost()))
+    this.disposers.push({ name: 'the management HTTP routes', dispose: registerHttp(this.ctx, this.httpHost()) })
     if (!await this.setup.run(this.store.settings())) {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
@@ -925,7 +928,13 @@ export class Runtime implements SourceHost, RuntimeHandle {
       try {
         this.executor.dispose()
         this.sessions.dispose()
-        for (const dispose of this.disposers.reverse()) dispose()
+        // One failing disposer must not skip the rest, the unprovide or the flush: each runs isolated, and the
+        // warning names the registration that failed instead of failing the whole phase.
+        for (const { name, dispose } of this.disposers.reverse()) {
+          try { dispose() } catch (error) {
+            this.log.warn('dsh-superagent-further drain disposer %s failed: %s', name, String(error))
+          }
+        }
         this.unprovide?.(); this.unprovide = undefined
         await this.ctx.sessionPersistence.flush()
       } finally {
