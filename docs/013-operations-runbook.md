@@ -47,8 +47,8 @@ watches four signals it already has — failed or stopped Assignment ends, the o
 - **Noise controls**: **Execution → Settings → Incident detection** (tier C, panel or API only) sets `enabled`, the
   daily budget of new records (default 2), the minimum severity (default `high`) and the reserved `autoDiagnose`
   switch. Repeats of one condition count occurrences and do not use the budget; a resolved or dismissed record stays
-  quiet for a one-hour cooldown and then reopens. A health flip and a stalled Assignment are reported at high severity
-  and are not suppressed by the budget of an existing fingerprint.
+  quiet for a one-hour cooldown and then reopens. A health flip and a stalled Assignment are recorded at high severity
+  even after the daily budget is spent; fingerprint dedupe, the cooldown and the open-record cap still apply to them.
 - **What is not there yet**: detection makes no model call and changes no code or Ticket, and this release has no
   diagnose or dismiss buttons. The reserved `autoDiagnose` setting is consumed by M34's read-only diagnoser, and the
   `update-failures` rule by M36.

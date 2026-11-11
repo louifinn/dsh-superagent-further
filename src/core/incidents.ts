@@ -23,6 +23,17 @@ export const INCIDENT_RULES = ['assignment-burst', 'agent-error-rate', 'outbox-f
   'stalled-assignment', 'update-failures'] as const
 export type IncidentRule = typeof INCIDENT_RULES[number]
 
+/**
+ * The rules whose first record describes a live outage, so the daily budget must not silence them (ADR-0004). The other
+ * gates still apply: the fingerprint deduplication and cooldown, the open-record cap and the minimum severity.
+ */
+export const INCIDENT_BUDGET_EXEMPT_RULES: readonly IncidentRule[] = ['health-error', 'stalled-assignment']
+
+/** True when a new record for this rule is exempt from the daily budget because it describes a live outage. */
+export function incidentBudgetExempt(rule: IncidentRule): boolean {
+  return INCIDENT_BUDGET_EXEMPT_RULES.includes(rule)
+}
+
 /** The related records a detector can name; absent keys mean installation-wide scope. */
 export interface IncidentScope { project?: string; ticket?: string; request?: string; session?: string }
 

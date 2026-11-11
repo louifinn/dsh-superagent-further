@@ -13,8 +13,8 @@ import type { Health } from '../sources/host.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { Settings } from '../policy.ts'
 import {
-  checkIncidentCandidate, higherSeverity, incidentFingerprint, isOpenIncident, INCIDENT_COOLDOWN_MS, INCIDENT_DETAIL_LIMIT,
-  INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT, INCIDENT_LOG_WINDOW_MS,
+  checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, isOpenIncident, INCIDENT_COOLDOWN_MS,
+  INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT, INCIDENT_LOG_WINDOW_MS,
   INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentFilter,
   type IncidentRepository, type IncidentScope, type IncidentSeverity,
 } from '../core/incidents.ts'
@@ -228,14 +228,19 @@ export class Incidents {
     return updated
   }
 
-  /** A first detection: daily budget, open cap, the record, then its evidence bundle. */
+  /**
+   * A first detection: the daily budget (except for the live-outage rules `health-error` and `stalled-assignment`),
+   * the open cap, the record, then its evidence bundle.
+   */
   private create(candidate: IncidentCandidate, fingerprint: string, at: Date, dailyBudget: number): Incident | undefined {
     const time = at.toISOString()
-    const today = dayKey(at)
-    const budget = dailyBudget
-    if (budget <= 0) return undefined
-    const created = this.host.store.incidents.list({ status: 'all' }).filter(item => dayKey(new Date(item.first_at)) === today)
-    if (created.length >= budget) return undefined
+    // ADR-0004: a health flip or a stalled Assignment is recorded even when the day's budget is already spent.
+    if (!incidentBudgetExempt(candidate.rule)) {
+      const today = dayKey(at)
+      if (dailyBudget <= 0) return undefined
+      const created = this.host.store.incidents.list({ status: 'all' }).filter(item => dayKey(new Date(item.first_at)) === today)
+      if (created.length >= dailyBudget) return undefined
+    }
     if (this.host.store.incidents.openCount() >= this.openCap) return undefined
     const id = this.createId()
     const base: Incident = {

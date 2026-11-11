@@ -157,6 +157,32 @@ describe('Incidents service', () => {
     expect(budget.store.incidents.list()).toHaveLength(1)
   })
 
+  it('records a health error and a stalled assignment even when the daily budget is zero', () => {
+    // ADR-0004: the two live-outage rules record regardless of the daily budget; every other new record is dropped.
+    const h = harness({ dailyBudget: 0 })
+    expect(h.incidents.record(candidate('outbox-failures'))).toBeUndefined()
+    expect(h.store.incidents.list()).toHaveLength(0)
+    const health = h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!
+    const stalled = h.incidents.record(candidate('stalled-assignment', { detail: 'assignment a1 idle 10 minutes' }))!
+    expect(health.rule).toBe('health-error')
+    expect(stalled.rule).toBe('stalled-assignment')
+    expect(h.store.incidents.list()).toHaveLength(2)
+    expect(h.store.incidents.list().every(incident => incident.status === 'bundled' && incident.severity === 'high')).toBe(true)
+  })
+
+  it('exempts only the live-outage rules from a budget another record already spent', () => {
+    const h = harness({ dailyBudget: 1 })
+    expect(h.incidents.record(candidate('outbox-failures'))).not.toBeUndefined()
+    expect(h.incidents.record(candidate('agent-error-rate'))).toBeUndefined()
+    const health = h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!
+    expect(health.severity).toBe('high')
+    expect(h.incidents.record(candidate('source-poll-failures', { detail: 'source feishu poll failed 3 times' }))).toBeUndefined()
+    // Dedupe still wins over a second row for an exempt rule: a repeat only counts occurrences.
+    h.clock.at = at('2026-11-11T10:30:00.000Z')
+    expect(h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!.occurrences).toBe(2)
+    expect(h.store.incidents.list()).toHaveLength(2)
+  })
+
   it('skips a new incident when the open-incident cap is reached but still counts a repeat', () => {
     const h = harness({}, { openCap: 1 })
     const first = h.incidents.record(candidate('outbox-failures'))!

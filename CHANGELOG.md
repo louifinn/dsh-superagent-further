@@ -19,7 +19,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   Assignment (sharing its existing request) — with zero model calls, no code changes and no automatic fixes;
   `update-failures` is reserved for the update pipeline. A stable fingerprint over the rule, normalized scope ids and a
   digit-normalized detail counts repeats instead of duplicating (one-hour cooldown from `last_at`, then reopen), the
-  daily budget (2 per UTC day), the open cap (100) and the minimum severity (`high`) bound the noise, and each first
+  daily budget (2 per UTC day), the open cap (100) and the minimum severity (`high`) bound the noise, with
+  `health-error` and `stalled-assignment` exempt from the daily budget because they describe a live outage (dedupe,
+  cooldown and the open cap still apply); each first
   record writes owner-only `config.json`, `health.json`, `related.json`, a 30-minute `log-window.jsonl` and a hashed
   `manifest.json` under `<workspace>/artifacts/incidents/<id>/` (newest 20 kept, 30 days), leaving the record
   `detected` and the `incidents` health claim in error when a bundle cannot be written. The tier-C
