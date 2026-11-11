@@ -3,10 +3,12 @@ import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { AutomationLimitError, AutomationRunRefusedError, UnknownAutomationError, UnknownProjectError } from '../src/app/automations.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
+import { SelfReports } from '../src/app/self-reports.ts'
 import { SettingsConflict, SettingsRevisionNotFound } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { Logs } from '../src/app/logs.ts'
 import { MemoryConfigSchema, SettingsSchema } from '../src/policy.ts'
+import { SELF_REPOSITORY, type SelfReport, type SelfReportRepository, type SelfReportStatus } from '../src/core/index.ts'
 import { SetupError } from '../src/setup.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
@@ -486,5 +488,107 @@ it('does not audit automatic system events or human actions that fail', async ()
   expect((await call('PUT', 'settings/executor', { value: {}, revision: 0 })).status).toBe(409)
   const { body } = await call('GET', 'logs?scope=audit')
   expect(body.entries).toEqual([])
+})
+
+/** The self-report table the real `SelfReports` service reads, without SQLite. */
+class HttpSelfReportRecords implements SelfReportRepository {
+  readonly rows = new Map<string, SelfReport>()
+  get(id: string): SelfReport | undefined { return this.rows.get(id) }
+  save(report: SelfReport): void { this.rows.set(report.id, report) }
+  list(status?: SelfReportStatus): SelfReport[] {
+    return [...this.rows.values()].filter(report => status === undefined || report.status === status)
+  }
+}
+
+/** The two GitHub calls the outlet makes, asserting the fixed target and the create-only Issue write. */
+class HttpSelfReportCommands {
+  readonly writes: { path: string; body?: unknown }[] = []
+  fail: Error | undefined
+  async gh<T>(args: string[]): Promise<T> {
+    if (args[1]?.includes('/issues?state=open') === true) return [] as T
+    if (args[1]?.includes('/labels?per_page=') === true) return [] as T
+    throw new Error(`unexpected gh call: ${args.join(' ')}`)
+  }
+  async apiWrite(repository: string, method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<string> {
+    expect([repository, method, path]).toEqual([SELF_REPOSITORY, 'POST', 'issues'])
+    if (this.fail !== undefined) throw this.fail
+    this.writes.push({ path, body })
+    return JSON.stringify({ number: 70 + this.writes.length })
+  }
+}
+
+/** A real outlet service in observe mode over in-memory records and the fake GitHub calls. */
+function httpOutlet() {
+  const records = new HttpSelfReportRecords()
+  const commands = new HttpSelfReportCommands()
+  const service = new SelfReports({
+    store: { selfReports: records, settings: () => SettingsSchema.parse({}) },
+    commands, projects: () => [], now: () => '2026-11-10T12:00:00.000Z', version: () => '0.3.0',
+  })
+  return { service, records, commands }
+}
+
+const draftFinding = (title: string) => ({ title, evidence: 'The watcher exits with ENOENT in state/watcher.json.',
+  reproduction: 'Run the watcher, then stop polling.', session: 'master' })
+
+async function draft(service: SelfReports, title: string): Promise<SelfReport> {
+  const raised = await service.raise(draftFinding(title))
+  if (raised.status !== 'draft') throw new Error(`expected a draft, got ${raised.status}`)
+  return raised.report
+}
+
+it('files an approved self report over HTTP and audits both review actions with identifiers only', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const h = httpOutlet()
+  const call = serve({ logs, selfReports: h.service })
+  const first = await draft(h.service, 'Watcher crashes after a failed poll')
+  expect(await call('POST', `self-reports/${first.id}/approve`)).toEqual({ status: 200,
+    body: { status: 'filed', report_id: first.id, issue_number: 71 } })
+  expect(h.commands.writes).toHaveLength(1)
+  expect(h.commands.writes[0]!.body).toMatchObject({ title: 'Watcher crashes after a failed poll',
+    body: expect.stringContaining('automated agent') })
+
+  const second = await draft(h.service, 'Label refresh misses a closed pull request')
+  expect(await call('POST', `self-reports/${second.id}/dismiss`)).toEqual({ status: 200,
+    body: { status: 'dismissed', id: second.id } })
+
+  const audit = (await call('GET', 'logs?scope=audit')).body.entries as { level: string; scope: string; message: string;
+    data?: Record<string, unknown> }[]
+  expect(audit.map(entry => entry.message)).toEqual([
+    `self-report.approve report=${first.id} issue=71 status=filed actor=operator`,
+    `self-report.dismiss report=${second.id} actor=operator`,
+  ])
+  for (const entry of audit) {
+    expect(entry.level).toBe('info')
+    expect(entry.scope).toBe('audit')
+    expect(entry.data).toMatchObject({ actor: 'operator' })
+  }
+  expect(audit[0]!.data).toMatchObject({ action: 'self-report.approve', report: first.id, issue: 71, status: 'filed' })
+  expect(audit[1]!.data).toMatchObject({ action: 'self-report.dismiss', report: second.id })
+  // The finding's evidence never reaches the audit log, only its identifiers do.
+  expect(JSON.stringify(audit)).not.toContain('ENOENT')
+})
+
+it('answers a failed, unfiled or unknown self-report action with its status and audits nothing', async () => {
+  const logs = new Logs(() => new Date('2026-11-11T00:00:00.000Z'))
+  const h = httpOutlet()
+  const call = serve({ logs, selfReports: h.service })
+  expect(await call('POST', 'self-reports/srep-unknown/approve')).toMatchObject({ status: 404,
+    body: { code: 'selfReportUnknown' } })
+  expect(await call('POST', 'self-reports/srep-unknown/dismiss')).toMatchObject({ status: 404,
+    body: { code: 'selfReportUnknown' } })
+
+  const pending = await draft(h.service, 'Watcher crashes after a failed poll')
+  h.commands.fail = new Error('api unavailable')
+  expect(await call('POST', `self-reports/${pending.id}/approve`)).toMatchObject({ status: 400,
+    body: { code: 'selfReportFileFailed', values: { error: 'api unavailable' } } })
+  expect(h.service.drafts().map(report => report.id)).toEqual([pending.id])
+  expect((await call('GET', 'logs?scope=audit')).body.entries).toEqual([])
+
+  // A service answer that leaves the report unfiled is a conflict, not a filed Issue, and records nothing either.
+  const unfiled = serve({ logs, selfReports: { approve: async () => ({ status: 'draft', report: pending, reason: 'observe' }) } })
+  expect(await unfiled('POST', `self-reports/${pending.id}/approve`)).toEqual({ status: 409,
+    body: { error: 'Self report could not be filed' } })
+  expect((await unfiled('GET', 'logs?scope=audit')).body.entries).toEqual([])
 })
 

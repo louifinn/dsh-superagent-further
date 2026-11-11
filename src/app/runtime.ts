@@ -60,6 +60,7 @@ import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { bindLeadApprovals } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
+import { SelfReports } from './self-reports.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 
 // Source plugins interact with dsh-superagent-further exclusively through the `SourceHost` service interface.
@@ -101,6 +102,8 @@ export class Runtime extends Service implements SourceHost {
   readonly outbox: Outbox
   readonly engine: Engine
   readonly passes: Passes
+  /** The self-evolution Issue outlet's service, shared by the main Session's tool and the Overview's review routes. */
+  readonly selfReports: SelfReports
   readonly ready: Promise<void>
   /** True until the startup summary is written, so the first ready of each claim is not logged one by one. */
   private starting = true
@@ -209,6 +212,15 @@ export class Runtime extends Service implements SourceHost {
       })
       this.logs.attach(this.logsSink)
       this.logs.setMinLevel(() => store.settings().executor.logLevel)
+      // The self-evolution Issue outlet (docs/014 D3): its gate lives in the Eval settings, its records in schema 24, and a
+      // filing failure reports on its own health entry instead of failing a pass.
+      this.selfReports = new SelfReports({
+        store: { selfReports: store.selfReports, settings: () => store.settings() },
+        commands,
+        projects: () => store.settings().executor.projects,
+        health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
+        record: message => this.log.warn('dsh-superagent-further: %s', message),
+      })
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger), log: this.capture('executor') })
@@ -342,7 +354,7 @@ export class Runtime extends Service implements SourceHost {
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger),
         log: kind => this.capture(kind) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        automations: this.automations, log: this.capture('executor'),
+        selfReports: this.selfReports, automations: this.automations, log: this.capture('executor'),
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
@@ -724,6 +736,7 @@ export class Runtime extends Service implements SourceHost {
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
+      selfReports: this.selfReports,
       leadOverview: () => runtime.leadOverview(),
       deliveryFailures: () => runtime.deliveryFailures(),
       decideEscalation: input => runtime.decideEscalation(input),

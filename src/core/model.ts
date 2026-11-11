@@ -122,6 +122,8 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'lead'; project: string; project_request_id: string; addressed?: 'mention' | 'direct' }
   /** The main Session turned an installation automation delivery's findings into work (docs/012 D12): the Mandate records the automation id and revalidates like a Lead accept, because no Source asked for it. */
   | { via: 'installation'; automation: string; addressed?: 'mention' | 'direct' }
+  /** The main Session turned its own discovery of a problem in superagent itself into work (docs/014 D2, schema 24): no Source message and no automation asked for it, so the basis revalidates like an installation accept. */
+  | { via: 'discovery'; addressed?: 'mention' | 'direct' }
   /** The Orchestrator accepted a project Lead's escalated request: the Mandate records the source project and request, and revalidates like a Lead accept because the Orchestrator decided it (docs/012 D13). */
   | { via: 'escalation'; project: string; request: string; addressed?: 'mention' | 'direct' }
   /** A message of a bot on its Source's bot list: an inferred candidate at most, never an explicit request or a stop. */

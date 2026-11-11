@@ -131,6 +131,10 @@ export interface PanelServer {
   escalations: ApiResponse<'GET overview'>['escalations']
   /** Automation records needing attention in the overview; each test may replace them. */
   automationAttention: ApiResponse<'GET overview'>['automationAttention']
+  /** Observe-mode self report drafts the overview shows; each test may replace them. */
+  selfReports: ApiResponse<'GET overview'>['selfReports']
+  /** True when today's self-report filing cap is reached, so the overview explains why a draft stays a draft. */
+  selfReportsBlocked: boolean
   /** Memories shown on the Memory page; the routes below list and forget them like the host does. */
   memories: ApiResponse<'GET memories'>['items']
   /** False simulates a Host without the schedule service: the automations routes answer 503. */
@@ -246,6 +250,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
     requests: server.asks,
     escalations: server.escalations,
     automationAttention: server.automationAttention,
+    selfReports: server.selfReports,
+    selfReportsBlocked: server.selfReportsBlocked,
   }
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
@@ -295,7 +301,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, memories: [], proposals: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, memories: [], proposals: [],
     automationService: true, automations: [], logs: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
@@ -449,6 +455,18 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       replies: [{ by: 'orchestrator', text: body.reply, at: new Date().toISOString() }],
       ...body.decision === 'accept' ? { request_id: 'request-escalation' } : {},
       tickets: body.decision === 'accept' ? ['ticket-escalation'] : [], reply_delivered: true }
+  } },
+  'POST self-reports/:id/approve': { answer: ({ params }) => {
+    const index = server.selfReports.findIndex(item => item.id === params.id)
+    if (index < 0) return refuse(404, `Unknown self report ${params.id}`)
+    server.selfReports.splice(index, 1)
+    return { status: 'filed' as const, report_id: params.id, issue_number: 7 }
+  } },
+  'POST self-reports/:id/dismiss': { answer: ({ params }) => {
+    const index = server.selfReports.findIndex(item => item.id === params.id)
+    if (index < 0) return refuse(404, `Unknown self report ${params.id}`)
+    server.selfReports.splice(index, 1)
+    return { status: 'dismissed' as const, id: params.id }
   } },
   'PUT automations/:id': { body: true, answer: ({ params, body }) => {
     const row = server.automations.find(item => item.id === params.id)

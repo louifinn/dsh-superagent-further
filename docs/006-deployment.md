@@ -499,8 +499,8 @@ and starts a replacement with a recovery note.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
 5. If the installation predates workspace identity, it starts paused at `workspaceRequired`: open the panel and finish the workspace step of the setup wizard (or save the workspace block on **Execution → Settings**). The host registers the new DSH workspace and creates a new master Session; the old master Session is archived and readable, and the main conversation does not continue. An installation that already has a workspace skips this step. Selecting a previously used workspace later unarchives and resumes that workspace's own master Session.
-6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 23 (current)`, or
-   `schema 22 migrates to 23 on start` when the next start is the one that upgrades the database.
+6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 24 (current)`, or
+   `schema 23 migrates to 24 on start` when the next start is the one that upgrades the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
 settings and from their history, and setup derives the primary repository from the first project under **Execution →

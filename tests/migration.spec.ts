@@ -770,6 +770,35 @@ it('creates the project_request table and keeps its records when migrating to sc
   created.close()
 })
 
+it('migrates a schema 23 database to 24 by creating the empty self_report table and keeping the Tickets', () => {
+  const path = join(directory, 'self-reports.sqlite')
+  const at = '2026-11-10T09:00:00.000Z'
+  const seeded = new Store(path)
+  seeded.tickets.save({
+    id: 't1', title: 'Fix t1', decisionId: 'd-t1',
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' },
+  } as never)
+  // A schema 23 database had no self_report table: the Store creates it before migrateTo24 runs, with no backfill.
+  seeded.db.exec('DROP TABLE self_report')
+  seeded.db.prepare("UPDATE kv SET value='23' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(SCHEMA_VERSION).toBe(24)
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.selfReports.list()).toEqual([])
+    expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
+    const report = { id: 'srep-1', title: 'Watcher crashes', body: 'Evidence', evidence: 'ENOENT',
+      raised_by: { session: 'master' }, target_repo: 'louifinn/dsh-superagent-further', status: 'draft' as const,
+      created_at: at }
+    store.selfReports.save(report)
+    expect(store.selfReports.get('srep-1')).toEqual(report)
+    expect(store.selfReports.list('draft')).toEqual([report])
+  } finally { store.close() }
+})
+
 it('backfills why every ended Ticket ended when migrating to schema 23 and preserves a recorded cause', () => {
   const path = join(directory, 'end-causes.sqlite')
   const seeded = new Store(path)

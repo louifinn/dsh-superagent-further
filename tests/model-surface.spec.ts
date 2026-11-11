@@ -55,7 +55,10 @@ interface Skill { name: string; description: string; content: string }
 // It rose from 43,800 with the worker rules that finish a background job inside its own turn and keep one worktree and cwd
 // per Ticket, about 480 characters of work instructions; the incident stalled an assignment for three hours, so the budget
 // grows with the rules. Deleting the rules would let it drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 68_600, worker: 44_400 }
+// It rose from 68,600 with orchestrator_issue_create and the discovery variant of orchestrator_request_create, which add
+// about 1,770 characters of schemas and descriptions for the self-evolution outlet (docs/014 Phase 2); deleting that
+// outlet would let the budget drop back.
+const BUDGET: Record<Role, number> = { orchestrator: 70_500, worker: 44_400 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -405,7 +408,7 @@ function failures(): Map<string, string> {
 it('collects both roles\' tools, prompts, skills and inputs', () => {
   expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
     'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'request_create'])
-  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_escalations', 'orchestrator_escalation_decide']))
+  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_issue_create', 'orchestrator_escalations', 'orchestrator_escalation_decide']))
   // The one routing tool takes the place of four.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {
     expect(toolsOf('orchestrator').has(name)).toBe(false)

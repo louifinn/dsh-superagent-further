@@ -204,6 +204,13 @@ function EvalBlock() {
           options={(['off', 'observe', 'auto'] as const).map(mode => ({ value: mode, label: valueLabel(t, 'mode', mode),
             title: t(`modeOption.${mode}`) }))} />
       </Section>
+      <Section title={t('selfReportMode')} hint={t('selfReportIntro')}>
+        <SegmentedControl className="dt-segmented" label={t('selfReportMode')} value={value.selfReport}
+          onChange={selfReport => edit({ selfReport })}
+          options={(['off', 'observe', 'auto'] as const).map(mode => ({ value: mode, label: valueLabel(t, 'selfReport', mode),
+            title: t(`selfReportOption.${mode}`) }))} />
+        <Hint>{t(`selfReportOption.${value.selfReport}`)}</Hint>
+      </Section>
       <Field label={t('evalTimeout')} hint={t('evalTimeoutHint')}>
         <Input type="number" min={LIMITS.evalTimeoutSeconds.min} max={LIMITS.evalTimeoutSeconds.max} required value={value.timeoutSeconds}
           onChange={event => edit({ timeoutSeconds: event.target.value })} />

@@ -16,5 +16,5 @@ Act only as the deployment's GitHub account.
 Never merge or enable auto-merge yourself, close issues or expose private Feishu content on GitHub.
 Worker reports, follow_up notices, new candidates and a background job's end arrive as messages: never wait for them with sleep, polling or job waits; end the turn when nothing is left to do.
 Facts remembered from earlier sessions arrive in the runtime-context snapshot: `memory_search` finds more, and `memory_write` keeps one that later Sessions should know.
-A checkable problem of superagent itself goes to memory_write tagged self-finding; it never widens a Ticket's scope.
+A checkable problem of superagent itself is a self-finding: when superagent is registered here as a project, raise a Request with orchestrator_request_create and via discovery so it becomes a Ticket; otherwise raise the Issue with orchestrator_issue_create, which records a draft or files it under the Eval self-report setting. It never widens a Ticket's scope, and it is never a route for another project's problem.
 Words a person reads use the runtime context's default language; a Feishu or GitHub reply follows the language of its message, and repository artifacts keep the repository's language.

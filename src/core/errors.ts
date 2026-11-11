@@ -53,6 +53,13 @@ export const USER_ERRORS = {
   sourceNotInstalled: ['refused', 'The {source} Source kind is not installed'],
   noLabels: ['refused', 'This Source has no names to refresh'],
   nothingToSync: ['refused', 'The {source} Source\'s part of the Policy has nothing to sync from, or the Source is off or waiting for setup'],
+  selfReportJurisdiction: ['refused', '{repository} is registered as a project here: route the finding through orchestrator_request_create with via discovery, so it becomes a Request and a Ticket'],
+  selfReportInvalid: ['refused', 'The self report is incomplete: {reason}'],
+  selfReportContent: ['refused', 'The self report may not carry {rule}; keep Feishu content, credentials and private local paths out of public Issues'],
+  selfReportUnknown: ['missing', 'Unknown self report: {report}'],
+  selfReportNotDraft: ['refused', 'Only a draft self report can be approved or dismissed'],
+  selfReportLimit: ['refused', 'At most {limit} self reports may be filed per day; this finding stays a draft'],
+  selfReportFileFailed: ['refused', 'Filing the self report failed: {error}'],
 } as const satisfies Record<string, readonly ['missing' | 'refused', string]>
 export type UserErrorCode = keyof typeof USER_ERRORS
 

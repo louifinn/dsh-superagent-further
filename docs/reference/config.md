@@ -152,12 +152,22 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
     "eval": {
       "default": {
         "mode": "observe",
+        "selfReport": "observe",
         "timeoutSeconds": 120,
         "model": null
       },
       "type": "object",
       "properties": {
         "mode": {
+          "default": "observe",
+          "type": "string",
+          "enum": [
+            "off",
+            "observe",
+            "auto"
+          ]
+        },
+        "selfReport": {
           "default": "observe",
           "type": "string",
           "enum": [

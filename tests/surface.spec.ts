@@ -37,7 +37,8 @@ describe('mounted surface', () => {
     expect({ main, lead, worker }).toEqual({
       // The main Session: routing and evaluation, communication, configuration, memory, and the raise/escalation channels.
       main: ['memory_forget', 'memory_search', 'memory_write', 'orchestrator_escalation_decide', 'orchestrator_escalations',
-        'orchestrator_eval', 'orchestrator_eval_decide', 'orchestrator_eval_read', 'orchestrator_label', 'orchestrator_policy_sync',
+        'orchestrator_eval', 'orchestrator_eval_decide', 'orchestrator_eval_read', 'orchestrator_issue_create', 'orchestrator_label',
+        'orchestrator_policy_sync',
         'orchestrator_prompts_save', 'orchestrator_read', 'orchestrator_reply', 'orchestrator_request_create', 'orchestrator_route',
         'orchestrator_send_file', 'orchestrator_settings_propose', 'orchestrator_settings_save', 'orchestrator_thread_unsubscribe',
         'orchestrator_ticket_note', 'orchestrator_ticket_request_status', 'orchestrator_ticket_retry', 'orchestrator_trigger_requeue'],

@@ -113,6 +113,33 @@ function EscalationEntry({ item, onChanged }: { item: ApiResponse<'GET overview'
     </div>
   </li>
 }
+/**
+ * One observe-mode self report draft (docs/014 D5): a person approves filing it — within the outlet's deduplication and
+ * daily cap — or dismisses it. Filed history stays in the target repository, so no other surface is added here.
+ */
+function SelfReportEntry({ item, blocked, onChanged }: {
+  item: ApiResponse<'GET overview'>['selfReports'][number]; blocked: boolean; onChanged: () => Promise<void>
+}) {
+  const { t, call } = usePanel()
+  const action = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
+  return <li className="dt-row" data-self-report={item.id}>
+    <div className="dt-row-main">
+      <div className="dt-att-what">{item.title}</div>
+      <div className="dt-row-meta">
+        <LabelValue label={t('selfReportTarget')} value={<span className="dt-mono">{item.target_repo}</span>} />
+        <LabelValue label={t('selfReportAge')} value={when(item.createdAt, t('lang'))} />
+      </div>
+      <p className="dt-hint">{item.evidence}</p>
+      <div className="dt-row-meta dt-row-buttons">
+        <Button size="sm" disabled={action.busy} onClick={() => { void action.run(() =>
+          call('POST self-reports/:id/approve', { id: item.id })) }}>{t('selfReportApprove')}</Button>
+        <Button size="sm" variant="outline" disabled={action.busy} onClick={() => { void action.run(() =>
+          call('POST self-reports/:id/dismiss', { id: item.id })) }}>{t('selfReportDismiss')}</Button>
+      </div>
+      {blocked && <Hint>{t('selfReportBlocked')}</Hint>}
+    </div>
+  </li>
+}
 export function OverviewPage() {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
@@ -128,6 +155,8 @@ export function OverviewPage() {
   const more = (route: Route) => <button type="button" className="dt-textlink dt-more-link"
     onClick={() => navigate(route)}>{t('details')}</button>
   const waiting = project ? data.person.filter(ticket => project === '-' ? !ticket.project : ticket.project === project) : data.person
+  // The API always sends both fields; test doubles written before the outlet may not.
+  const selfReports = data.selfReports ?? []
   const choices = [{ id: '', label: t('projectFilterAll') }, ...data.projects.map(item => ({ id: item.id, label: item.name })),
     ...data.person.some(ticket => !ticket.project) ? [{ id: '-', label: t('projectFilterNone') }] : []]
   return <>
@@ -169,6 +198,11 @@ export function OverviewPage() {
     {/* Open escalations wait for the Orchestrator. It can answer them here, or accept the work into the escalating project's own Ticket from the main Session when the units differ. */}
     {data.escalations.length > 0 && <Section title={t('escalationsTitle')} count={data.escalations.length}>
       <ul className="dt-list">{data.escalations.map(item => <EscalationEntry key={item.id} item={item} onChanged={reload} />)}</ul>
+    </Section>}
+    {/* Observe-mode self report drafts wait for a person; auto mode files directly and accumulates none here. */}
+    {selfReports.length > 0 && <Section title={t('selfReportsTitle')} count={selfReports.length}>
+      <ul className="dt-list">{selfReports.map(item => <SelfReportEntry key={item.id} item={item}
+        blocked={data.selfReportsBlocked ?? false} onChanged={reload} />)}</ul>
     </Section>}
     {/* Automation records that lost their Host task or failed delivery; the Automations page has their history. */}
     {data.automationAttention.count > 0 && <Section title={t('automationAttentionTitle')} count={data.automationAttention.count}

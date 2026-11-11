@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 23
+export const SCHEMA_VERSION = 24
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -253,6 +253,13 @@ export function migrateTo23(store: Store): void {
     }
   })
 }
+/**
+ * Schema 24 adds the `self_report` table for the self-evolution Issue outlet (docs/014 D3): drafts awaiting approval, filed
+ * Issues and dismissed findings, read oldest first. The Store creates the table before this runs, so no schema 23 record
+ * changes shape here and there is no backfill; the step stays in the sequence so a later record rewrite that belongs to
+ * self reports has one place to live.
+ */
+export function migrateTo24(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

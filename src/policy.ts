@@ -175,6 +175,11 @@ export const PolicyConfigSchema = z.object({
 }).strict()
 export const EvalConfigSchema = z.object({
   mode: z.enum(['off', 'observe', 'auto']).default('observe'),
+  /**
+   * The self-evolution Issue outlet's gate (docs/014 D3, schema 24), beside the accept mode: `off` records no finding,
+   * `observe` keeps a draft for a person to approve, and `auto` files within the deduplication and daily limits.
+   */
+  selfReport: z.enum(['off', 'observe', 'auto']).default('observe'),
   timeoutSeconds: z.number().int().min(LIMITS.evalTimeoutSeconds.min).max(LIMITS.evalTimeoutSeconds.max).default(120),
   model: RoleModelSchema.nullable().default(null),
 }).strict()
@@ -402,9 +407,10 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
       const rulesOn = (rules: string[] | undefined) => (rules ?? []).every(id => settings.policy.rules.some(rule => rule.enabled && rule.id === id))
       // Explicit follow-ups remain valid; inferred follow-ups require auto mode and enabled matched rules.
       if (basis.via === 'followup') return mandate.strength === 'explicit' || (mode === 'auto' && rulesOn(basis.rules))
-      // Internal accepts — a project Lead's decision, or the main Session acting on an installation automation delivery —
-      // came from no Source message, so no Source check or observation mode applies (docs/012 D2, D12).
-      if (basis.via === 'lead' || basis.via === 'installation' || basis.via === 'escalation') return true
+      // Internal accepts — a project Lead's decision, the main Session acting on an installation automation delivery, or
+      // the main Session acting on its own discovery of a problem in superagent itself — came from no Source message, so
+      // no Source check or observation mode applies (docs/012 D2, D12; docs/014 D2, schema 24).
+      if (basis.via === 'lead' || basis.via === 'installation' || basis.via === 'discovery' || basis.via === 'escalation') return true
       // A bot's candidate holds only while the bot remains on its Source's bot list and passes the observation checks below.
       if (basis.via === 'bot' && !listedBot(settings, mandate.actor)) return false
       // An admission-table Mandate holds while the sender's current cell still grants at least the original strength.

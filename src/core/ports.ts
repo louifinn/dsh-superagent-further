@@ -1,6 +1,7 @@
 /** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
 import type { Assignment, ChannelRef, Decision, DecisionKind, Deliverable as TicketDeliverable, Mandate, MandateBasis, ProjectRequest, Request, Strength, Thread, Ticket, TicketEndBy, TicketEndCause, TicketOutcome, Trigger }
   from './model.ts'
+import type { SelfReportRepository } from './self-reports.ts'
 import type { Reason } from './reasons.ts'
 
 /** Gate admission result: either inadmissible with a reason code, or admissible with strength and MandateBasis. */
@@ -130,6 +131,7 @@ export interface ProjectRequestRepository {
   list(project?: string): ProjectRequest[]
 }
 
+/** The self-report records of a schema 24 Store (docs/014 D3): drafts, filed Issues and dismissed findings. */
 /** Durable state. Every method is synchronous so `atomic` can wrap a unit of work. */
 export interface Repositories {
   atomic<T>(work: () => T): T
@@ -161,6 +163,8 @@ export interface Repositories {
   }
   /** Absent from repositories opened before schema 21, such as `MemoryRepositories`; project-request commands refuse there. */
   projectRequests?: ProjectRequestRepository
+  /** Absent from repositories opened before schema 24, such as `MemoryRepositories`; the Issue outlet refuses there. */
+  selfReports?: SelfReportRepository
   decisions: {
     get(id: string): Decision | undefined
     save(decision: Decision): void
