@@ -8,6 +8,19 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The context-surface design document `docs/015-context-surfaces.md` (Issue #6, roadmap Sprint 45).
+  It records the structural fix for the three context-management defects that share one root cause —
+  a role's model-facing surface is modeled four times (prompt assembly, resource visibility, surface
+  inventory, budget) in incompatible shapes that nothing forces to agree: one declarative
+  `Record<RoleId, Surface>` contract (`sections`, `tools`, `reads`, `runtimes`, `projection`,
+  `budget`), projection as one pure function behind four property-tested invariants (completeness,
+  readable closure, boundedness, determinism), budgets as generated artefacts behind the `docs:check`
+  drift gate with structured reasons, one paged read path whose visibility lattice
+  (`reviewer ⊑ worker ⊑ lead ⊑ orchestrator`, scopes `ticket ⊑ project ⊑ installation`) replaces the
+  two-level `executor` flag, and the six-step behaviour-preserving migration whose golden snapshots
+  at zero diff are the rollback guarantee. Design only; implementation follows as the Sprint 45
+  ordinary tickets.
+
 - Staged runtime updates with a supervisor-owned swap and safe rollback (ADR-0007, schema 25 unchanged, RuntimeHost API 1
   unchanged). `scripts/stage-runtime.mjs` validates a built `lib/runtime-entry.js` + `lib/runtime-manifest.json` (shape,
   version, host API, integer schema, entry name, SHA-256) and copies them into `<stateDir>/runtime/<version>/` through a
