@@ -18,7 +18,7 @@ import type { Machine } from '../deployment.ts'
 import { bounded } from '../infra/bounded.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { LogFileSink } from '../app/log-files.ts'
-import type { HostLogger, Logs } from '../app/logs.ts'
+import { Logs, type HostLogger } from '../app/logs.ts'
 import type { SetupProblem } from '../setup.ts'
 import { HOST_API, type DrainReport, type RuntimeDescriptor, type RuntimeHandle, type RuntimeHost } from '../runtime-host.ts'
 import { VERSION } from '../version.ts'
@@ -34,6 +34,10 @@ import {
 export const READY_TIMEOUT_MS = 30_000
 /** How long the supervisor waits for the durable log sink to close before continuing without it. */
 export const FLUSH_LOGS_MS = 10_000
+/** How long the supervisor waits for a state-directory lock release before warning and continuing with the journal. */
+export const LOCK_RELEASE_MS = 10_000
+/** How long the supervisor waits for a failed candidate's `dispose` before warning and trying the next candidate. */
+export const DISPOSE_MS = 10_000
 
 /** The resolved runtime and where it came from; the read-only version surface M36 exposes to the panel. */
 export interface SupervisorStatus {
@@ -55,11 +59,17 @@ export interface SupervisorOptions {
   readonly exit?: (code: number) => void
   readonly version?: string
   /** Test seam for the packaged runtime; production discovers it beside the installed package. */
-  readonly packaged?: PackagedRuntime
+  readonly packaged?: () => PackagedRuntime
+  /** Test seam for the state-directory lock, which production takes with proper-lockfile. */
+  readonly lock?: (stateDir: string) => () => Promise<void>
   /** Bound for a runtime's `ready`; tests shorten it. */
   readonly readyTimeoutMs?: number
+  /** Bound for a failed runtime's `dispose`; tests shorten it. */
+  readonly disposeMs?: number
   /** Bound for the durable log sink's close; tests shorten it. */
   readonly flushLogsMs?: number
+  /** Bound for releasing the state-directory lock; tests shorten it. */
+  readonly lockReleaseMs?: number
   /** Test seam: the supervisor-owned durable sink, shared across candidates instead of built beneath the state directory. */
   readonly logSink?: LogFileSink
   /** Journal timestamps. */
@@ -73,11 +83,12 @@ export interface SupervisorOptions {
 export class Supervisor {
   private readonly log: HostLogger
   private readonly now: () => string
+  /** One process-wide ring for every candidate and every version; it outlives a failed start by design (ADR-0006). */
+  private readonly logsRing = new Logs()
   private readonly lockLost = new AbortController()
   private ready?: Promise<void>
   private stopping?: Promise<void>
   private runtime?: RuntimeHandle
-  private logsRing?: Logs
   private logSink?: LogFileSink
   private journal?: Journal
   private drainer?: DrainController
@@ -104,8 +115,8 @@ export class Supervisor {
   setupProblem(): SetupProblem | undefined { return this.runtime?.setupProblem }
   /** The runtime and version currently serving; M36 reads this for the Updates surface. */
   versionStatus(): SupervisorStatus | undefined { return this.statusValue }
-  /** The supervisor-owned ring, for tests and a future diagnostics surface. */
-  get logs(): Logs | undefined { return this.logsRing }
+  /** The supervisor-owned ring, for tests and a future diagnostics surface. It is the same instance for every attempt. */
+  get logs(): Logs { return this.logsRing }
   /** The current runtime handle, for tests; production code goes through the plugin entry and the Host services. */
   get handle(): RuntimeHandle | undefined { return this.runtime }
 
@@ -119,7 +130,10 @@ export class Supervisor {
     if (runtime === undefined) {
       await this.flushLogs()
       await this.releaseLock()
-      return { reason, startedAt: this.now(), durationMs: 0, completed: true, phases: [] }
+      const at = this.now()
+      return { reason, startedAt: at, durationMs: 0, completed: false,
+        phases: [{ phase: 'intake', status: 'skipped', startedAt: at, durationMs: 0,
+          detail: 'no runtime was running; the supervisor flushed the log sink and released the state-directory lock' }] }
     }
     this.drainer ??= this.makeDrainer()
     return await this.drainer.drain(runtime, reason, signal)
@@ -174,7 +188,15 @@ export class Supervisor {
           interrupted.operation, interrupted.phase)
       }
       const database = databaseSchema(join(stateDir, 'orchestrator.sqlite'))
-      const packaged = this.options.packaged ?? packagedRuntime()
+      let packaged: PackagedRuntime | undefined
+      let packagedProblem: unknown
+      try {
+        packaged = (this.options.packaged ?? (() => packagedRuntime()))()
+      } catch (error) {
+        packagedProblem = error
+        this.log.warn('dsh-superagent-further cannot discover its packaged runtime: %s; deployed versions may still start',
+          message(error))
+      }
       const resolution = resolveVersions(runtimeDir, packaged, database, interrupted?.current)
       for (const rejected of resolution.rejected) {
         this.log.warn('dsh-superagent-further will not start the %s runtime: %s', rejected.source, rejected.reason)
@@ -188,10 +210,14 @@ export class Supervisor {
         } catch (error) {
           last = error
           this.log.warn('dsh-superagent-further could not start the %s runtime %s: %s; trying the next candidate',
-            candidate.source, candidate.descriptor.version, error instanceof Error ? error.message : String(error))
+            candidate.source, candidate.descriptor.version, message(error))
         }
       }
-      throw new Error(`dsh-superagent-further could not start a runtime for ${stateDir}: ${last instanceof Error ? last.message : String(last)}`, { cause: last })
+      const hint = packaged === undefined
+        ? `; the packaged runtime is unavailable (${message(packagedProblem)}), so the package is probably not built: run pnpm build`
+        : ''
+      const reason = last === undefined ? 'no candidate runtime could be resolved' : message(last)
+      throw new Error(`dsh-superagent-further could not start a runtime for ${stateDir}: ${reason}${hint}`, { cause: last ?? packagedProblem })
     } catch (error) {
       this.releasing = true
       await this.flushLogs()
@@ -213,6 +239,7 @@ export class Supervisor {
       lifetime: this.lockLost.signal,
       flushLogs: () => this.flushLogs(),
       releaseStateLock: () => this.releaseGated(),
+      logs: this.logsRing,
       ...(this.options.logSink === undefined ? {} : { logSink: this.options.logSink }),
     })
     this.apply(built)
@@ -236,7 +263,13 @@ export class Supervisor {
     } catch (error) {
       journal.fail('init', message(error))
       this.runtime = undefined
-      try { await loaded.handle.dispose() } catch { /* A failed start may not drain cleanly; the lock stays supervisor-owned. */ }
+      try {
+        await bounded(loaded.handle.dispose(), this.options.disposeMs ?? DISPOSE_MS,
+          `the ${candidate.descriptor.version} runtime dispose`)
+      } catch (disposeError) {
+        this.log.warn('dsh-superagent-further could not dispose the failed %s runtime: %s; continuing with the next candidate',
+          candidate.descriptor.version, message(disposeError))
+      }
       await this.closeBuilt()
       throw error
     }
@@ -258,12 +291,11 @@ export class Supervisor {
   }
 
   private apply(built: BuiltHost): void {
-    this.logsRing = built.logs
     this.logSink = built.logSink
     this.flushTask = undefined
   }
 
-  /** Close a failed candidate's sink so its last entries land before the next candidate's ring replaces it. */
+  /** Close a failed candidate's sink so its last entries land before the next candidate reuses the same ring. */
   private async closeBuilt(): Promise<void> {
     await this.flushLogs()
   }
@@ -286,7 +318,9 @@ export class Supervisor {
       this.lockLost.abort()
     }
     try {
-      const release = lockSync(stateDir, { stale: 30_000, onCompromised: compromised })
+      const release = this.options.lock === undefined
+        ? lockSync(stateDir, { stale: 30_000, onCompromised: compromised })
+        : this.options.lock(stateDir)
       let done = false
       return async () => {
         if (done) return
@@ -309,8 +343,9 @@ export class Supervisor {
     const release = this.release
     this.release = undefined
     if (release === undefined) return Promise.resolve()
-    this.releaseTask = release().catch(error => {
-      this.log.warn('dsh-superagent-further could not release the state-directory lock: %s', String(error))
+    this.releaseTask = bounded(Promise.resolve().then(release), this.options.lockReleaseMs ?? LOCK_RELEASE_MS,
+      'the state-directory lock release').catch(error => {
+      this.log.warn('dsh-superagent-further could not release the state-directory lock: %s', message(error))
     })
     return this.releaseTask
   }

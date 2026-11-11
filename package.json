@@ -55,7 +55,7 @@
     "docs:generate": "node --experimental-transform-types scripts/generate-tool-reference.mjs",
     "docs:check": "node --experimental-transform-types scripts/generate-tool-reference.mjs --check",
     "architecture:check": "node scripts/check-architecture.mjs",
-    "check": "pnpm typecheck && pnpm architecture:check && pnpm test && pnpm build && pnpm runtime:check && pnpm pack:check && pnpm docs:check"
+    "check": "pnpm typecheck && pnpm architecture:check && pnpm build && pnpm test && pnpm runtime:check && pnpm pack:check && pnpm docs:check"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

@@ -137,11 +137,11 @@ export function databaseSchema(databasePath: string): number | undefined {
 
 /**
  * Resolve every candidate the supervisor may start, in preference order: the recorded current version of an interrupted
- * journal, `current.json`, `previous.json`, then the packaged runtime. Each stored descriptor is verified independently; a
- * failure is recorded and skipped, never thrown.
+ * journal, `current.json`, `previous.json`, then the packaged runtime when one could be discovered. Each stored descriptor is
+ * verified independently; a failure is recorded and skipped, never thrown.
  */
-export function resolveVersions(runtimeDir: string, packaged: { descriptor: RuntimeDescriptor; entry: string }, databaseSchemaVersion?: number,
-  interruptedCurrent?: RuntimeDescriptor): VersionResolution {
+export function resolveVersions(runtimeDir: string, packaged: { descriptor: RuntimeDescriptor; entry: string } | undefined,
+  databaseSchemaVersion?: number, interruptedCurrent?: RuntimeDescriptor): VersionResolution {
   const candidates: RuntimeCandidate[] = []
   const rejected: VersionRejection[] = []
   const offer = (source: RuntimeSource, descriptor: RuntimeDescriptor | undefined, missing?: string): void => {
@@ -161,7 +161,10 @@ export function resolveVersions(runtimeDir: string, packaged: { descriptor: Runt
   offer('previous', previous.descriptor, previous.reason)
   // The packaged runtime lives in the package, not under the state directory: its entry was verified by hash when it was
   // discovered, so it must not go through the state-directory path check. Its schema is checked again by the loader. It is
-  // always the last candidate, even when it is also the current version, because it is the last-resort fallback.
-  candidates.push({ source: 'packaged', descriptor: packaged.descriptor, entry: packaged.entry })
+  // always the last candidate, even when it is also the current version, because it is the last-resort fallback. When the
+  // package was not built, discovery already failed and there is simply no packaged candidate.
+  if (packaged !== undefined) {
+    candidates.push({ source: 'packaged', descriptor: packaged.descriptor, entry: packaged.entry })
+  }
   return { candidates, rejected }
 }

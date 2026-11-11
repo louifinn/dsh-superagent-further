@@ -145,7 +145,7 @@ export interface RuntimeModule {
 export interface RuntimeDescriptor {
   /** Version of the runtime bundle, normally the package version. */
   readonly version: string
-  /** Entry file, relative to `<stateDir>/runtime/` for a deployed bundle. */
+  /** Entry file, relative to the bundle's own version directory `<stateDir>/runtime/<version>/` for a deployed bundle. */
   readonly entry: string
   /** The `RuntimeHost` API the bundle was built against. */
   readonly hostApi: number

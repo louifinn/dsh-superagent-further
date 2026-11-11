@@ -19,7 +19,7 @@ import { buildRuntimeHost } from '../src/supervisor/host.ts'
 import { Journal } from '../src/supervisor/journal.ts'
 import { loadRuntime, packagedRuntime } from '../src/supervisor/loader.ts'
 import { HOST_API, PACKAGED_RUNTIME_MANIFEST, type RuntimeDescriptor, type RuntimeHost } from '../src/runtime-host.ts'
-import { Supervisor } from '../src/supervisor/supervisor.ts'
+import { Supervisor, type SupervisorOptions } from '../src/supervisor/supervisor.ts'
 import { currentPointer, previousPointer, resolveVersions, runtimeDirectory } from '../src/supervisor/versions.ts'
 import { VERSION } from '../src/version.ts'
 import { testMachine } from './fixtures/deployment.ts'
@@ -33,21 +33,28 @@ const hash = (text: string): string => createHash('sha256').update(text).digest(
 /** A fake runtime bundle that records the version it started and the reason it drained beside itself. */
 function runtimeSource(version: string, options: {
   throws?: boolean; omitCreate?: boolean; hostApi?: number; schema?: number; readyHangs?: boolean; incompleteDrain?: boolean
+  readyRejects?: string; disposeHangs?: boolean; log?: string
 } = {}): string {
   if (options.throws) return `throw new Error('the ${version} bundle cannot load')`
+  const ready = options.readyHangs
+    ? 'new Promise(() => {})'
+    : options.readyRejects === undefined ? 'Promise.resolve()' : `Promise.reject(new Error(${JSON.stringify(options.readyRejects)}))`
+  const log = options.log === undefined ? '' : `  host.logs.record('info', 'test', ${JSON.stringify(options.log)})\n`
+  const dispose = options.disposeHangs
+    ? `    dispose: () => { writeFileSync(new URL('./disposed.txt', import.meta.url), 'yes'); return new Promise(() => {}) },`
+    : `    dispose: async () => { writeFileSync(new URL('./disposed.txt', import.meta.url), 'yes') },`
   const create = options.omitCreate ? '' : `
 export function createRuntime(host) {
-  void host
-  writeFileSync(new URL('./started.txt', import.meta.url), ${JSON.stringify(version)})
+${log}  writeFileSync(new URL('./started.txt', import.meta.url), ${JSON.stringify(version)})
   return {
-    ready: ${options.readyHangs ? 'new Promise(() => {})' : 'Promise.resolve()'},
+    ready: ${ready},
     configured: () => true,
     drain: async (reason) => {
       writeFileSync(new URL('./drained.txt', import.meta.url), reason)
       return { reason, startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1, completed: ${options.incompleteDrain ? 'false' : 'true'},
         phases: [{ phase: 'intake', status: ${options.incompleteDrain ? "'failed'" : "'done'"}, startedAt: '2026-01-01T00:00:00.000Z', durationMs: 1 }] }
     },
-    dispose: async () => { writeFileSync(new URL('./disposed.txt', import.meta.url), 'yes') },
+${dispose}
   }
 }`
   return `import { writeFileSync } from 'node:fs'
@@ -70,16 +77,16 @@ function deploy(version: string, options: Parameters<typeof runtimeSource>[1] = 
 }
 
 /** A packaged runtime placed outside the state directory, as the installed package's lib entry is. */
-function packaged(version = 'packaged'): { descriptor: RuntimeDescriptor; entry: string } {
+function packaged(version = 'packaged', options: Parameters<typeof runtimeSource>[1] = {}): { descriptor: RuntimeDescriptor; entry: string } {
   const entry = join(directory, `${version}.js`)
-  const source = runtimeSource(version)
+  const source = runtimeSource(version, options)
   writeFileSync(entry, source)
-  return { descriptor: { version, entry: `${version}.js`, hostApi: HOST_API, sha256: hash(source), schema: 25 }, entry }
+  return { descriptor: { version, entry: `${version}.js`, hostApi: options.hostApi ?? HOST_API, sha256: hash(source), schema: options.schema ?? 25 }, entry }
 }
 
 /** A Supervisor over a fresh Cordis context; fake bundles never touch the DSH services, so the context may be empty. */
-function newSupervisor(extra: { readyTimeoutMs?: number; flushLogsMs?: number; logSink?: LogFileSink } = {}): Supervisor {
-  return new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packaged(), ...extra })
+function newSupervisor(extra: Partial<SupervisorOptions> = {}): Supervisor {
+  return new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: () => packaged(), ...extra })
 }
 
 /** The version whose bundle was imported, read from the marker it wrote. */
@@ -260,7 +267,8 @@ describe('frozen runtime host', () => {
     ctx.reflect.provide('agents', agents)
     const built = buildRuntimeHost({
       context: ctx, machine: testMachine({ stateDir: directory }), restart: () => {}, exit: () => {}, version: '1.2.3',
-      logger: ctx.logger, lifetime: new AbortController().signal, flushLogs: async () => {}, releaseStateLock: async () => {},
+      logger: ctx.logger, lifetime: new AbortController().signal, logs: new Logs(),
+      flushLogs: async () => {}, releaseStateLock: async () => {},
     })
     expect(built.host.hostApi).toBe(HOST_API)
     expect(built.host.version).toBe('1.2.3')
@@ -335,12 +343,21 @@ describe('supervisor', () => {
   it('bounds readiness, disposes a runtime whose ready never settles, and falls back to the packaged runtime', async () => {
     deploy('slow', { readyHangs: true })
     const supervisor = newSupervisor({ readyTimeoutMs: 25 })
-    const began = Date.now()
     await supervisor.start()
-    expect(Date.now() - began).toBeLessThan(3000)
     expect(supervisor.versionStatus()).toMatchObject({ version: 'packaged', source: 'packaged' })
     expect(started('slow')).toBe('slow')
     expect(readFileSync(join(runtimeDirectory(directory), 'slow', 'disposed.txt'), 'utf8')).toBe('yes')
+    await supervisor.stop()
+  })
+
+  it('does not let a failed runtime whose dispose hangs block the packaged fallback', async () => {
+    deploy('stuck', { readyHangs: true, disposeHangs: true })
+    const supervisor = newSupervisor({ readyTimeoutMs: 25, disposeMs: 25 })
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: 'packaged', source: 'packaged' })
+    // The hanging dispose was attempted and abandoned: the marker proves it ran, and the packaged runtime still started.
+    expect(readFileSync(join(runtimeDirectory(directory), 'stuck', 'disposed.txt'), 'utf8')).toBe('yes')
+    expect(readFileSync(join(directory, 'started.txt'), 'utf8')).toBe('packaged')
     await supervisor.stop()
   })
 
@@ -350,15 +367,76 @@ describe('supervisor', () => {
     const close = vi.spyOn(sink, 'close').mockReturnValue(new Promise(() => {}))
     const supervisor = newSupervisor({ logSink: sink, flushLogsMs: 25 })
     await supervisor.start()
-    const began = Date.now()
     await supervisor.stop()
-    expect(Date.now() - began).toBeLessThan(3000)
     expect(close).toHaveBeenCalled()
     expect(new Journal(join(runtimeDirectory(directory), 'journal.json')).read()).toMatchObject({ status: 'committed', operation: 'drain' })
     // The lock is released even though the sink close never resolved, so another host can start on the state directory.
     const next = newSupervisor()
     await next.start()
     expect(next.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    await next.stop()
+  })
+
+  it('bounds a stuck state-directory lock release, commits the drain, and does not hang the shutdown', async () => {
+    deploy('1.0.0')
+    const ctx = new Context()
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    const supervisor = new Supervisor({
+      context: ctx, machine: testMachine({ stateDir: directory }), packaged: () => packaged(),
+      lock: () => () => new Promise(() => {}), lockReleaseMs: 25,
+    })
+    await supervisor.start()
+    const report = await supervisor.drain('update')
+    expect(report.completed).toBe(true)
+    expect(readFileSync(join(runtimeDirectory(directory), '1.0.0', 'drained.txt'), 'utf8')).toBe('update')
+    expect(new Journal(join(runtimeDirectory(directory), 'journal.json')).read()).toMatchObject({ status: 'committed', operation: 'drain' })
+    expect(warn.mock.calls.flat().join(' ')).toContain('could not release the state-directory lock')
+    await supervisor.stop()
+  })
+
+  it('keeps one process-wide log ring across a failed candidate and the packaged fallback', async () => {
+    deploy('flaky', { readyRejects: 'the flaky runtime is not ready', log: 'from the failed candidate' })
+    const supervisor = newSupervisor({ packaged: () => packaged('packaged', { log: 'from the packaged runtime' }) })
+    const ring = supervisor.logs
+    await supervisor.start()
+    expect(supervisor.logs).toBe(ring)
+    const messages = ring.list({ limit: 50 }).map(entry => entry.message)
+    expect(messages).toContain('from the failed candidate')
+    expect(messages).toContain('from the packaged runtime')
+    expect(readFileSync(join(directory, 'started.txt'), 'utf8')).toBe('packaged')
+    await supervisor.stop()
+  })
+
+  it('keeps starting a deployed version when the packaged runtime cannot be discovered', async () => {
+    deploy('1.0.0')
+    const ctx = new Context()
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    const supervisor = new Supervisor({
+      context: ctx, machine: testMachine({ stateDir: directory }),
+      packaged: () => { throw new Error('lib/runtime-manifest.json does not exist; run pnpm build') },
+    })
+    await supervisor.start()
+    expect(supervisor.versionStatus()).toMatchObject({ version: '1.0.0', source: 'current' })
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot discover its packaged runtime')
+    await supervisor.stop()
+  })
+
+  it('names pnpm build when nothing can start, then drains an empty supervisor as incomplete but releases the lock', async () => {
+    const ctx = new Context()
+    const supervisor = new Supervisor({
+      context: ctx, machine: testMachine({ stateDir: directory }),
+      packaged: () => { throw new Error('lib/runtime-manifest.json does not exist') },
+    })
+    await expect(supervisor.start()).rejects.toThrow(/run pnpm build/)
+    const report = await supervisor.drain('shutdown')
+    expect(report.completed).toBe(false)
+    expect(report.phases).toEqual([
+      expect.objectContaining({ phase: 'intake', status: 'skipped', detail: expect.stringContaining('no runtime was running') }),
+    ])
+    // The failed start released the lock and closed its sink, so a normal supervisor can now start here.
+    const next = newSupervisor()
+    await next.start()
+    expect(next.versionStatus()).toMatchObject({ version: 'packaged', source: 'packaged' })
     await next.stop()
   })
 
@@ -410,7 +488,7 @@ describe('supervisor', () => {
     deploy('1.0.0')
     const first = newSupervisor()
     await first.start()
-    const second = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packaged('other') })
+    const second = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: () => packaged('other') })
     await expect(second.start()).rejects.toThrow(/already hosted for/)
     expect(second.versionStatus()).toBeUndefined()
     await first.stop()

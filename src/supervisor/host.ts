@@ -34,6 +34,8 @@ export interface HostBuildOptions {
   flushLogs: () => Promise<void>
   /** Releases the state-directory lock exactly once. */
   releaseStateLock: () => Promise<void>
+  /** The supervisor-owned process-wide ring; it survives failed candidates and version switches (ADR-0006). */
+  readonly logs: Logs
   /** Test seam: a sink the supervisor owns across candidates instead of a fresh one beneath the state directory. */
   readonly logSink?: LogFileSink
   /** Retention used before the runtime supplies the setting it owns. */
@@ -50,12 +52,12 @@ export interface BuiltHost {
 }
 
 /**
- * Create the ring and the durable sink, then the host that exposes them. The runtime attaches the sink once settings exist;
- * the supervisor never attaches it itself, so entries recorded before the runtime's settings load stay in the ring only,
- * exactly as they did when the runtime owned the sink.
+ * Build the durable sink and the host that exposes it and the supervisor's ring. The runtime attaches the sink once settings
+ * exist; the supervisor never attaches it itself, so entries recorded before the runtime's settings load stay in the ring
+ * only, and entries from a failed candidate stay visible to the next one.
  */
 export function buildRuntimeHost(options: HostBuildOptions): BuiltHost {
-  const logs = new Logs()
+  const logs = options.logs
   let logState: ((state: 'ready' | 'error', detail: string) => void) | undefined
   let retention: (() => number) | undefined
   const logSink = options.logSink ?? new LogFileSink({

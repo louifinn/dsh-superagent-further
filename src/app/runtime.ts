@@ -850,8 +850,9 @@ export class Runtime implements SourceHost, RuntimeHandle {
   /**
    * Runs the drain contract once: stop intake, cancel the remaining agents, wait bounded for in-flight work, dispose the
    * composition, flush the durable log, close the Store and release the state-directory lock. A later call returns the first
-   * report. A failed or skipped phase is recorded and the later phases still run; `completed` is true only when every phase
-   * is `done`.
+   * report. Only the intake/cancel/in-flight stages may be skipped by an aborted signal; the maintenance phases (dispose,
+   * logs, store, lock) always run. A failed or skipped phase is recorded and the later phases still run; `completed` is true
+   * only when every phase is `done`.
    */
   drain(reason: string, signal?: AbortSignal): Promise<DrainReport> {
     return this.stopping ??= this.shutdown(reason, signal)
@@ -872,9 +873,9 @@ export class Runtime implements SourceHost, RuntimeHandle {
   private async shutdown(reason: string, signal?: AbortSignal): Promise<DrainReport> {
     const startedAt = now(); const began = Date.now()
     const phases: DrainPhaseReport[] = []
-    const phase = async (name: DrainPhase, run: () => void | Promise<void>): Promise<void> => {
+    const phase = async (name: DrainPhase, run: () => void | Promise<void>, skippable = false): Promise<void> => {
       const at = now(); const tick = Date.now()
-      if (signal?.aborted) {
+      if (skippable && signal?.aborted) {
         phases.push({ phase: name, status: 'skipped', startedAt: at, durationMs: 0, detail: 'the drain signal was already aborted' })
         return
       }
@@ -892,14 +893,14 @@ export class Runtime implements SourceHost, RuntimeHandle {
     await phase('intake', () => {
       this.detachIncidentLogs?.(); this.detachIncidentLogs = undefined; this.incidentsReady = false
       passes = this.passes.stop(); this.stopped.abort()
-    })
+    }, true)
     let agents: Agent[] = []
     await phase('cancel', () => {
       this.assessor.stop()
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
       agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
       for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
-    })
+    }, true)
     await phase('in-flight', async () => {
       // The lifetime abort ends a waiting diagnosis; its dispatch is disposed and the record stays bundled for a retry.
       let timedOut: Error | undefined
@@ -913,7 +914,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       // The executor's own shutdown is bounded, so a stuck orchestration task still cannot keep the later phases from running.
       await this.executor.shutdown()
       if (timedOut !== undefined) throw timedOut
-    })
+    }, true)
     await phase('dispose', async () => {
       try {
         this.executor.dispose()

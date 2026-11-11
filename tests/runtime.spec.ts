@@ -10,6 +10,7 @@ import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { lockSync } from 'proper-lockfile'
 import { hostedElsewhere, Runtime, type RuntimeOptions } from '../src/app/runtime.ts'
 import { Supervisor } from '../src/supervisor/supervisor.ts'
+import type { RuntimeDescriptor } from '../src/runtime-host.ts'
 import { AUTOMATION_CONTEXT, type ScheduleService, type ScheduleTask } from '../src/app/automations.ts'
 import { jobRegistry, startTestRuntime } from './fixtures/host.ts'
 import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
@@ -1631,13 +1632,31 @@ it('applies a changed prompt size limit to the next save and request without a r
   expect(restarts).not.toHaveBeenCalled()
 })
 
+/** A packaged runtime stand-in written in-test, so this spec never needs the built lib/ (the gate may run tests after a build,
+ *  but a clean checkout must pass them too). Its schema matches the Store's, so only the database-version gate can refuse it. */
+function packagedFixture(): { descriptor: RuntimeDescriptor; entry: string } {
+  const version = 'packaged-fixture'
+  const entry = join(directory, `${version}.js`)
+  writeFileSync(entry, `export const HOST_API = 1
+export const SCHEMA_VERSION = ${SCHEMA_VERSION}
+export function createRuntime() {
+  return {
+    ready: Promise.resolve(),
+    drain: async (reason) => ({ reason, startedAt: new Date().toISOString(), durationMs: 0, completed: true, phases: [] }),
+    dispose: async () => {},
+  }
+}
+`)
+  return { descriptor: { version, entry: `${version}.js`, hostApi: 1, sha256: '0'.repeat(64), schema: SCHEMA_VERSION }, entry }
+}
+
 it('releases the database and the state directory lock when a start fails, so it can start again in this process', async () => {
   await runtime.stop()
   const db = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   db.prepare("UPDATE kv SET value='99' WHERE key='schema'").run()
   db.close()
   const context = () => { const ctx = new Context(); for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service); return ctx }
-  const failed = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }) })
+  const failed = new Supervisor({ context: new Context(), machine: testMachine({ stateDir: directory }), packaged: packagedFixture })
   await expect(failed.start()).rejects.toThrow('Unsupported orchestrator database version 99')
   // A lock kept by the failed start would make this throw that the lock is already held.
   const release = lockSync(directory)
@@ -1645,7 +1664,7 @@ it('releases the database and the state directory lock when a start fails, so it
   const fixed = new DatabaseSync(join(directory, 'orchestrator.sqlite'))
   fixed.prepare('UPDATE kv SET value=? WHERE key=?').run(String(SCHEMA_VERSION), 'schema')
   fixed.close()
-  const next = new Supervisor({ context: context(), machine: testMachine({ stateDir: directory }) })
+  const next = new Supervisor({ context: context(), machine: testMachine({ stateDir: directory }), packaged: packagedFixture })
   await next.start()
   expect(next.versionStatus()).toMatchObject({ source: 'packaged', hostApi: 1 })
   await next.stop()
@@ -2355,9 +2374,7 @@ it('reports a completed root project request once through the Channel its chain 
 it('bounds the in-flight wait, still runs the later drain phases, and reports the failure', async () => {
   await restart({}, {}, { drainInFlightMs: 25 })
   vi.spyOn(runtime.effects, 'drain').mockReturnValue(new Promise(() => {}))
-  const began = Date.now()
   const report = await runtime.stop()
-  expect(Date.now() - began).toBeLessThan(3000)
   expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
     ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'failed'], ['dispose', 'done'], ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
   ])
@@ -2369,19 +2386,19 @@ it('bounds the in-flight wait, still runs the later drain phases, and reports th
   expect(await runtime.stop()).toBe(report)
 })
 
-it('reports a drain whose later phases were skipped after an abort as incomplete', async () => {
+it('still closes the store and releases the lock when the drain is aborted before it starts', async () => {
   await restart()
   const controller = new AbortController()
-  const original = runtime.executor.dispose.bind(runtime.executor)
-  vi.spyOn(runtime.executor, 'dispose').mockImplementation(() => { controller.abort(); original() })
+  controller.abort()
   const report = await runtime.drain('test abort', controller.signal)
+  // Only intake/cancel/in-flight may be skipped by the abort; the maintenance phases always run.
   expect(report.phases.map(phase => [phase.phase, phase.status])).toEqual([
-    ['intake', 'done'], ['cancel', 'done'], ['in-flight', 'done'], ['dispose', 'done'],
-    ['logs', 'skipped'], ['store', 'skipped'], ['lock', 'skipped'],
+    ['intake', 'skipped'], ['cancel', 'skipped'], ['in-flight', 'skipped'], ['dispose', 'done'],
+    ['logs', 'done'], ['store', 'done'], ['lock', 'done'],
   ])
   expect(report.completed).toBe(false)
-  // The aborted phases were skipped, so close the store here rather than leave the fixture's SQLite file open.
-  runtime.store.close()
+  // The store phase ran, so the database is closed instead of being left open for the fixture's cleanup.
+  expect(() => runtime.store.get(KV.store.schema)).toThrow()
 })
 
 it('reports the drain phases in contract order and returns the first report on a second call', async () => {

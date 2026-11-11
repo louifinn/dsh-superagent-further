@@ -24,11 +24,13 @@ leave a supervisor that can decide what to start, without ever handing a newer d
 
 1. **The supervisor is the stable shell; the domain runtime is a versioned bundle.** `src/index.ts` (the Cordis entry)
    constructs one `Supervisor` from `src/supervisor/supervisor.ts`. The supervisor owns the machine configuration
-   (`src/supervisor/config.ts`), the state-directory lock, the `Logs` ring and `LogFileSink`, version resolution, the
-   crash journal and the drain controller. It owns nothing domain-specific. It exposes readiness, not a separate health
-   probe: `configured()`/`setupProblem()` report the runtime's settings gate, `versionStatus()` reports what started and
-   from where, and the runtime's own `HealthBoard` remains the health surface. `src/app/runtime.ts` stays the composition
-   root of the domain, but it is now reached only through `src/runtime-entry.ts`'s `createRuntime(host)`.
+   (`src/supervisor/config.ts`), the state-directory lock, one process-wide `Logs` ring and its `LogFileSink`, version
+   resolution, the crash journal and the drain controller. The ring is created once and shared by every candidate and
+   every version, so entries from a failed start stay visible after the fallback; no attempt creates or replaces it. The
+   supervisor owns nothing domain-specific. It exposes readiness, not a separate health probe: `configured()`/
+   `setupProblem()` report the runtime's settings gate, `versionStatus()` reports what started and from where, and the
+   runtime's own `HealthBoard` remains the health surface. `src/app/runtime.ts` stays the composition root of the domain,
+   but it is now reached only through `src/runtime-entry.ts`'s `createRuntime(host)`.
 
 2. **`RuntimeHost` v1 is a frozen, value-complete interface.** `src/runtime-host.ts` exports `HOST_API = 1`, the host
    interface, the handle and the `DrainReport`. The supervisor builds the host from the live Cordis context and passes:
@@ -64,21 +66,30 @@ leave a supervisor that can decide what to start, without ever handing a newer d
    `createRuntime`, integer `SCHEMA_VERSION` and handle shape (`ready` is thenable, `drain` and `dispose` are functions).
    A load or initialization failure disposes whatever it created, journals that phase (`load` or `init`), and tries
    the next candidate. Readiness is bounded too (`READY_TIMEOUT_MS = 30 s`): a `ready` that never settles is disposed and
-   treated as an initialization failure, so the fallback can proceed. The packaged runtime is the last resort and is
-   always present in a built package; a broken deployment is therefore a warning and a fallback, never a supervisor that
-   refuses to start.
+   treated as an initialization failure, so the fallback can proceed. That dispose is bounded as well
+   (`DISPOSE_MS = 10 s`): a hung `dispose` is warned about and abandoned instead of blocking the next candidate. The
+   packaged runtime is the last resort and is always present in a built package; a broken deployment is therefore a
+   warning and a fallback, never a supervisor that refuses to start. A source checkout that has not been built is a
+   different case: a failure to discover the packaged runtime is logged as a warning and boot continues with the
+   journal/current/previous candidates, and only when no candidate starts does the final error name `pnpm build` as the
+   likely cause.
 
 5. **The drain is a fixed, idempotent contract.** The runtime's `drain(reason, signal?)` records and performs the phases
    in this order: stop intake (passes, Sources, new HTTP work), cancel the remaining agents as
    `{kind:'user'}, {keepInbox:true}`, wait for in-flight effects, the outbox and assignments with an unref'd bound
    (`DRAIN_IN_FLIGHT_MS = 10 s`; on expiry the phase fails and the later phases still run), dispose the
-   components, flush the LogFileSink, close the Store, release the state-directory lock. It returns one report with each
-   phase's status, start and duration, and `completed`, which is true only when every phase is `done`; a failed or
-   skipped phase makes it false. A second call returns the first report and does nothing. Normal shutdown and M36's
-   update path reuse it. The supervisor's `DrainController` writes the journal's `drain` phase, awaits the handle's
-   report, finishes the flush and lock release (each bounded by `FLUSH_LOGS_MS = 10 s` and warn-only), and only then
-   commits or fails the journal, so a crash cannot record a clean drain before the lock is released; the runtime never
-   writes the journal and never releases the lock itself.
+   components, flush the LogFileSink, close the Store, release the state-directory lock. The abort signal may skip only
+   the intake, cancel and in-flight stages: `dispose`, `logs`, `store` and `lock` always run, so an aborted drain still
+   closes the database and releases the lock instead of leaking them. It returns one report with each phase's status,
+   start and duration, and `completed`, which is true only when every phase is `done`; a failed or skipped phase makes it
+   false. A second call returns the first report and does nothing. Normal shutdown and M36's update path reuse it. The
+   supervisor's `DrainController` writes the journal's `drain` phase, awaits the handle's report, finishes the flush and
+   lock release, and only then commits or fails the journal, so a crash cannot record a clean drain before the lock is
+   released; the runtime never writes the journal and never releases the lock itself. The log flush is bounded by
+   `FLUSH_LOGS_MS = 10 s` and the lock release by `LOCK_RELEASE_MS = 10 s`; both warn and continue, so a stuck sink or a
+   stuck lock cannot keep the journal from being committed or keep the process from exiting. Draining a supervisor that
+   never started (no candidate came up) returns `completed: false` with a skipped intake phase and the reason, but still
+   flushes the sink and releases the lock.
 
 6. **The crash journal makes a swap recoverable at every point.** `<stateDir>/runtime/journal.json` holds
    `{api:1, status:'running'|'committed'|'failed', operation:'startup'|'drain', phase, steps, current, previous,
@@ -94,8 +105,13 @@ leave a supervisor that can decide what to start, without ever handing a newer d
 7. **The split is documented and tested without changing the database.** Schema stays 25. `tests/supervisor.spec.ts`
    covers valid/missing/invalid/hash-mismatch/host-API-mismatch pointers, escaping entries, schema downgrades, loader
    import/export failures, the packaged manifest (including a missing/invalid one, which names `pnpm build`), the host
-   descriptor freeze, a bounded readiness timeout with fallback, the bounded sink close, crash recovery and one
-   start/swap/drain; `tests/runtime.spec.ts` covers the bounded in-flight phase and the incomplete report after an abort.
+   descriptor freeze, a bounded readiness timeout with fallback, a bounded hanging dispose, the bounded sink close, the
+   bounded lock release, one ring kept across a failed candidate, packaged discovery failure at boot, an empty drain that
+   is incomplete yet releases everything, crash recovery and one start/swap/drain; `tests/runtime.spec.ts` covers the
+   bounded in-flight phase, the incomplete report after an abort, and a drain aborted before it starts still closing the
+   store and releasing the lock. Both suites inject a packaged runtime, so they never need `lib/` and pass on a clean
+   checkout; `pnpm check` nevertheless builds before it tests (`typecheck && architecture:check && build && test &&
+   runtime:check && pack:check && docs:check`) so the artifact checks always see a fresh bundle.
    The runtime suites build their host through `tests/fixtures/host.ts` and keep passing. docs/003, 005, 006, 007, 009,
    011 and 013 describe the visible behavior, and the package's manifest is updated for the new `lib/` files.
 

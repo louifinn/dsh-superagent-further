@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { Runtime, type RuntimeOptions } from '../../src/app/runtime.ts'
+import { Logs } from '../../src/app/logs.ts'
 import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
@@ -459,6 +460,7 @@ export function startTestRuntime(ctx: Context, machine: Machine, restart: () => 
   built = buildRuntimeHost({
     context: ctx, machine, restart, exit: () => {}, version: VERSION, logger: ctx.logger,
     lifetime: new AbortController().signal,
+    logs: new Logs(),
     flushLogs: async () => { await built!.logSink.close() },
     releaseStateLock: async () => {},
   })

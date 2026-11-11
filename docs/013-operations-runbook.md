@@ -110,7 +110,8 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   and outbound delivery while Sources and health transitions still log. A copy taken while the Host runs (paused or
   not) may gain lines, so treat it as a best-effort backup rather than a consistent snapshot.
 - `<stateDir>/runtime/` holds the versioned runtime: `current.json` and `previous.json` descriptors (M35 reads `previous.json`; the update pipeline in M36 writes it), one directory per
-  deployed version, and `journal.json`. It belongs in a backup with the database; do not edit a pointer or a version
+  deployed version, and `journal.json`. The packaged runtime it falls back to lives beside the installed package in
+  `lib/runtime-entry.js` and `lib/runtime-manifest.json`. The runtime directory belongs in a backup with the database; do not edit a pointer or a version
   directory while the Host runs, and never hand-edit a hash to make a bundle verify.
 - Worktrees live under `<stateDir>/work`; `scripts/clean-worktrees` prunes finished ones by age. Do not delete a
   worktree of an open Ticket; its assignment is the only record of the checkout.
@@ -135,7 +136,13 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   `<stateDir>/runtime/journal.json` for the recorded phase and recovery note. Fix the deployment or remove
   `current.json` while the Host is stopped to start the packaged runtime; M35 writes no `previous.json`, so without one
   that fallback is the packaged runtime. Do not delete `previous.json` if it is the last
-  known-good version.
+  known-good version. A source checkout that was never built logs a warning that the packaged runtime cannot be
+  discovered and still starts a verified deployed version; when no candidate starts, the error names `run pnpm build`.
+- **The Host hangs while stopping**: each wait is bounded and warn-only — the in-flight drain wait (10 s), a failed
+  runtime's dispose (10 s), the durable log flush (10 s) and the state-directory lock release (10 s). The phase report
+  records the expiry, the journal is still committed, and the Store is closed and the lock released whenever the drain
+  reached those phases. A maintenance phase is never skipped by an abort signal; only intake, cancel and in-flight may
+  be. If `journal.json` still says `running`, the next start recovers it.
 - **The journal says `running`**: the previous process stopped during `startup` or `drain`. The next start recovers by
   preferring the recorded current version when it still verifies, then the previous verified version, then the packaged
   runtime, and records the recovery. Do not edit the journal or the database schema by hand; a runtime whose schema is
