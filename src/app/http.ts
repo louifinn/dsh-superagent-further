@@ -28,6 +28,7 @@ import type { Store } from './store.ts'
 import type { LeadRow, DeliveryFailure } from './views/overview.ts'
 import type { SelfReports } from './self-reports.ts'
 import { requireIncident, type Incidents } from './incidents.ts'
+import type { Diagnosis } from './diagnosis.ts'
 import type { IncidentFilter } from '../core/incidents.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
@@ -65,6 +66,8 @@ export interface HttpHost {
   readonly selfReports: SelfReports
   /** Deterministic incident records and their evidence bundles (ADR-0004). */
   readonly incidents: Incidents
+  /** Bounded read-only diagnosis of incidents (ADR-0005). */
+  readonly diagnosis: Diagnosis
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -123,6 +126,10 @@ function failure(error: unknown): [number, Record<string, unknown>] {
     return [error.code === 'schedule_not_found' ? 404 : 409, { error: error.message, code: error.code }]
   }
   if (error instanceof AutomationLimitError) return [400, { error: error.message }]
+  // A closed record cannot be dismissed twice; that is a lifecycle conflict, not a malformed body.
+  if (error instanceof UserError && error.code === 'incidentTransition') {
+    return [409, { error: error.message, code: error.code, values: error.values }]
+  }
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
   if (error instanceof SettingsRevisionNotFound) return [404, { error: error.message }]
   if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
@@ -425,6 +432,39 @@ function routes(runtime: HttpHost): Routes {
       // `requireIncident` raises `incidentUnknown`, which the failure mapper turns into the one missing-record 404.
       const incident = requireIncident(runtime.store.incidents, params.id)
       return runtime.incidents.detail(incident.id)!
+    },
+    // The operator's incident actions (ADR-0005). The diagnosis service owns every side effect and every refusal; this layer
+    // only translates them and writes one metadata-only audit line: action, ids and outcome, never the diagnosis text.
+    'POST incidents/:id/diagnose': async ({ params }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      const result = await runtime.diagnosis.diagnose(incident.id)
+      if (result.status === 'refused') {
+        if (result.reason === 'unknown') throw new RouteError(404, 'Incident not found')
+        throw new RouteError(409, `The diagnosis was refused: ${result.reason}`)
+      }
+      audit('incident.diagnose', { incident: incident.id, status: result.incident.status,
+        confidence: result.diagnosis.confidence, target: result.diagnosis.target.kind,
+        ...(result.resolution === undefined ? {} : { resolution: result.resolution }) })
+      return result
+    },
+    'POST incidents/:id/dismiss': async ({ params, body }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      const { reason } = z.object({ reason: z.string().trim().min(1).max(280) }).parse(await body())
+      const dismissed = runtime.incidents.dismiss(incident.id, reason)
+      audit('incident.dismiss', { incident: incident.id, status: dismissed.status })
+      return { incident: dismissed }
+    },
+    // Creating work is a second, explicit step: the diagnosis alone never creates a Request or an Issue for an operator.
+    'POST incidents/:id/route': async ({ params, body }) => {
+      const incident = requireIncident(runtime.store.incidents, params.id)
+      z.object({ confirm: z.literal(true) }).parse(await body())
+      const result = await runtime.diagnosis.route(incident.id, { manual: true })
+      if (result.status === 'refused') {
+        if (result.reason === 'unknown') throw new RouteError(404, 'Incident not found')
+        throw new RouteError(409, `The route was refused: ${result.reason}`)
+      }
+      audit('incident.route', { incident: incident.id, resolution: result.resolution, status: result.incident.status })
+      return result
     },
     'GET automations': () => automationsPage(runtime),
     'POST automations': async ({ body }) => {

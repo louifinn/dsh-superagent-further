@@ -24,7 +24,8 @@ deployment commands in [006 Deployment](006-deployment.md) and the data model in
 4. Run `node scripts/verify-install --state-dir <dir>`; it prints the schema version, the enabled blocks and the
    Source setup problems, and exits non-zero while setup is incomplete.
 5. Open the **Incidents** tab and work through any open record. The host creates and dedupes them without a model
-   call; the next section says where the evidence lives and what the settings gate controls.
+   call, the **Diagnose** action interprets one read-only within the day's budget, and the next section says where
+   the evidence lives, how a diagnosis becomes a Request or a self-report, and what the settings gate controls.
 
 ## Incidents
 
@@ -45,13 +46,49 @@ watches four signals it already has — failed or stopped Assignment ends, the o
   30 days are kept; a record whose bundle could not be written stays `detected` with no evidence, and the `incidents`
   health claim turns to `error` — a detection failure never breaks a pass.
 - **Noise controls**: **Execution → Settings → Incident detection** (tier C, panel or API only) sets `enabled`, the
-  daily budget of new records (default 2), the minimum severity (default `high`) and the reserved `autoDiagnose`
-  switch. Repeats of one condition count occurrences and do not use the budget; a resolved or dismissed record stays
-  quiet for a one-hour cooldown and then reopens. A health flip and a stalled Assignment are recorded at high severity
-  even after the daily budget is spent; fingerprint dedupe, the cooldown and the open-record cap still apply to them.
-- **What is not there yet**: detection makes no model call and changes no code or Ticket, and this release has no
-  diagnose or dismiss buttons. The reserved `autoDiagnose` setting is consumed by M34's read-only diagnoser, and the
-  `update-failures` rule by M36.
+  daily budget of new records (default 2), the diagnosis budget of attempts (default 2, `diagnoseDailyBudget`), the
+  minimum severity (default `high`) and `autoDiagnose`. Repeats of one condition count occurrences and do not use the
+  detection budget; a resolved or dismissed record stays quiet for a one-hour cooldown and then reopens. A health flip
+  and a stalled Assignment are recorded at high severity even after the daily budget is spent; fingerprint dedupe, the
+  cooldown and the open-record cap still apply to them.
+- **Diagnosis**: a `detected` or `bundled` record can be diagnosed read-only by the **Diagnose** button, the
+  `orchestrator_incident` tool (`{action: "diagnose", id}`) or `POST incidents/<id>/diagnose`; a `diagnosed` record
+  can only be routed, dismissed or resolved. Auto-diagnosis runs by default for `high` and
+  `critical` records once they are bundled; it is on only while `autoDiagnose` is on, the severity is at or above
+  `minimumSeverity`, and the day's attempt budget is not spent. Every attempt counts, including a timeout, so a spent
+  budget refuses until the next UTC day; a manual diagnosis and an automatic one share the same budget and there is
+  one run at a time. Start and result together are bounded to 10 minutes: a start that overruns aborts the signal and
+  disposes a late activation once, a result timeout disposes the activation it holds, and either one logs a warning in
+  the `diagnosis` scope, turns the `incidents` health claim to `error`, and leaves the record retryable. A completion
+  that finds the record dismissed, resolved, reopened or counted again while it ran is refused as `stale` (one
+  `diagnosis` warning, no health error) and the newer record wins, so a slow run never resurrects a closed record or
+  loses occurrences. The diagnosis appears on the detail with its root cause, evidence, hypotheses, fix
+  plan, confidence and target; an unparseable answer is kept as a low-confidence diagnosis and is not routable.
+- **Creating fix work**: **Create fix** (or `{action: "route", id, confirm: true}` / `POST incidents/<id>/route` with
+  `{"confirm": true}`) routes a current diagnosed record with a parsed diagnosis once; reopening a record keeps the
+  old diagnosis text but clears the token, so routing it is refused until it is diagnosed again. A registered project
+  becomes a discovery Request — the Lead turns it into Tickets and the normal PR and human-merge flow applies — and the
+  detail links to it (`request:<id>`). A `self` finding, or a `project` that is not registered, becomes a discovery
+  Request under the registered self project when there is one (`request:<id>`); otherwise it goes to the
+  self-evolution outlet as a draft or an Issue depending on the `eval.selfReport` gate (`self-report:<id>`, or
+  `self-report:off` when the gate is off). The Issue outlet refuses jurisdiction while the self repository is
+  registered, which is exactly why that case takes the Request path instead. An operational conclusion creates no
+  Request and no Issue; it stays on the record (`operational`). One route runs at a time per record: an overlapping
+  automatic, panel, HTTP or tool call is refused as `concurrent` (HTTP 409) and creates nothing. If the record is
+  dismissed, resolved or counted again while the route awaits the work item, settlement is refused as `conflict`
+  (HTTP 409): the newer record and its dismissal or recovery reason survive, and any work already created is named in
+  one `diagnosis.route-conflict` warning, never recorded as the resolution and never deleted. If an automatic route
+  failed the resolution is empty and the button retries it; the reservation is released afterwards, so the retry is
+  never blocked. A failed route logs one warning in the `diagnosis` scope and never creates a second route for the
+  same record.
+- **Dismiss and audit**: **Dismiss** requires a reason and records `Dismissed: <reason>` on the record; the detail
+  shows the reason through the localized dismissal key, and a second dismissal is refused. Diagnose, Create fix and
+  Dismiss are audited in the Logs tab under `audit` with the action (`incident.diagnose`, `incident.route`,
+  `incident.dismiss`), the incident id, status, confidence, target and the created resolution token
+  (`request:<id>`, `self-report:<id>`, `self-report:off` or `operational`) — never the diagnosis prose or the evidence.
+  The diagnose response carries the same token so a caller learns the work id the automatic route created.
+- **What this does not do**: detection and diagnosis make no code change, retry no Ticket and merge nothing, and an
+  operational conclusion never becomes an Issue. The `update-failures` rule remains reserved for M36.
 - **Schema**: records live in the `incident` table of schema 25. A schema 24 database migrates on start with the
   table created empty; no backfill invents historical incidents. The table is not part of `archive-state` beyond the
   database copy, and the evidence bundles live outside the database, so copy `<workspace>/artifacts/incidents`

@@ -1199,6 +1199,145 @@ Parameters:
 }
 ```
 
+### `orchestrator_incident`
+
+List, read and act on operational incidents: deterministic records of detectable trouble in the installation, with a bounded read-only diagnosis. Please use list or get first. diagnose asks the read-only diagnostician Session for a root cause and a fix plan within the daily budget; dismiss closes a record with a reason; route creates the follow-up work once, after diagnosis, and only when you confirm it. Never use this tool to fix anything yourself.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "list"
+        },
+        "status": {
+          "description": "Only incidents in this status; omit or open for the ones still live.",
+          "type": "string",
+          "enum": [
+            "open",
+            "detected",
+            "bundled",
+            "diagnosed",
+            "resolved",
+            "dismissed",
+            "all"
+          ]
+        },
+        "severity": {
+          "description": "Only incidents at this severity.",
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "limit": {
+          "description": "How many records to return (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "get"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "diagnose"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "dismiss"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280,
+          "description": "Why a person decided the record needs no work."
+        }
+      },
+      "required": [
+        "action",
+        "id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "route"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confirm": {
+          "description": "Must be true: creating a Request hands engineering work to a Lead, and filing an Issue reports a superagent finding.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
+```
+
 ### `orchestrator_escalations`
 
 List escalated project requests: work a project Lead escalated to the Orchestrator because it belongs outside its own project. Decide each one with orchestrator_escalation_decide so the Lead receives the mandatory reply.
@@ -2493,4 +2632,4 @@ Parameters:
 
 ## Total
 
-48 distinct tools across 5 groups (55 registrations).
+49 distinct tools across 5 groups (56 registrations).

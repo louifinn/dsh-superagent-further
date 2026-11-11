@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { LEAD_PRESET, ROUTER_PRESET, WORKER_PRESET } from '../src/app/sessions.ts'
+import { LEAD_PRESET, DIAGNOSTICIAN_PRESET, ROUTER_PRESET, WORKER_PRESET } from '../src/app/sessions.ts'
 
 interface Row { id?: string; name: string; disabled?: unknown; config?: Record<string, unknown> & { plugins?: Row[] } | Row[] }
 /** The patch as DSH reads it: Cordis's include plugin parses `!!js` scalars, and applies the inserts to an entry list. */
@@ -29,7 +29,8 @@ const presetOf = (rows: readonly Row[], id: string) => rows.map(row => row.confi
 it('defines the worker preset Executor Sessions run under, with a shell that moves long commands to the background', async () => {
   const rows = await patched()
   expect(rows.map(row => row.id)).toEqual(['dsh-superagent-further', 'dsh-superagent-further-github', 'dsh-superagent-further-feishu', 'dsh-superagent-further-worker-preset',
-    'dsh-superagent-further-router-preset', 'dsh-superagent-further-lead-preset', 'dsh-superagent-further-reviewer-preset'])
+    'dsh-superagent-further-router-preset', 'dsh-superagent-further-lead-preset', 'dsh-superagent-further-reviewer-preset',
+    'dsh-superagent-further-diagnostician-preset'])
   const preset = presetOf(rows, WORKER_PRESET)
   expect(preset.id).toBe(WORKER_PRESET)
   const plugins = flat(preset.plugins)
@@ -98,4 +99,24 @@ it('defines the project Lead preset: read-only files, code search, and delegatio
     '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-plan-mode', '@deepseek-ai/dsh-plugin-manager/tools',
     '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal', '@deepseek-ai/dsh-command-goal'])
     expect(names, name).not.toContain(name)
+})
+
+it('defines the read-only diagnostician preset: files can be read, and nothing can be written, run or delegated', async () => {
+  const rows = await patched()
+  const preset = presetOf(rows, DIAGNOSTICIAN_PRESET)
+  expect(preset.order).toBe(95)
+  const plugins = flat(preset.plugins)
+  const named = (name: string) => plugins.filter(row => row.name === name).map(row => row.config)
+  // The whole inventory: the Session instructions, the clock, and file tools that only read. No shell, jobs, search,
+  // delegation, scheduling, goals, plan mode, profile changes, web, todo, questions, presentation or compaction.
+  expect(plugins.map(row => row.name).sort()).toEqual(['@deepseek-ai/dsh-agent-instructions', '@deepseek-ai/dsh-time-context',
+    '@deepseek-ai/dsh-tool-fs'].sort())
+  expect(named('@deepseek-ai/dsh-tool-fs')).toEqual([{ write: false, edit: false }])
+  for (const name of ['@deepseek-ai/dsh-bash-sandbox', '@deepseek-ai/dsh-pwsh-sandbox', '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh',
+    '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
+    '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-present',
+    '@deepseek-ai/dsh-plan-mode', '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools',
+    '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal', '@deepseek-ai/dsh-command-goal', '@deepseek-ai/dsh-tool-workflow',
+    '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-compaction-tool-result-pruner',
+    '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-tool-skill']) expect(plugins.map(row => row.name), name).not.toContain(name)
 })

@@ -154,7 +154,7 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
   const waiting = error ? <p className="dt-error" role="alert">{error.message}</p> : <p className="dt-hint">{t('loading')}</p>
   const page = (() => {
     switch (route.page) {
-      case 'overview': return <OverviewPage />
+      case 'overview': return <OverviewPage route={route} />
       case 'source': return <SourceStatus />
       case 'trigger': return route.id !== undefined ? <ThreadPage key={route.id} id={route.id} target={route.query?.trigger} />
         : <TriggerStatus filter={route.query?.filter ?? 'subscribed'} />

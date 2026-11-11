@@ -165,6 +165,15 @@ gates. Documentation lands with its phase, not in a batch at the end.
 - **Phase 3 — scheduled self-inspection (remaining, not in this phase).** The switch, the built-in automation's
   ensure/remove/reconcile and the instruction template. Live proof: toggling works and one `automation_run`
   inspection routes its findings correctly.
+- **Incident findings (M34, out of band).** The read-only incident diagnoser ([ADR 0005](adr/0005-read-only-incident-diagnosis.md))
+  reuses this outlet: a diagnosis about this installation, or about a repository that is not registered, is raised
+  through `SelfReports.raise` and keeps Phase 2's three-state gate, dedupe and cap; a diagnosis about a registered
+  project goes through the discovery Request and the Lead's Ticket flow instead, and an operational conclusion
+  creates no Issue at all. M34 changes neither the Phase 3 switch nor the gate: `observe` still keeps a draft and
+  `auto` still files within the same limits, and the diagnosis itself never writes, fixes or merges. The panel's
+  self-report resolution deep-links to the Overview with the named draft row highlighted, and routing requires the
+  current record to still be `diagnosed` with a parsed diagnosis: reopening keeps the old diagnosis text but clears
+  the resolution, so this outlet can never be fed a stale diagnosis.
 - **Phase 4 — documentation sweep.** Updates to [002](002-authorization.md), [004](004-prompts.md),
   [005](005-panel.md), [006](006-deployment.md) and [007](007-architecture.md) for what shipped, with the
   CHANGELOG and README counts.

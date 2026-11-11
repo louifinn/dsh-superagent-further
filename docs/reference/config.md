@@ -231,6 +231,7 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "enabled": true,
           "autoDiagnose": true,
           "dailyBudget": 2,
+          "diagnoseDailyBudget": 2,
           "minimumSeverity": "high"
         }
       },
@@ -360,6 +361,7 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
             "enabled": true,
             "autoDiagnose": true,
             "dailyBudget": 2,
+            "diagnoseDailyBudget": 2,
             "minimumSeverity": "high"
           },
           "type": "object",
@@ -373,6 +375,12 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
               "type": "boolean"
             },
             "dailyBudget": {
+              "default": 2,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "diagnoseDailyBudget": {
               "default": 2,
               "type": "integer",
               "minimum": 0,

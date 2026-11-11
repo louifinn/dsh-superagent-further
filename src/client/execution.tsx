@@ -238,6 +238,10 @@ export function ExecutionSettings() {
             <Input type="number" min={0} max={24} required value={String(value.incidents.dailyBudget)}
               onChange={event => edit({ incidents: { ...value.incidents, dailyBudget: numberOf(event.target.value) ?? 0 } })} />
           </Field>
+          <Field label={t('incidentDiagnoseDailyBudget')} hint={t('incidentDiagnoseDailyBudgetHint')}>
+            <Input type="number" min={0} max={24} required value={String(value.incidents.diagnoseDailyBudget)}
+              onChange={event => edit({ incidents: { ...value.incidents, diagnoseDailyBudget: numberOf(event.target.value) ?? 0 } })} />
+          </Field>
           <Field label={t('incidentMinimumSeverity')} hint={t('incidentMinimumSeverityHint')}>
             <select className="dt-select" value={value.incidents.minimumSeverity}
               onChange={event => edit({ incidents: { ...value.incidents,

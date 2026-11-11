@@ -117,12 +117,19 @@ function EscalationEntry({ item, onChanged }: { item: ApiResponse<'GET overview'
  * One observe-mode self report draft (docs/014 D5): a person approves filing it — within the outlet's deduplication and
  * daily cap — or dismisses it. Filed history stays in the target repository, so no other surface is added here.
  */
-function SelfReportEntry({ item, blocked, onChanged }: {
+function SelfReportEntry({ item, blocked, onChanged, highlight }: {
   item: ApiResponse<'GET overview'>['selfReports'][number]; blocked: boolean; onChanged: () => Promise<void>
+  /** A self-report resolution deep-linked here: mark the row and bring it into view once. */
+  highlight: boolean
 }) {
   const { t, call } = usePanel()
   const action = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
-  return <li className="dt-row" data-self-report={item.id}>
+  const reveal = (element: HTMLLIElement | null) => {
+    if (element === null || !highlight || element.dataset.scrolled === '1') return
+    element.dataset.scrolled = '1'
+    element.scrollIntoView?.({ block: 'center' })
+  }
+  return <li className={`dt-row${highlight ? ' dt-highlight' : ''}`} data-self-report={item.id} ref={reveal}>
     <div className="dt-row-main">
       <div className="dt-att-what">{item.title}</div>
       <div className="dt-row-meta">
@@ -159,7 +166,7 @@ function IncidentEntry({ item }: { item: ApiResponse<'GET overview'>['incidents'
   </li>
 }
 
-export function OverviewPage() {
+export function OverviewPage({ route }: { route: Extract<Route, { page: 'overview' }> }) {
   const { t, call, navigate, openSession, notify } = usePanel()
   const { setup } = usePanelData()
   const { data, error, reload } = usePoll(() => call('GET overview'), [])
@@ -226,7 +233,7 @@ export function OverviewPage() {
     {/* Observe-mode self report drafts wait for a person; auto mode files directly and accumulates none here. */}
     {selfReports.length > 0 && <Section title={t('selfReportsTitle')} count={selfReports.length}>
       <ul className="dt-list">{selfReports.map(item => <SelfReportEntry key={item.id} item={item}
-        blocked={data.selfReportsBlocked ?? false} onChanged={reload} />)}</ul>
+        blocked={data.selfReportsBlocked ?? false} onChanged={reload} highlight={route.query?.report === item.id} />)}</ul>
     </Section>}
     {/* Automation records that lost their Host task or failed delivery; the Automations page has their history. */}
     {data.automationAttention.count > 0 && <Section title={t('automationAttentionTitle')} count={data.automationAttention.count}

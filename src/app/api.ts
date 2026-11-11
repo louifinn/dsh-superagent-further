@@ -17,7 +17,8 @@ import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
 import type { IncidentDetailView, IncidentListView } from './incidents.ts'
-import type { IncidentSeverity, IncidentStatus } from '../core/incidents.ts'
+import type { DiagnoseResult, RouteResult } from './diagnosis.ts'
+import type { Incident, IncidentSeverity, IncidentStatus } from '../core/incidents.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -99,6 +100,12 @@ export interface Api {
     ; ticket?: string; request?: string; session?: string }; response: IncidentListView }
   /** One incident with its evidence manifest summary, or 404 when the record does not exist. */
   'GET incidents/:id': { response: IncidentDetailView }
+  /** Ask the read-only diagnostician for a root cause and a fix plan (409 when the budget or single-flight gate refuses). */
+  'POST incidents/:id/diagnose': { response: DiagnoseResult }
+  /** Close one incident with the operator's reason; a reason is required and a closed record refuses a second dismissal. */
+  'POST incidents/:id/dismiss': { body: { reason: string }; response: { incident: Incident } }
+  /** Create the follow-up work once, from an existing diagnosis; confirmation is required and the record never routes twice. */
+  'POST incidents/:id/route': { body: { confirm: true }; response: RouteResult }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

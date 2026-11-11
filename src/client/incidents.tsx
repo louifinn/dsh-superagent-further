@@ -3,9 +3,10 @@ import { useState } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import { INCIDENT_SEVERITY_FILTERS, type IncidentSeverityFilter, type IncidentStatusFilter } from '../app/api.ts'
 import { usePoll } from './api.ts'
-import { Button, SegmentedControl, Tag, type TagTone } from './controls.tsx'
+import { Button, Input, SegmentedControl, Tag, type TagTone } from './controls.tsx'
 import { usePanel } from './provider.tsx'
 import { when } from './text.ts'
+import type { T } from './text.ts'
 import { Hint, LabelValue, LoadState, Section } from './widgets.tsx'
 
 export type IncidentsPageRoute = { page: 'incidents'; id?: string; query?: { status?: IncidentStatusFilter; severity?: IncidentSeverityFilter } }
@@ -47,14 +48,90 @@ function Evidence({ view }: { view: NonNullable<DetailView['evidence']> }) {
   </div>
 }
 
-/** One incident's detail: what fired, its scope and counts, and the evidence the host bundled. */
+/** The one destination a diagnosis names, in the operator's language. */
+function targetText(t: T, target: NonNullable<DetailView['diagnosis']>['target']): string {
+  if (target.kind === 'project') return t('incidentTargetProject', { project: target.project })
+  if (target.kind === 'self') return t('incidentTargetSelf')
+  if (target.kind === 'operational') return t('incidentTargetOperational')
+  return t('incidentTargetNone')
+}
+
+/** The parsed diagnosis: root cause, evidence, hypotheses, fix plan, confidence and destination. */
+function Diagnosis({ view }: { view: NonNullable<DetailView['diagnosis']> }) {
+  const { t } = usePanel()
+  if (!view.parsed) return <div className="dt-incident-diagnosis" data-incident-diagnosis>
+    <h3 className="dt-block-title">{t('incidentDiagnosisSection')}</h3>
+    <Hint>{t('incidentDiagnosisRaw')}</Hint>
+    <p className="dt-hint dt-mono dt-clamp">{view.rootCause}</p>
+  </div>
+  const bulletList = (items: string[]) => items.length === 0 ? undefined : <ul className="dt-list">
+    {items.map((item, index) => <li key={index} className="dt-clamp">{item}</li>)}</ul>
+  return <div className="dt-incident-diagnosis" data-incident-diagnosis>
+    <h3 className="dt-block-title">{t('incidentDiagnosisSection')}</h3>
+    <LabelValue label={t('incidentRootCause')} value={view.rootCause} />
+    {bulletList(view.evidence) !== undefined && <LabelValue label={t('incidentEvidenceLabel')} value={bulletList(view.evidence)} />}
+    {bulletList(view.hypotheses) !== undefined && <LabelValue label={t('incidentHypotheses')} value={bulletList(view.hypotheses)} />}
+    {view.fixPlan !== '' && <LabelValue label={t('incidentFixPlan')} value={view.fixPlan} />}
+    <div className="dt-row-meta">
+      <LabelValue label={t('incidentConfidence')} value={t(`incidentConfidence.${view.confidence}` as never)} />
+      <LabelValue label={t('incidentTarget')} value={targetText(t, view.target)} />
+    </div>
+  </div>
+}
+
+/** One routing outcome: a link to the work it created, or the plain statement that it created none. */
+function Resolution({ resolution }: { resolution: string }) {
+  const { t, navigate } = usePanel()
+  if (resolution.startsWith('request:')) {
+    const id = resolution.slice('request:'.length)
+    return <button type="button" className="dt-open" onClick={() => navigate({ page: 'logs', query: { q: `request=${id}` } })}>
+      {t('incidentResolutionRequest', { id })}</button>
+  }
+  if (resolution.startsWith('self-report:')) {
+    const id = resolution.slice('self-report:'.length)
+    return <button type="button" className="dt-open" onClick={() => navigate({ page: 'overview', query: { report: id } })}>
+      {t('incidentResolutionSelfReport', { id })}</button>
+  }
+  if (resolution.startsWith('Dismissed: ')) {
+    return <span>{t('incidentResolutionDismissed', { reason: resolution.slice('Dismissed: '.length) })}</span>
+  }
+  if (resolution === 'operational') return <span>{t('incidentResolutionOperational')}</span>
+  return <span className="dt-mono">{resolution}</span>
+}
+
+/** One incident's detail: what fired, its scope and counts, the evidence, the diagnosis and the operator's actions. */
 function IncidentDetail({ id }: { id: string }) {
   const { t, call, navigate } = usePanel()
-  const { data, error } = usePoll(() => call('GET incidents/:id', { id }), [id])
+  const { data, error, reload } = usePoll(() => call('GET incidents/:id', { id }), [id])
+  const [busy, setBusy] = useState<string>()
+  const [failure, setFailure] = useState<string>()
+  const [reason, setReason] = useState('')
+  const [dismissing, setDismissing] = useState(false)
+  const [routing, setRouting] = useState(false)
   const back = <Button variant="outline" size="sm" onClick={() => navigate({ page: 'incidents' })}>{t('incidentBack')}</Button>
   if (!data) return <Section title={t('incidentDetailTitle')} hint={t('incidentDetailHint')}>{back}
     <LoadState error={error} loading /></Section>
-  const { incident, evidence } = data
+  const { incident, evidence, diagnosis } = data
+  const actionable = incident.status === 'detected' || incident.status === 'bundled' || incident.status === 'diagnosed'
+  const canDiagnose = incident.status === 'detected' || incident.status === 'bundled'
+  const canDismiss = incident.status !== 'resolved' && incident.status !== 'dismissed'
+  const canRoute = incident.status === 'diagnosed' && (incident.resolution === undefined || incident.resolution === '')
+    && diagnosis !== null && diagnosis.target.kind !== 'none'
+  const act = async (name: string, run: () => Promise<unknown>): Promise<void> => {
+    setFailure(undefined)
+    setBusy(name)
+    try {
+      await run()
+      setDismissing(false)
+      setRouting(false)
+      setReason('')
+      await reload()
+    } catch (problem) {
+      setFailure(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setBusy(undefined)
+    }
+  }
   return <Section title={incident.title} hint={t('incidentDetailHint')} action={back}>
     <div className="dt-incident-detail" data-incident-detail={incident.id}>
       <div className="dt-row-meta">
@@ -68,8 +145,31 @@ function IncidentDetail({ id }: { id: string }) {
       <p className="dt-hint">{incident.detail}</p>
       <LabelValue label={t('incidentScope')} value={<span className="dt-mono">{scopeText(incident.scope)}</span>} />
       <LabelValue label={t('incidentFingerprintLabel')} value={<span className="dt-mono">{incident.fingerprint}</span>} />
-      {incident.diagnosis !== undefined && <LabelValue label={t('incidentDiagnosis')} value={incident.diagnosis} />}
-      {incident.resolution !== undefined && <LabelValue label={t('incidentResolution')} value={incident.resolution} />}
+      {actionable && <div className="dt-actions" data-incident-actions>
+        {canDiagnose && <Button variant="outline" size="sm" disabled={busy !== undefined}
+          onClick={() => void act('diagnose', () => call('POST incidents/:id/diagnose', { id }))}>
+          {busy === 'diagnose' ? t('incidentDiagnosing') : t('incidentDiagnoseAction')}</Button>}
+        {canRoute && !routing && <Button variant="outline" size="sm" disabled={busy !== undefined}
+          onClick={() => setRouting(true)}>{t('incidentRouteAction')}</Button>}
+        {canDismiss && !dismissing && <Button variant="outline" size="sm" disabled={busy !== undefined}
+          onClick={() => setDismissing(true)}>{t('incidentDismissAction')}</Button>}
+        {routing && <div className="dt-row-meta" data-incident-route-confirm>
+          <span className="dt-hint">{t('incidentRouteConfirm')}</span>
+          <Button size="sm" disabled={busy !== undefined}
+            onClick={() => void act('route', () => call('POST incidents/:id/route', { id, body: { confirm: true } }))}>{t('incidentRouteAction')}</Button>
+          <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => setRouting(false)}>{t('incidentRouteCancel')}</Button>
+        </div>}
+        {dismissing && <div className="dt-row-meta" data-incident-dismiss>
+          <Input className="dt-mono" value={reason} maxLength={280} placeholder={t('incidentDismissReasonPlaceholder')}
+            aria-label={t('incidentDismissReason')} onChange={event => setReason(event.target.value)} />
+          <Button size="sm" disabled={busy !== undefined || reason.trim() === ''}
+            onClick={() => void act('dismiss', () => call('POST incidents/:id/dismiss', { id, body: { reason: reason.trim() } }))}>{t('incidentDismissConfirm')}</Button>
+          <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { setDismissing(false); setReason('') }}>{t('incidentDismissCancel')}</Button>
+        </div>}
+      </div>}
+      {failure !== undefined && <p className="dt-error" role="alert">{t('incidentActionFailed', { message: failure })}</p>}
+      {diagnosis !== null && <Diagnosis view={diagnosis} />}
+      {incident.resolution !== undefined && <LabelValue label={t('incidentResolution')} value={<Resolution resolution={incident.resolution} />} />}
       {evidence === null ? <Hint>{t('incidentEvidenceNone')}</Hint> : <Evidence view={evidence} />}
     </div>
   </Section>

@@ -1,6 +1,7 @@
 # 0004 — Operational incidents are detected deterministically, recorded durably, and never fixed automatically
 
 - **Status:** accepted
+- **Amended by:** [ADR 0005](0005-read-only-incident-diagnosis.md) — adds the read-only diagnoser and its audited operator actions; the detection contract here stands
 - **Date:** 2026-11-11
 - **Deciders:** the operator (approval recorded in the M33 brief), implemented by mission M33
 
