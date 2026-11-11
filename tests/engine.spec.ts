@@ -77,6 +77,23 @@ it('sends the explicit answer once, however often the Decision is replayed', () 
   expect(h.outbox).toHaveLength(1)
 })
 
+it('keeps the answer the main Session already sent instead of repeating the outcome', () => {
+  const h = harness()
+  h.start(trigger('1', { addressed: 'direct' }))
+  h.engine.reply({ purpose: 'answer', triggerId: '1', text: 'the ticket list' })
+  expect(h.outbox.map(message => message.kind)).toEqual(['reply'])
+  h.decide(h.requests[0]!, { kind: 'ignore', reason: 'answered directly' })
+  // The person already has the answer to this message, so the Decision adds no second message.
+  expect(h.outbox.map(message => message.kind)).toEqual(['reply'])
+})
+
+it('writes one full stop when the recorded reason already ends with one', () => {
+  const h = harness()
+  h.start(trigger('1', { addressed: 'direct', text: '请检查工单' }))
+  h.decide(h.requests[0]!, { kind: 'ignore', reason: '无需创建工单。' })
+  expect(h.outbox.map(message => message.text)).toEqual(['你的请求未被采纳：无需创建工单。'])
+})
+
 it('answers an unavailable decision and a stop on an explicit message', () => {
   const unavailable = harness()
   unavailable.start(trigger('1', { addressed: 'direct' }))

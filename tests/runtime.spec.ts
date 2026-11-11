@@ -2341,6 +2341,17 @@ it('answers a whitelisted mention the main Session ignores with one notice on it
   expect(runtime.store.receipts.waiting().filter(item => item.kind === 'notice')).toEqual([])
 })
 
+it('leaves the main Session\'s own answer as the only reply when its Decision repeats the outcome', async () => {
+  const asked = feishu('13', '@bot 当前还有哪些未完成的工单？')
+  await receive(asked)
+  expect(await runTool(runtime.masterId, 'orchestrator_reply', { trigger_id: asked.id, purpose: 'answer', text: '共 7 个。' }))
+    .toEqual({ status: 'sent' })
+  await route({ kind: 'ignore', trigger_id: asked.id, reason: '已由编排会话直接答复' })
+  const decision = runtime.store.decisions.byThread(`feishu:${CHAT}:om_13`).at(-1)!
+  // The person already has the list; the "not taken up" notice would repeat it.
+  expect(runtime.store.receipts.get(key('explicit-reply', decision.id, asked.id))).toBeUndefined()
+})
+
 it('reports a completed root project request once through the Channel its chain started in', async () => {
   const { trigger, ticket } = await acceptedTicket(feishu('1', '@bot 修复回归'))
   // The worker gives the task up, which ends the Ticket and its domain Request.

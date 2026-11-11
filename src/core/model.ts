@@ -57,6 +57,11 @@ export interface TriggerDisposition {
   handbacks?: { ticketId: string; reason: string; at: string }[]
   /** The tickets whose Executor acknowledged it or answered it, taking it up as within the ticket. */
   acked?: string[]
+  /**
+   * When the main Session answered it directly on its Channel, outside a ticket. The explicit-decision notice then adds
+   * nothing: the person already has the answer, and a second message would only repeat it.
+   */
+  answered?: string
   at: string
 }
 /** What deciding a follow-up's owners reads: the stored tickets, Threads and dispositions, as the Store and the core keep them. */

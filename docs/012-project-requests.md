@@ -147,7 +147,8 @@ the Trigger intake for `basis.via === 'addressed'` (mention/direct) **and** a wh
 that are not actionable. In `Engine.decide`, an `ignore`, `unavailable` or `stop` decision whose Trigger has
 `expects_reply` queues one Outbox `notice` to that Trigger's Channels explaining the outcome and reason (idempotent
 id `explicit-reply-<decisionId>`). Accepted requests keep the existing acknowledgement and result replies. No reply is
-sent when the sender is not whitelisted or the message is not addressed.
+sent when the sender is not whitelisted or the message is not addressed, nor when the main Session already answered
+the message directly: that answer records `answered` on the Trigger's disposition, and the notice adds nothing to it.
 
 ### D9. External DSH Session bridge (R3)
 

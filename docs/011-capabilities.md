@@ -818,7 +818,8 @@ whitelisted mention or direct message. The design spec (decisions D1–D10 and t
 - **Final report:** when a root project Request and all its derived work end, one aggregate report goes
   through the source channel the chain started from, listing every Ticket and derived request outcome.
 - **Explicit always-reply:** a whitelisted sender's @ mention or direct message is an explicit request;
-  ignore, unavailable and stop decisions also send exactly one short notice on that channel.
+  ignore, unavailable and stop decisions also send exactly one short notice on that channel, unless the
+  Orchestrator already answered the message directly and the notice would repeat it.
 - **Architecture gate:** an architecture request first produces a design Ticket; the proposal goes to
   the root channel and the implementation Request is created only after a recorded human approval.
 - **External Session bridge:** the `session` Source kind and the global `superagent_submit` tool let an

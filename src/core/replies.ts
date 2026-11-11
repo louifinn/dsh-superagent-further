@@ -58,6 +58,8 @@ export class Replies extends EnginePart {
     for (const triggerId of new Set(decision.triggerIds)) {
       const trigger = this.repo.triggers.get(triggerId)
       if (!trigger?.human || !trigger.addressed || !trigger.channel) continue
+      // A message the main Session already answered has its answer; the notice would repeat it.
+      if (this.repo.triggers.disposition(triggerId)?.answered) continue
       const thread = this.thread(trigger.threads[0]!)
       const gate = this.policy().gate(trigger, thread, this.ticketsOnThread(thread))
       if (!gate.admissible || gate.basis.via !== 'addressed') continue
@@ -110,6 +112,11 @@ export class Replies extends EnginePart {
       ticket.answers = ticket.answers.filter(item => item !== trigger.id)
       this.repo.tickets.save(ticket)
     }
+    // An answer to a person's message is that message's answer: the explicit-decision notice must not repeat it.
+    if (request.purpose === 'answer' && trigger) {
+      const disposition = this.repo.triggers.disposition(trigger.id) ?? { fanout: [], at: this.now() }
+      this.repo.triggers.saveDisposition(trigger.id, { ...disposition, answered: this.now() })
+    }
     return { id, status: this.options.outbox.status(id) ?? 'pending', reused: existing !== undefined }
   }
   /** The conversation a ticket started in: its origin Trigger's Channel, else its first Channel. */
@@ -118,7 +125,8 @@ export class Replies extends EnginePart {
   private explicitText(decision: Decision, trigger: Trigger): string {
     const chinese = /\p{Script=Han}/u.test(trigger.text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(trigger.text)
     const own = decision.reason.filter(reason => reason.triggerId === undefined || reason.triggerId === trigger.id)
-    const detail = reasonText(own.length ? own : decision.reason)
+    // The notice supplies its own full stop, so one already ending the recorded reason would double it.
+    const detail = reasonText(own.length ? own : decision.reason).replace(/[。.]$/u, '')
     const outcome = chinese
       ? decision.kind === 'ignore' ? '你的请求未被采纳' : decision.kind === 'unavailable' ? '你的请求暂时无法处理' : '已按你的请求停止'
       : decision.kind === 'ignore' ? 'Your request was not taken up'

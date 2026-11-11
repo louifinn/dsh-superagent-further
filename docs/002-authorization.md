@@ -15,7 +15,7 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 - Other human messages use the admission table for their receiving scope.
 - A bot on the Source's bot list can produce an inferred candidate, never an explicit request. Other bots are not admitted.
 
-A whitelisted person who addresses the agent explicitly always learns the outcome. An ignore, unavailable or stop Decision on such an @ mention or direct message sends one notice to that Trigger's Channel, naming the outcome and the recorded reason or next step; accepted requests already promise the acknowledgement and result. The notice is queued once per Decision and Trigger. None is sent when the sender is not whitelisted or the message was not addressed.
+A whitelisted person who addresses the agent explicitly always learns the outcome. An ignore, unavailable or stop Decision on such an @ mention or direct message sends one notice to that Trigger's Channel, naming the outcome and the recorded reason or next step; accepted requests already promise the acknowledgement and result. The notice is queued once per Decision and Trigger. None is sent when the sender is not whitelisted or the message was not addressed, nor when the main Session already answered that message directly on its Channel: the Trigger's disposition records that answer, and the notice would only repeat it.
 
 ### Subscriptions: continuing existing work
 

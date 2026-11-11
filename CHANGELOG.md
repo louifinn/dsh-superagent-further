@@ -284,6 +284,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- One direct answer stays one message. When the Orchestrator answered a whitelisted person's explicit message itself (for
+  example a status question it resolved from its own records), the subsequent `ignore` Decision still queued the
+  "request was not taken up" notice, so the person received the answer and a second message repeating that it was not
+  taken up. `Replies.answer` now records `answered` on the Trigger's disposition, and the explicit-decision notice skips a
+  Trigger the main Session already answered; the recorded reason also no longer doubles its full stop
+  (`你的请求未被采纳：…。。`). Covered by `tests/engine.spec.ts` and `tests/runtime.spec.ts`.
 - The setup wizard can always be closed. While no workspace was selected, the modal's close button, Escape and the backdrop
   did nothing, so an operator who opened the wizard without finishing the workspace step was trapped in the dialog; the
   setup wizard could not be left even though only SuperAgent itself should stay unavailable. Closing the dialog now always
