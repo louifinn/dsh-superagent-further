@@ -285,7 +285,7 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
     }),
     tool({
       name: 'orchestrator_reply',
-      description: `Send an answer, a ready result, or attention requiring human action, as the replies section says; the gate refuses other purposes. purpose=result needs a ticket in person/review after a ready report, a completed or merged one, or a dropped one whose rule asks for a closing message. IM limit: ${IM_WORDS} words.`,
+      description: `Send an answer, a ready result, or attention requiring human action, as the replies section says; the gate refuses other purposes. purpose=answer needs the worker's registered answer, or the question an answer ticket started from once its report is ready or the ticket completed. purpose=result needs a ticket in person/review after a ready report, a completed or merged one, or a dropped one whose rule asks for a closing message. IM limit: ${IM_WORDS} words.`,
       schema: z.object({
         trigger_id: z.string().optional().describe('The original human question, for an answer only.'),
         ticket_id: z.string().optional(),

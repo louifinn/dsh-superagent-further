@@ -56,12 +56,15 @@ interface Skill { name: string; description: string; content: string }
 // It rose from 43,800 with the worker rules that finish a background job inside its own turn and keep one worktree and cwd
 // per Ticket, about 480 characters of work instructions; the incident stalled an assignment for three hours, so the budget
 // grows with the rules. Deleting the rules would let it drop back.
+// It rose from 44,400 with the answer-registration rule (about 320 characters across the replies and work prompt sections
+// and the reply_to_trigger_id description): an answer ticket's ready report answers its origin question, so a worker that
+// never learns the exception strands the person's answer; the rule text is the fix's worker-facing half.
 // It rose from 68,600 with orchestrator_issue_create and the discovery variant of orchestrator_request_create, which add
 // about 1,770 characters of schemas and descriptions for the self-evolution outlet (docs/014 Phase 2); deleting that
 // outlet would let the budget drop back.
 // It rose from 70,500 with orchestrator_incident, which adds the list/get/diagnose/dismiss/route schema and description
 // for the read-only diagnosis contract (ADR-0005); deleting that tool would let the budget drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 73_000, worker: 44_400 }
+const BUDGET: Record<Role, number> = { orchestrator: 73_000, worker: 44_800 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'

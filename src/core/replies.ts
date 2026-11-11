@@ -1,7 +1,7 @@
 /** The Engine's messages to Channels, each by the rule that allows it. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { latestAssignment, liveTicket, ticketOutcome } from './model.ts'
+import { latestAssignment, latestReport, liveTicket, ticketOutcome } from './model.ts'
 import { reasonText } from './reasons.ts'
 import type { ChannelRef, Decision, Ticket, Trigger } from './model.ts'
 import type { ReplyStatus } from './ports.ts'
@@ -9,7 +9,8 @@ import { EnginePart } from './part.ts'
 
 /**
  * A message for a Channel, by purpose: an Executor's acknowledgement of a person's request it works on, the answer to a
- * person's question once the worker reported it, the result of a ticket that is `ready`, `completed`, `merged`, or `dropped`,
+ * person's question once the worker reported it — or, for the question an answer Ticket started from, once its ready or
+ * completed report answered it — the result of a ticket that is `ready`, `completed`, `merged`, or `dropped`,
  * or the ticket's current `question` for a person (`attention`). When `ticketId` is omitted, the ticket that `triggerId` reached is used.
  */
 export type ReplyRequest =
@@ -21,8 +22,9 @@ export interface Reply { id: string; status: ReplyStatus; reused: boolean }
 /**
  * Replies writes the Engine's messages to Channels through the Outbox port: an acknowledgement, the answer to a person's
  * question, a ticket's result, and its question for a person, each only when its rule allows it, under a deterministic id
- * that keeps it from going out twice (idempotent). The Engine routes `reply` here; Tickets asks it for the acknowledgement
- * an accept carries, and Assignments asks it to withdraw a question a report replaced.
+ * that keeps it from going out twice (idempotent). An answer needs the worker's registered answer, except the question an
+ * answer Ticket started from, which its own ready or completed report answers. The Engine routes `reply` here; Tickets asks
+ * it for the acknowledgement an accept carries, and Assignments asks it to withdraw a question a report replaced.
  */
 export class Replies extends EnginePart {
   /**
@@ -102,7 +104,11 @@ export class Replies extends EnginePart {
     if (request.purpose === 'answer' && !trigger?.human) throw new UserError('notQuestion')
     const id = attention ? key('attention-reply', attention.id) : key('reply', trigger?.id ?? ticket?.id ?? '', request.text)
     const existing = this.options.outbox.status(id)
-    const ready = !ticket || !trigger || ticket.answers?.includes(trigger.id)
+    // The worker takes up a person's question by reporting it answered (`answers`); the question an answer Ticket started from
+    // is taken up by the report that is its deliverable, so a ready or completed report answers it with no named registration.
+    const originAnswered = !!ticket && !!trigger && ticket.deliverable === 'answer' && ticket.origin.triggerId === trigger.id
+      && (latestReport(ticket)?.state === 'ready' || ticketOutcome(ticket) === 'completed')
+    const ready = !ticket || !trigger || ticket.answers?.includes(trigger.id) || originAnswered
     if (request.purpose === 'answer' && !ready && !existing) throw new UserError('noAnswer')
     const asker = attention?.triggerId ? this.repo.triggers.get(attention.triggerId) : undefined
     const channel = request.purpose === 'answer' ? trigger!.channel : asker?.channel ?? (ticket ? this.sourceChannel(ticket) : undefined)

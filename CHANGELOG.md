@@ -284,6 +284,17 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- The answer channel no longer depends on the worker remembering to register `reply_to_trigger_id`. When an answer Ticket
+  (an explicit question accepted as `deliverable: answer`) finished with a ready report whose summary named the source
+  trigger but carried no `reply_to_trigger_id`, the main Session's `orchestrator_reply` with `purpose=answer` on the
+  original question was refused with `noAnswer`, and the person's answer was stranded unless the fallback `purpose=result`
+  happened to apply. `Replies.answer` now also allows the answer for the question an answer Ticket started from once its
+  latest report is `ready` or the Ticket ended `completed`: the report is that question's deliverable, so it needs no
+  named registration; every other question still requires the worker's registered answer, and a change Ticket's origin
+  question keeps the strict rule (`purpose=result` is its delivery path). The `orchestrator_reply` and
+  `orchestrator_report` tool descriptions and the runtime/replies and work prompt sections state the contract, so the
+  registration stays the default for follow-up questions and is no longer necessary for the origin one; docs/007 records
+  the rule. Covered by `tests/core-engine.spec.ts` and a full replay in `tests/runtime.spec.ts`.
 - A quiet GitHub stream no longer fails when its ETag matches. Since the stable supervisor split the domain runtime
   into its own self-contained bundle (`lib/runtime-entry.js`, ADR-0006), a `CliError` thrown by the runtime's `Commands`
   is no longer the GitHub watcher bundle's `CliError` class, so the `instanceof CliError` check in the 304 handler

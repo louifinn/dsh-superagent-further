@@ -2352,6 +2352,23 @@ it('leaves the main Session\'s own answer as the only reply when its Decision re
   expect(runtime.store.receipts.get(key('explicit-reply', decision.id, asked.id))).toBeUndefined()
 })
 
+it('delivers the answer to an answer ticket\'s origin question from its ready report alone', async () => {
+  const asked = feishu('14', '@bot 能否执行一次诊断？')
+  const { ticket, trigger, sessionId } = await acceptedTicket(asked, 'answer')
+  // Ordinary progress keeps the answer channel shut, exactly as a question without a registered answer.
+  await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'Reading the recent runs.' })
+  await expect(runTool(runtime.masterId, 'orchestrator_reply', { trigger_id: trigger.id, purpose: 'answer', text: '可以。' }))
+    .rejects.toThrow('No worker answer is ready')
+  // The ready report names the source trigger only in its summary: no reply_to_trigger_id was registered.
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: `诊断完成（源触发 ${trigger.id}）。` })
+  expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
+  const text = '可以，本次运行日志未见异常。'
+  expect(await runTool(runtime.masterId, 'orchestrator_reply', { trigger_id: trigger.id, purpose: 'answer', text }))
+    .toEqual({ status: 'sent' })
+  // The answer reached the conversation the question was asked in, without the worker registering reply_to_trigger_id.
+  expect(runtime.store.receipts.get(key('reply', trigger.id, text))).toMatchObject({ status: 'sent', kind: 'reply', channel: asked.channel })
+})
+
 it('reports a completed root project request once through the Channel its chain started in', async () => {
   const { trigger, ticket } = await acceptedTicket(feishu('1', '@bot 修复回归'))
   // The worker gives the task up, which ends the Ticket and its domain Request.

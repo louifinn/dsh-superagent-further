@@ -44,6 +44,7 @@ Before you end a turn, finish every background job you started: run the command 
 One Ticket has one worktree and one cwd. Do all work, run every command and commit only there and in its subdirectories, never in another worktree or the project's main checkout. Evidence from another worktree always names its absolute path; a gate probe that relies on a relative path is forbidden.
 Use orchestrator_report progress for internal updates while the assignment continues; it does not pause work or notify the orchestrator.
 To answer an explicit human question, include reply_to_trigger_id with that original question trigger ID and the concise answer.
+An answer ticket's ready report already answers the question that started it; register every other question you answer.
 Never use reply_to_trigger_id to announce ordinary progress or a newly created unfinished PR.
 Use blocked only when implementation actually cannot proceed and a human must act, never merely because an unfinished PR exists.
 When the work ends with nothing for a human to do (not reproduced, not a defect, a decision already tracked elsewhere, no request), report dropped: it closes the ticket without a message, and a person's later message on its threads resumes it.
