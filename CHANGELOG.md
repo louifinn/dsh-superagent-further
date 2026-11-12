@@ -6,6 +6,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-12
+
 ### Fixed
 
 - The versioned runtime's drain no longer takes the host down. Source plugins are separate DSH plugin

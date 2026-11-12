@@ -663,7 +663,7 @@ snapshots at zero diff until its step says otherwise.
 - [ ] Docs 001/004/006/007 gain the sections and module/test rows the phases require as each lands;
   CHANGELOG and the README counts stay synchronized.
 
-## Sprint 46 completion (0.4.1)
+## Sprint 46 completion (0.4.2)
 
 The first real runtime update took the host down: the drain closed the Store, and the Feishu watch plugin — a separate DSH
 plugin entry that outlives the versioned runtime — asked the registry for its configuration from its five-second timer, so
