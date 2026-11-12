@@ -11,7 +11,7 @@ import { githubLink, sendGithub } from './github-channel.ts'
 import { setGithubLabels } from './github-labels.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
 import { observePull, readPull, type Pull } from './github-pull.ts'
-import { health, sourceContext, type Health, type SourceContext } from './host.ts'
+import { health, sourceConfig, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, lagged, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
 import type { Localized, SourceKind } from './kind.ts'
@@ -149,7 +149,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
   repairStreamEtags(ctx)
   while (!signal.aborted) {
-    const config = ctx.config<GithubConfig>(SOURCE)
+    const config = sourceConfig<GithubConfig>(ctx, SOURCE)
     try {
       if (config) interval = await pollRound(ctx, signal)
       else ctx.report('github', health('paused', 'sourceOff'))
@@ -159,7 +159,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
       const failed = pollFailure(failures, config?.failuresBeforeError ?? 1, error)
       if (!signal.aborted && failed) ctx.report('github', failed)
     }
-    await pause(Math.max(interval, ctx.config<GithubConfig>(SOURCE)?.pollSeconds ?? 60) * 1000, signal)
+    await pause(Math.max(interval, sourceConfig<GithubConfig>(ctx, SOURCE)?.pollSeconds ?? 60) * 1000, signal)
   }
 }
 interface GithubRepository { repository: string; primary: boolean }
@@ -194,7 +194,7 @@ interface Round {
 }
 const newRound = (signal?: AbortSignal): Round => ({ started: new Date().toISOString(), signal, pulls: new Map(), read: new Set(),
   failures: [], dropped: [], abandoned: [], unreadable: new Set(), tally: { skipped: 0 } })
-const stopped = (ctx: SourceContext, round: Round): boolean => !!round.signal?.aborted || !ctx.config(SOURCE)
+const stopped = (ctx: SourceContext, round: Round): boolean => !!round.signal?.aborted || !sourceConfig(ctx, SOURCE)
 export interface Retry { since: string; pr: boolean; failedAt?: string; attempts?: number }
 const RETRY_WINDOW_MS = 24 * 3600_000
 /** True when GitHub returns HTTP 410 (Gone); HTTP 404 is retried because it can indicate revoked access to a private repository. */
@@ -224,7 +224,7 @@ const STREAM_RECHECK_MS = 10 * 60_000
 const STREAM_REPAIR = 'etag-repair-1'
 /** Polls every repository's streams (new Issues/PRs, comments, default-branch CI); each stream reads from when it was switched on, resets when switched off, and fails independently. */
 async function pollRepository(ctx: SourceContext, round: Round, repos: GithubRepository[]): Promise<void> {
-  const config = ctx.config<GithubConfig>(SOURCE)
+  const config = sourceConfig<GithubConfig>(ctx, SOURCE)
   if (!config) return
   for (const repo of repos) {
     for (const stream of STREAMS) {
@@ -381,7 +381,7 @@ export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promi
     + (round.unreadable.size ? `; project repositories unreadable: ${[...round.unreadable].sort().join(', ')}` : '')
   // The next attempt is the wait the loop takes after this round, so the panel can say when it will happen even while
   // everything is healthy; `at` keeps the moment this round started.
-  const wait = Math.max(interval, ctx.config<GithubConfig>(SOURCE)?.pollSeconds ?? 60) * 1000
+  const wait = Math.max(interval, sourceConfig<GithubConfig>(ctx, SOURCE)?.pollSeconds ?? 60) * 1000
   ctx.report('github', { state: 'ready', detail: `${count} notifications; next poll ≥ ${interval}s${dropped}`, at: round.started,
     nextAt: new Date(Date.now() + wait).toISOString() })
   return interval

@@ -10,7 +10,7 @@ import { ticketStage, type Request, type Ticket } from '../core/index.ts'
 import { KV } from '../kv.ts'
 import type { FeishuConfig } from './feishu.ts'
 import { SOURCE } from './feishu-trigger.ts'
-import type { SourceContext } from './host.ts'
+import { sourceConfig, type SourceContext } from './host.ts'
 
 const MINUTE = 60_000
 const DAY = 86_400_000
@@ -135,7 +135,7 @@ export type DigestTick = 'off' | 'skipped' | 'sent' | 'failed'
  * the digest health entry) when the CLI could not send, so the next minute tries again.
  */
 export async function digestTick(ctx: SourceContext, now = new Date()): Promise<DigestTick> {
-  const config = ctx.config<FeishuConfig>(SOURCE)
+  const config = sourceConfig<FeishuConfig>(ctx, SOURCE)
   const chat = config?.digestChat ?? ''
   if (!config || chat === '') {
     ctx.report('digest', { state: 'paused', detail: 'The daily digest is off' })
@@ -167,7 +167,7 @@ export async function runFeishuDigest(ctx: SourceContext, signal: AbortSignal): 
   while (!signal.aborted) {
     if (!ctx.configured() || !ctx.deployment.feishu) {
       ctx.report('digest', { state: 'paused', detail: 'Waiting for the deployment check' })
-    } else if (ctx.config<FeishuConfig>(SOURCE)) {
+    } else if (sourceConfig<FeishuConfig>(ctx, SOURCE)) {
       await digestTick(ctx, new Date())
     } else {
       ctx.report('digest', { state: 'paused', detail: 'The daily digest is off' })

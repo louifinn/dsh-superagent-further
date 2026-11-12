@@ -6,6 +6,25 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Fixed
+
+- The versioned runtime's drain no longer takes the host down. Source plugins are separate DSH plugin
+  entries that outlive the runtime, so the Feishu watch plugin's five-second check still asked the
+  registry for its configuration after the Store had closed; `store.settings()` threw
+  `database is not open` inside a timer callback and DSH treats that uncaught exception as fatal (the
+  2026-11-12 crash, `crash-2026-11-12T00-27-44-715Z-host.log`). `SourceRegistry` now takes a
+  "closing" predicate and answers every settings-dependent read with `undefined`/`false`/`[]` once the
+  runtime is closing, `sourceConfig` swallows a closed-runtime lookup for the GitHub and Feishu loops,
+  and the Feishu interval can no longer throw. A runtime update therefore stops the Source loops
+  instead of killing the host between the drain and the candidate's load.
+- An update that failed or died mid-way is now recorded as an incident (`update-failures`). The rule
+  also reads `update.interrupted`, which the next boot writes after a crash, and the runtime replays
+  the supervisor's durable history at startup, so an attempt whose log line the detector never saw is
+  still recorded — once per journal phase, and never twice across restarts. The rule joins the
+  live-outage exemptions from the daily budget (ADR-0004, ADR-0007).
+
+## [0.4.1] - 2026-11-12
+
 ### Added
 
 - The context-surface design document `docs/015-context-surfaces.md` (Issue #6, roadmap Sprint 45).

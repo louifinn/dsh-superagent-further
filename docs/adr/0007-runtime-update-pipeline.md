@@ -44,7 +44,12 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
      still serves, bounded by a busy timeout; no database yet means the phase is skipped.
    - `drain` calls the old runtime handle's own `drain('update')` — the same contract and phases as shutdown — so intake
      stops, in-flight work settles, and the Store closes. The supervisor keeps the lock; the runtime's lock phase is a
-     no-op because the supervisor has not set `releasing`.
+     no-op because the supervisor has not set `releasing`. Source plugins are separate DSH plugin entries that outlive the
+     versioned runtime, so their watch loops keep ticking until the candidate is loaded; the Store therefore treats a
+     closing runtime as "no settings" rather than reading it, and every Source loop stops on that answer. A lookup that
+     threw after the Store closed landed in a timer callback and killed DSH (the 2026-11-12 host crash):
+     `SourceRegistry` is closed-aware, `sourceConfig` swallows a closed-runtime lookup, and the Feishu five-second check
+     never lets a timer callback throw.
    - `swap` writes `previous.json` (the old current, or the recorded previous when no current exists; only when that
      descriptor verifies inside the runtime directory, since the packaged descriptor is relative to the package and can
      never be a rollback target) and then `current.json` (the new descriptor), each through a mode-`0600` temporary file,
@@ -65,6 +70,11 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    path, journals `fail('rollback', …)`, appends a `rolledback` or `failed` history entry and logs
    `update.failed phase=… reason=…`. The ring line feeds the `update-failures` incident rule. No exception is rethrown
    into the Cordis fiber; the supervisor stays alive. A failure before the swap only needs the journal and the history.
+   The outcome stays visible either way: a failed apply logs `update.failed`, a host that died mid-update logs
+   `update.interrupted` on the next boot, and both are one record per journal phase, so the operator sees the broken
+   pipeline rather than a silent restart. Because that boot line can land before the detector's observer attaches, the
+   runtime also replays the supervisor's durable history at startup and records what the detector never saw, once
+   (`Incidents.reconcileUpdates`, ADR-0004).
 
 5. **The schema only moves forward.** Stage and load both refuse a descriptor whose `schema` is below the database's,
    and `loadRuntime` independently refuses a module whose `SCHEMA_VERSION` is lower. The engine never attempts a

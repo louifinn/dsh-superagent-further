@@ -5,4 +5,4 @@
  * `lib/` where a relative JSON import would resolve differently, and a runtime bundle must not reach outside itself. The
  * supervisor specification pins it to `package.json`, so a release that forgets to update both fails the test suite.
  */
-export const VERSION = '0.4.0'
+export const VERSION = '0.4.1'

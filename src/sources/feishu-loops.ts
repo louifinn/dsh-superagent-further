@@ -11,14 +11,15 @@ import { invocation } from '../infra/batch.ts'
 import { readFeishu, type FeishuRef } from './feishu-read.ts'
 import { feishuRef, feishuTime, feishuTrigger, HistoricalMessageSchema, historyEvent, HistoryPageSchema, SOURCE, topicEvent }
   from './feishu-trigger.ts'
-import { health, type SourceContext } from './host.ts'
+import { health, sourceConfig, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, POLL_HORIZON_MS, polled, pollThreads as pollEach } from './poll.ts'
 import type { FeishuConfig } from './feishu.ts'
 
 export const runFeishu = (ctx: SourceContext, signal: AbortSignal): Promise<unknown> =>
   Promise.allSettled([watch, backfillLoop, chatNamesLoop].map(loop => loop(ctx, signal)))
-const enabled = (ctx: SourceContext): FeishuConfig | undefined => ctx.config<FeishuConfig>(SOURCE)
+// A runtime that is closing reads as "this Source is off" (see sourceConfig), so the loop stops instead of throwing.
+const enabled = (ctx: SourceContext): FeishuConfig | undefined => sourceConfig<FeishuConfig>(ctx, SOURCE)
 const bot = (ctx: SourceContext): FeishuBot => {
   const resolved = ctx.deployment.feishu
   if (!resolved) throw new Error('The Feishu Source has no working bot CLI')
@@ -53,7 +54,11 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
       continue
     }
     const running = new AbortController()
-    const check = setInterval(() => { if (!enabled(ctx)) running.abort() }, 5000)
+    // A timer callback must never throw: DSH treats an uncaught exception here as fatal (the 2026-11-12 host crash).
+    const check = setInterval(() => {
+      try { if (!enabled(ctx)) running.abort() }
+      catch { running.abort() }
+    }, 5000)
     const stop = () => running.abort()
     signal.addEventListener('abort', stop, { once: true })
     const began = Date.now()

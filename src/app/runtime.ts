@@ -225,7 +225,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         if (kind.policy?.sync) void this.ready?.then(() => this.settings.syncable().includes(kind.kind) ? this.settings.sync(kind.kind) : undefined)
           .catch(() => { /* sync() records its failure in health. */ })
         return () => {}
-      })
+      }, () => this.closing())
       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
@@ -602,6 +602,14 @@ export class Runtime implements SourceHost, RuntimeHandle {
       await this.sessions.lead.reconcile()
     } catch (error) {
       this.log.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
+    }
+    // An update that failed or died mid-way is a durable fact in the supervisor's history; the detector may never have seen
+    // its log line (a crashed host writes `update.interrupted` only on the next boot, possibly before the observer attaches),
+    // so the record is rebuilt here once the workspace exists to hold its evidence (ADR-0004, ADR-0007).
+    try {
+      this.incidents.reconcileUpdates(this.updates.status().history)
+    } catch (error) {
+      this.log.warn('dsh-superagent-further could not reconcile the update history: %s', String(error))
     }
     // Reconcile only after the main Session exists, because every Host target names it. A missing or changed Host task is
     // recorded as orphaned or drifted; it is never recreated silently (docs/011 B4).

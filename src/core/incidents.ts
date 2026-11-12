@@ -16,8 +16,8 @@ export const INCIDENT_STATUSES = ['detected', 'bundled', 'diagnosed', 'resolved'
 export type IncidentStatus = typeof INCIDENT_STATUSES[number]
 
 /**
- * Every deterministic rule M33 knows. `update-failures` is reserved for the update pipeline (M36) and has no detector
- * yet, so the record type and the panel can name it without any behaviour depending on it.
+ * Every deterministic rule the detectors know. `update-failures` names the update pipeline's outcomes: a failed apply or a
+ * host that died mid-update, one record per journal phase.
  */
 export const INCIDENT_RULES = ['assignment-burst', 'agent-error-rate', 'outbox-failures', 'source-poll-failures', 'health-error',
   'stalled-assignment', 'update-failures'] as const
@@ -27,7 +27,7 @@ export type IncidentRule = typeof INCIDENT_RULES[number]
  * The rules whose first record describes a live outage, so the daily budget must not silence them (ADR-0004). The other
  * gates still apply: the fingerprint deduplication and cooldown, the open-record cap and the minimum severity.
  */
-export const INCIDENT_BUDGET_EXEMPT_RULES: readonly IncidentRule[] = ['health-error', 'stalled-assignment']
+export const INCIDENT_BUDGET_EXEMPT_RULES: readonly IncidentRule[] = ['health-error', 'stalled-assignment', 'update-failures']
 
 /** True when a new record for this rule is exempt from the daily budget because it describes a live outage. */
 export function incidentBudgetExempt(rule: IncidentRule): boolean {

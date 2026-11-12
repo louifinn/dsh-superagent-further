@@ -35,11 +35,16 @@ const STALLED_MS = 10 * 60_000
 /** Every journal phase an update can fail in; one condition per phase, recovered together on the next successful apply. */
 const UPDATE_PHASES: readonly JournalPhase[] = ['prepare', 'stage', 'backup', 'drain', 'swap', 'load', 'init', 'commit', 'rollback']
 
-/** The stable candidate for an update failure at one phase: the phase, not the run's message, is the condition. */
-function updateFailure(phase: string): IncidentCandidate {
-  return { rule: 'update-failures', severity: 'high', title: `The runtime update failed at the ${phase} phase`,
+/**
+ * The stable candidate for an update that failed or was interrupted at one phase: the phase, not the run's message, is the
+ * condition, so a failed apply and a host that died mid-update share one record (and one fingerprint) per phase.
+ */
+export function updateOutcomeCandidate(outcome: 'failed' | 'interrupted', phase: string): IncidentCandidate {
+  return { rule: 'update-failures', severity: 'high',
+    title: outcome === 'interrupted' ? `The runtime update was interrupted at the ${phase} phase` : `The runtime update failed at the ${phase} phase`,
     detail: `The supervisor could not finish the ${phase} phase of a runtime update` }
 }
+function updateFailure(phase: string): IncidentCandidate { return updateOutcomeCandidate('failed', phase) }
 
 /** The detector's collaborators: a way to find the project that owns a ticket, which scopes a burst. */
 export interface DetectorHost { tickets?(ticketId: string): { project?: string } | undefined }
@@ -88,9 +93,11 @@ export class IncidentDetector {
   observeLog(entry: ObservedLog, at: Date = new Date(entry.at)): IncidentSignal[] {
     const now = time(entry.at)
     if (!Number.isFinite(now)) return []
-    if (entry.message.startsWith('update.failed')) {
+    if (entry.message.startsWith('update.failed') || entry.message.startsWith('update.interrupted')) {
       const phase = /(?:^|\s)phase=([^\s]+)/.exec(entry.message)?.[1] ?? 'unknown'
-      return [this.detect(updateFailure(phase))]
+      // A host that died mid-update leaves `update.interrupted` on the next boot, not `update.failed`; both are the same
+      // condition at the same phase, so one record covers either way the attempt ended.
+      return [this.detect(updateOutcomeCandidate(entry.message.startsWith('update.interrupted') ? 'interrupted' : 'failed', phase))]
     }
     // A finished attempt recovers the failure record either way: an applied update supersedes the failed one, and a healed
     // rollback (the previous runtime serves again) is just as complete an outcome as an apply.

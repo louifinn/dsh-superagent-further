@@ -14,7 +14,17 @@ export class SourceRegistry implements SourceScope {
   private readonly kinds = new Map<string, SourceKind>()
   private readonly health = new Map<string, HealthEntry>()
   constructor(private readonly settings: () => Settings, private readonly board: Pick<HealthBoard, 'claim'> = new HealthBoard(),
-    private readonly registered: (kind: SourceKind) => () => void = () => () => {}) {}
+    private readonly registered: (kind: SourceKind) => () => void = () => () => {},
+    /**
+     * True once the runtime is closing and its store may already be closed. Source plugins are separate DSH plugin entries
+     * that outlive the versioned runtime, so their watch loops keep running through a shutdown or an update drain; asking
+     * the closed store for settings would throw `database is not open` inside a timer callback and terminate DSH (the
+     * 2026-11-12 host crash). A closing registry answers "nothing" instead of reading.
+     */
+    private readonly closed: () => boolean = () => false) {}
+
+  /** The settings every read goes through, or undefined once the runtime is closing. */
+  private current(): Settings | undefined { return this.closed() ? undefined : this.settings() }
 
   /** Registers a SourceKind, claims its health entries on HealthBoard (rejecting `sync:` prefixes owned by Settings), and returns an unregister disposer. */
   register<C extends Record<string, unknown>>(kind: SourceKind<C>): () => void {
@@ -42,14 +52,18 @@ export class SourceRegistry implements SourceScope {
   }
   kind(id: string): SourceKind | undefined { return this.kinds.get(id) }
   /** Every registered kind's instance ordered by ID, followed by stored instances whose kind is not installed (with their config kept as stored). */
-  instances(settings = this.settings()): (SourceInstance & { installed: boolean })[] {
-    const installed = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).map(kind => ({ ...this.resolve(kind, settings.sources[kind.kind]), installed: true }))
-    const orphaned = Object.entries(settings.sources).filter(([id]) => !this.kinds.has(id)).map(([id, stored]) => ({ id, kind: id, enabled: stored.enabled, config: stored.config, installed: false }))
+  instances(settings?: Settings): (SourceInstance & { installed: boolean })[] {
+    const at = settings ?? this.current()
+    if (at === undefined) return []
+    const installed = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).map(kind => ({ ...this.resolve(kind, at.sources[kind.kind]), installed: true }))
+    const orphaned = Object.entries(at.sources).filter(([id]) => !this.kinds.has(id)).map(([id, stored]) => ({ id, kind: id, enabled: stored.enabled, config: stored.config, installed: false }))
     return [...installed, ...orphaned]
   }
-  instance<C extends Record<string, unknown>>(id: string, settings = this.settings()): SourceInstance<C> | undefined {
+  instance<C extends Record<string, unknown>>(id: string, settings?: Settings): SourceInstance<C> | undefined {
+    const at = settings ?? this.current()
+    if (at === undefined) return undefined
     const kind = this.kinds.get(id)
-    return kind ? this.resolve(kind, settings.sources[id]) as SourceInstance<C> : undefined
+    return kind ? this.resolve(kind, at.sources[id]) as SourceInstance<C> : undefined
   }
   validate(id: string, value: { enabled: boolean; config: unknown }): { enabled: boolean; config: Record<string, unknown> } {
     const kind = this.kinds.get(id)
@@ -65,26 +79,32 @@ export class SourceRegistry implements SourceScope {
       return [id, policy ? { ...policy.schema.parse(rest), admission: AdmissionTableSchema.parse(admission ?? {}) } : part as Record<string, unknown> & { allowed: { id: string; name?: string }[] }]
     }))
   }
-  policyPart(id: string, settings = this.settings()) {
+  policyPart(id: string, settings?: Settings) {
+    const at = settings ?? this.current()
+    if (at === undefined) return undefined
     const policy = this.kinds.get(id)?.policy
     if (!policy) return undefined
-    const { admission, ...rest } = settings.policy.sources[id] ?? {}
+    const { admission, ...rest } = at.policy.sources[id] ?? {}
     const parsed = policy.schema.safeParse(rest)
     return { ...parsed.success ? parsed.data : policy.schema.parse({}), admission: AdmissionTableSchema.safeParse(admission ?? {}).data ?? {} }
   }
-  channelAllowed(channel: { source: string; address: Record<string, string> }, settings = this.settings()): boolean {
+  channelAllowed(channel: { source: string; address: Record<string, string> }, settings?: Settings): boolean {
+    const at = settings ?? this.current()
+    if (at === undefined) return false
     const kind = this.kinds.get(channel.source)
     if (!kind) return false
-    const instance = this.resolve(kind, settings.sources[channel.source])
+    const instance = this.resolve(kind, at.sources[channel.source])
     return instance.enabled && (kind.channel?.allowed?.(channel.address, instance.config) ?? true)
   }
   /** Environment variable declarations for every installed kind, whether enabled or disabled. */
   declarations(): { kind: string; variables: readonly VariableSpec[] }[] {
     return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => kind.environment ? [{ kind: kind.kind, variables: kind.environment.variables }] : [])
   }
-  environments(settings = this.settings()) {
+  environments(settings?: Settings) {
+    const at = settings ?? this.current()
+    if (at === undefined) return []
     return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => {
-      const instance = this.resolve(kind, settings.sources[kind.kind])
+      const instance = this.resolve(kind, at.sources[kind.kind])
       return kind.environment && instance.enabled ? [{ kind, environment: kind.environment, config: instance.config }] : []
     })
   }
@@ -106,11 +126,13 @@ export class SourceRegistry implements SourceScope {
     return { threads: [...new Set(found.flatMap(item => item.threads))], terms: [...new Set(found.flatMap(item => item.terms))] }
   }
   repliesTo(trigger: Trigger): string | undefined { return this.kinds.get(trigger.source)?.repliesTo?.(trigger) }
-  threadContext(trigger: Trigger, settings = this.settings()): TriggerContext | undefined {
+  threadContext(trigger: Trigger, settings?: Settings): TriggerContext | undefined {
+    const at = settings ?? this.current()
+    if (at === undefined) return undefined
     const kind = this.kinds.get(trigger.source)
     const context = kind?.threadContext
     if (!kind || !context) return undefined
-    const { config } = this.resolve(kind, settings.sources[kind.kind])
+    const { config } = this.resolve(kind, at.sources[kind.kind])
     return {
       messageId: context.messageId(trigger),
       read: (commands, part, cursor) => context.read(commands, trigger, part, cursor, config),
@@ -121,9 +143,12 @@ export class SourceRegistry implements SourceScope {
       },
     }
   }
-  scope(input: { source: string; meta: Record<string, unknown> }, settings = this.settings()): ScopeResult {
+  scope(input: { source: string; meta: Record<string, unknown> }, settings?: Settings): ScopeResult {
+    const at = settings ?? this.current()
+    // A closing runtime has no settings to read; nothing it reports listens, and no store is touched.
+    if (at === undefined) return { listened: false, reason: 'source_disabled' }
     const kind = this.kinds.get(input.source)
-    const stored = settings.sources[input.source]
+    const stored = at.sources[input.source]
     // Without its kind plugin the stored scope cannot be evaluated, so a configured Source whose plugin is missing listens to nothing.
     if (!kind) return stored ? { listened: false, reason: 'source_not_installed' } : { listened: true, observed: false }
     const instance = this.resolve(kind, stored)

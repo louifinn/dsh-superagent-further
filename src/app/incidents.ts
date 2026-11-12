@@ -18,6 +18,7 @@ import {
   INCIDENT_LOG_WINDOW_MS, INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentDiagnosis,
   type IncidentFilter, type IncidentRepository, type IncidentScope, type IncidentSeverity, type IncidentStatus,
 } from '../core/incidents.ts'
+import { updateOutcomeCandidate } from './incident-detectors.ts'
 import { UserError } from '../core/errors.ts'
 import { key } from '../core/ids.ts'
 import type { Logs, LogEntry } from './logs.ts'
@@ -211,6 +212,24 @@ export class Incidents {
     const existing = this.host.store.incidents.byFingerprint(fingerprint)
     if (existing !== undefined) return this.count(existing, valid, at)
     return this.create(valid, fingerprint, at, config.dailyBudget)
+  }
+
+  /**
+   * Records update outcomes the detector never saw. A host that died mid-update writes `update.interrupted` on the next
+   * boot, and that line can land before the detector's observer attaches, so the record is rebuilt from the supervisor's
+   * durable history instead. An entry the stored record already reflects is skipped, so restarts cannot inflate the count.
+   */
+  reconcileUpdates(history: readonly { outcome: string; phase?: string | null; at: string }[]): void {
+    for (const entry of history) {
+      if (entry.outcome !== 'failed' && entry.outcome !== 'interrupted') continue
+      const at = Date.parse(entry.at)
+      if (!Number.isFinite(at)) continue
+      const candidate = updateOutcomeCandidate(entry.outcome, entry.phase ?? 'unknown')
+      const known = this.host.store.incidents.byFingerprint(incidentFingerprint(candidate))
+      if (known !== undefined && Date.parse(known.last_at) >= at) continue
+      try { this.record(candidate, { at: new Date(at) }) }
+      catch (error) { this.fail('reconcile', error) }
+    }
   }
 
   /** A repeat of a condition: counts inside an open record, or reopens a closed one after its cooldown. */

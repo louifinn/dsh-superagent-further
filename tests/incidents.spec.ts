@@ -13,7 +13,7 @@ import type { DomainEvent } from '../src/core/index.ts'
 import { incidentFingerprint, isOpenIncident, normalizeIncidentDetail, canTransition, transitionIncident,
   type IncidentCandidate } from '../src/core/incidents.ts'
 import { Incidents } from '../src/app/incidents.ts'
-import { IncidentDetector } from '../src/app/incident-detectors.ts'
+import { IncidentDetector, updateOutcomeCandidate } from '../src/app/incident-detectors.ts'
 import { Logs } from '../src/app/logs.ts'
 import { Store } from '../src/app/store.ts'
 
@@ -378,5 +378,53 @@ describe('the incident repository', () => {
     expect(h.store.incidents.count({ status: 'open' })).toBe(2)
     expect(h.incidents.total({ status: 'open', limit: 1 })).toBe(2)
     expect(h.incidents.total({ status: 'dismissed' })).toBe(0)
+  })
+})
+
+describe('update outcomes as incidents', () => {
+  it('detects an interrupted update from the line the next boot writes', () => {
+    const detector = new IncidentDetector()
+    const signals = detector.observeLog({ at: '2026-11-12T00:39:05.000Z', level: 'warn', scope: 'update',
+      message: 'update.interrupted phase=load reason=an interrupted update stopped at load' })
+    expect(signals).toHaveLength(1)
+    const signal = signals[0]!
+    expect(signal.type).toBe('detect')
+    if (signal.type !== 'detect') throw new Error('expected a detection')
+    expect(signal.candidate.rule).toBe('update-failures')
+    expect(signal.candidate.title).toBe('The runtime update was interrupted at the load phase')
+  })
+
+  it('gives a failed and an interrupted attempt at one phase the same record', () => {
+    expect(incidentFingerprint(updateOutcomeCandidate('interrupted', 'load')))
+      .toBe(incidentFingerprint(updateOutcomeCandidate('failed', 'load')))
+    expect(incidentFingerprint(updateOutcomeCandidate('failed', 'load')))
+      .not.toBe(incidentFingerprint(updateOutcomeCandidate('failed', 'swap')))
+  })
+
+  it('rebuilds the record from the supervisor history, once, across restarts', () => {
+    const h = harness()
+    const history = [{ at: '2026-11-12T00:27:44.000Z', outcome: 'interrupted', phase: 'load' }]
+    h.incidents.reconcileUpdates(history)
+    const first = h.store.incidents.list({ status: 'all' })
+    expect(first).toHaveLength(1)
+    expect(first[0]!.rule).toBe('update-failures')
+    expect(first[0]!.status).toBe('bundled')
+    h.incidents.reconcileUpdates(history)
+    expect(h.store.incidents.list({ status: 'all' })[0]!.occurrences).toBe(first[0]!.occurrences)
+  })
+
+  it('records a broken update pipeline even when the daily budget is spent', () => {
+    const h = harness({ dailyBudget: 0 })
+    h.incidents.reconcileUpdates([{ at: '2026-11-12T00:27:44.000Z', outcome: 'failed', phase: 'swap' }])
+    expect(h.store.incidents.list({ status: 'all' })).toHaveLength(1)
+  })
+
+  it('ignores outcomes an update did not fail in', () => {
+    const h = harness()
+    h.incidents.reconcileUpdates([
+      { at: '2026-11-12T00:20:00.000Z', outcome: 'applied', phase: 'commit' },
+      { at: '2026-11-12T00:21:00.000Z', outcome: 'rejected', phase: 'stage' },
+    ])
+    expect(h.store.incidents.list({ status: 'all' })).toHaveLength(0)
   })
 })

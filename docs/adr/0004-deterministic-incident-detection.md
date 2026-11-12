@@ -47,11 +47,13 @@ record, and the update pipeline (M36) owns the update-failure rule. This ADR rec
    record with that fingerprint increments `occurrences` and `last_at` and moves severity only upward; it never creates
    a second record or bundle. A `resolved` or `dismissed` record stays quiet for a one-hour cooldown measured from
    `last_at`, then reopens the same record and clears the resolution. New records are bounded by a daily budget (default
-   2, per UTC day of `first_at`), an open-record cap (100) and a minimum severity (default `high`). `health-error` and
-   `stalled-assignment` are exempt from the daily budget, because they describe a live outage that must be recorded
-   even after the day's budget is spent (`incidentBudgetExempt` in `src/core/incidents.ts`); fingerprint dedupe, the
-   closed-record cooldown, the open-record cap and the minimum severity still apply to them. A disabled detector records
-   nothing.
+   2, per UTC day of `first_at`), an open-record cap (100) and a minimum severity (default `high`). `health-error`,
+   `stalled-assignment` and `update-failures` are exempt from the daily budget, because they describe a live outage that
+   must be recorded even after the day's budget is spent (`incidentBudgetExempt` in `src/core/incidents.ts`); fingerprint
+   dedupe, the closed-record cooldown, the open-record cap and the minimum severity still apply to them. A disabled
+   detector records nothing. `update-failures` covers both an apply that failed and a host that died mid-update: the next
+   boot's `update.interrupted` line names the phase, and the supervisor's durable history is replayed at startup so an
+   attempt whose log line the detector never saw is still recorded once (ADR-0007).
 
 4. **Evidence is a content-addressed bundle under the workspace.** Before a record becomes `bundled` the service writes
    `<workspace>/artifacts/incidents/<id>/`: `config.json` (schema, version, rule, scope, severity, the incidents
@@ -106,7 +108,7 @@ record, and the update pipeline (M36) owns the update-failure rule. This ADR rec
 - A burst that repeats inside the cooldown is one record with a higher `occurrences` count, so the panel shows the
   persistence of the fault rather than one row per failure. A record that a person resolved stays quiet for an hour,
   then reopens by itself if the condition comes back; that is the intended reminder, and the daily budget bounds new
-  records rather than repeats, except for the two live-outage rules it deliberately exempts.
+  records rather than repeats, except for the live-outage rules it deliberately exempts.
 - Evidence bundles are owner-only and pruned independently of the database: the runbook documents the path, the
   retention and the backup caveat. A failed bundle is visible on the `incidents` health entry and in the log, and the
   incident itself remains.

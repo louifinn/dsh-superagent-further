@@ -82,3 +82,14 @@ export interface SourceContext {
 }
 export const sourceContext = (host: SourceHost, kind: { kind: string; health: readonly string[] }): SourceContext => host.context(kind)
 
+/**
+ * A Source's configuration, or undefined while it is off, and also when the runtime is closing and its store can no
+ * longer answer. Source plugins are separate DSH plugin entries that outlive the versioned runtime, so their watch loops
+ * keep ticking through a shutdown or an update drain; a lookup that throws there lands in a timer callback and DSH treats
+ * the uncaught exception as fatal (the 2026-11-12 host crash). A closed runtime therefore reads as "the Source is off",
+ * which makes every loop stop instead of failing.
+ */
+export function sourceConfig<C extends Record<string, unknown>>(ctx: SourceContext, kind: string): C | undefined {
+  try { return ctx.config<C>(kind) } catch { return undefined }
+}
+
