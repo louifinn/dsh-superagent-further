@@ -234,31 +234,9 @@ Parameters:
 }
 ```
 
-### `orchestrator_ticket_retry`
+### `orchestrator_lead_instruction`
 
-Start a new assignment on an explicit human retry request for a ticket whose worker failed, blocked, or lost an input; the stalled one ends.
-
-Parameters:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "ticket_id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "ticket_id"
-  ],
-  "additionalProperties": false
-}
-```
-
-### `orchestrator_ticket_request_status`
-
-Ask the worker of an idle ticket, whose turn ended without a report, for a status report; other tickets get nothing.
+Relay a person's instruction about one Ticket to its project Lead, who decides and acts on it. The Orchestrator never commands a worker directly (ADR-0008): this writes a durable instruction for the Lead and prompts it. Actions: attach a Trigger, stop the Ticket, retry a stuck Assignment, pass a note to the worker, or ask the worker that reported waiting for a status report.
 
 Parameters:
 
@@ -267,39 +245,43 @@ Parameters:
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "attach",
+        "stop",
+        "retry",
+        "note",
+        "status"
+      ]
+    },
     "ticket_id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "ticket_id"
-  ],
-  "additionalProperties": false
-}
-```
-
-### `orchestrator_ticket_note`
-
-Tell a ticket's worker a fact from other work, such as what another ticket found; it grants no authority.
-
-Parameters:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "ticket_id": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "trigger_id": {
+      "description": "The Trigger to attach, for action attach.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
     },
     "text": {
+      "description": "The note's text, for action note.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "reason": {
+      "description": "Why the person stopped the Ticket, for action stop.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
     }
   },
   "required": [
-    "ticket_id",
-    "text"
+    "action",
+    "ticket_id"
   ],
   "additionalProperties": false
 }
@@ -2275,6 +2257,196 @@ Parameters:
 }
 ```
 
+### `lead_ticket_note`
+
+Add one fact or constraint to a live Ticket of this project, for its worker to read on the next turn. This grants no authority: it neither starts work nor answers a question. The Orchestrator sends this on a person's instruction.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The live Ticket of this project."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "The fact or constraint, in the language of the work."
+    }
+  },
+  "required": [
+    "ticket_id",
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_ticket_request_status`
+
+Ask a worker of this project that reported waiting for a status report, once. It only queues the request that a live worker reads on its next turn; the Orchestrator sends this on a person's instruction.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The live Ticket of this project."
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_ticket_retry`
+
+End a stuck Assignment of this project and start a new one, when the person asked for a retry. The Engine still refuses a Ticket whose latest report awaits a person's answer.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The live Ticket of this project."
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_ticket_stop`
+
+Stop a live Ticket of this project at the person's instruction: its assignments end and its worker stops. This does not complete or drop the Ticket; a person decides what happens to it next.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The live Ticket of this project."
+    },
+    "reason": {
+      "description": "Why the person stopped it, recorded with the ending.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_ticket_attach`
+
+Attach a Trigger of this project to a live Ticket of this project at the person's instruction. The worker reads the new input on its next turn; attaching the same message twice is refused by the Engine.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The live Ticket of this project."
+    },
+    "trigger_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The Trigger to attach, from this project's repository."
+    },
+    "note": {
+      "description": "Why the person attached this message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "ticket_id",
+    "trigger_id"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_instruction_reply`
+
+Answer an instruction the Orchestrator relayed for one of this project's Tickets, and act on it when it applies: attach a Trigger, stop the Ticket, retry a stuck Assignment, pass a note to the worker, or ask for a status report. One reply per instruction; the Ticket must belong to this project.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "The instruction request id from the Orchestrator."
+    },
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The Ticket the instruction names."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "The Lead's answer, in the language of the work."
+    }
+  },
+  "required": [
+    "request_id",
+    "ticket_id",
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### `lead_notify_worker`
 
 Relay a short notice to a worker or reviewer Session of this project, by Session id, after the work it was doing ended — for example when a pull request merged. Use one call per Session. This is a relay only: it neither starts work nor grants the recipient new authority, and it cannot reach Sessions of another project.
@@ -2632,4 +2804,4 @@ Parameters:
 
 ## Total
 
-49 distinct tools across 5 groups (56 registrations).
+53 distinct tools across 5 groups (60 registrations).

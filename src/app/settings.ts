@@ -349,6 +349,19 @@ export class Settings {
     return proposal
   }
   /**
+   * Refuses an Executor settings save that removes a project which still owns open Tickets: those Tickets would keep
+   * pointing at a checkout nothing resolves any more (ADR-0008).
+   */
+  private refuseRemovingProjects(current: SettingsValue, candidate: SettingsValue): void {
+    const removed = current.executor.projects.filter(project => candidate.executor.projects.every(next => next.id !== project.id))
+    if (removed.length === 0) return
+    const open = this.host.store.tickets.open().filter(ticket => removed.some(project => project.id === ticket.project))
+    if (open.length === 0) return
+    const ids = removed.filter(project => open.some(ticket => ticket.project === project.id)).map(project => project.id).join(', ')
+    throw new UserError('projectHasOpenTickets', { projects: ids, count: String(open.length) })
+  }
+
+  /**
    * Validates and saves one settings block against its `revision`; a no-op save records no new revision, a changed policy
    * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI) or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent-further` so setup runs again.
@@ -377,6 +390,7 @@ export class Settings {
     // can leave a prepared empty directory behind. That directory is harmless (nothing is registered or started from it).
     if (kind === 'workspace') (parsed as SettingsValue['workspace']).path = await this.host.setup.verifyWorkspace((parsed as SettingsValue['workspace']).path, current)
     const candidate = rules.merge(current, parsed, id)
+    if (block === 'executor') this.refuseRemovingProjects(current, candidate)
     if (origin === 'tool') refuseToolFields(block, id, current, candidate, sources)
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null

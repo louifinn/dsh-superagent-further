@@ -61,9 +61,11 @@ describe('Lead Sessions', () => {
       const again = await host.runtime.sessions.ensureLead('app', join(host.directory, 'app'), 'Project App')
       expect(again.id).toBe('lead-app')
       // The Lead's application tools read its project, its Tickets and its waiting messages, and list its requests.
-      expect([...host.tools.get('lead-app')!.keys()].sort()).toEqual(['lead_notify_worker', 'lead_request_approval', 'lead_request_approve',
-        'lead_request_complete', 'lead_request_create', 'lead_request_decide', 'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_review',
-        'lead_review_record', 'lead_status', 'memory_forget', 'memory_search', 'memory_write'])
+      expect([...host.tools.get('lead-app')!.keys()].sort()).toEqual(['lead_instruction_reply', 'lead_notify_worker', 'lead_request_approval',
+        'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide', 'lead_request_escalate',
+        'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'lead_ticket_attach',
+        'lead_ticket_note', 'lead_ticket_request_status', 'lead_ticket_retry', 'lead_ticket_stop', 'memory_forget', 'memory_search',
+        'memory_write'])
       const status = await host.runTool('lead-app', 'lead_status', {}) as { project: Record<string, unknown>; tickets: { open: unknown[] };
         messages: unknown[] }
       expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })

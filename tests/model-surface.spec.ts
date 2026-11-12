@@ -256,7 +256,10 @@ async function drive(host: Host) {
   await runtime.receive(beyond)
   await runtime.idle()
   await run(workerA, 'orchestrator_trigger_handback', { trigger_id: beyond.id, reason: 'It asks for an export feature.' })
-  await run(master, 'orchestrator_ticket_note', { ticket_id: a, text: 'Ticket B changes the same settings page.' })
+  const instruction = await run(master, 'orchestrator_lead_instruction',
+    { action: 'note', ticket_id: a, text: 'Ticket B changes the same settings page.' }) as { request_id: string }
+  await run('lead-default', 'lead_instruction_reply', { request_id: instruction.request_id, ticket_id: a,
+    text: 'Noted for the worker.' })
   await runtime.pump()
   await runtime.idle()
   await run(workerA, 'orchestrator_report', { state: 'ready', summary: 'Done.' })

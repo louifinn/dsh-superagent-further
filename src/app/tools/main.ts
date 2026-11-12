@@ -222,30 +222,44 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
       false, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
     routeTool(host),
     tool({
-      name: 'orchestrator_ticket_retry',
-      description: 'Start a new assignment on an explicit human retry request for a ticket whose worker failed, blocked, or lost an input; the stalled one ends.',
-      schema: z.object({ ticket_id: z.string() }).strict(),
-      execute: async args => routed(host, { reason: 'Started a new assignment', ticketId: host.engine.retryTicket(args.ticket_id).id }),
-    }),
-    tool({
-      name: 'orchestrator_ticket_request_status',
-      description: 'Ask the worker of an idle ticket, whose turn ended without a report, for a status report; other tickets get nothing.',
-      schema: z.object({ ticket_id: z.string() }).strict(),
-      execute: async args => {
-        const reason = host.engine.requestStatus(args.ticket_id) ? 'Asked the worker for a status report' : 'The worker is not waiting; nothing was sent'
-        return routed(host, { reason, ticketId: args.ticket_id })
-      },
-    }),
-    tool({
-      name: 'orchestrator_ticket_note',
-      description: 'Tell a ticket\'s worker a fact from other work, such as what another ticket found; it grants no authority.',
+      name: 'orchestrator_lead_instruction',
+      description: 'Relay a person\'s instruction about one Ticket to its project Lead, who decides and acts on it. The '
+        + 'Orchestrator never commands a worker directly (ADR-0008): this writes a durable instruction for the Lead and '
+        + 'prompts it. Actions: attach a Trigger, stop the Ticket, retry a stuck Assignment, pass a note to the worker, or '
+        + 'ask the worker that reported waiting for a status report.',
       schema: z.object({
-        ticket_id: z.string(),
-        text: z.string().trim().min(1).refine(text => wordCount(text) <= IM_WORDS, `At most ${IM_WORDS} words`),
+        action: z.enum(['attach', 'stop', 'retry', 'note', 'status']),
+        ticket_id: z.string().trim().min(1).max(200),
+        trigger_id: z.string().trim().min(1).max(200).optional().describe('The Trigger to attach, for action attach.'),
+        text: z.string().trim().min(1).max(2_000).optional().describe('The note\'s text, for action note.'),
+        reason: z.string().trim().min(1).max(500).optional().describe('Why the person stopped the Ticket, for action stop.'),
       }).strict(),
-      execute: async args => {
-        host.engine.note(args.ticket_id, args.text)
-        return routed(host, { reason: 'Noted for the worker', ticketId: args.ticket_id })
+      execute: async (args: { action: 'attach' | 'stop' | 'retry' | 'note' | 'status'; ticket_id: string; trigger_id?: string;
+        text?: string; reason?: string }) => {
+        const ticket = host.store.tickets.get(args.ticket_id)
+        if (!ticket) throw new Error(`Unknown Ticket ${args.ticket_id}`)
+        const project = host.projects().find(candidate => candidate.id === ticket.project)
+        if (!project) throw new Error(`Ticket ${ticket.id} names no registered project; its Lead cannot be resolved`)
+        if (args.action === 'attach' && args.trigger_id === undefined) throw new Error('Attaching a Trigger needs its id')
+        if (args.action === 'note' && args.text === undefined) throw new Error('A note needs its text')
+        const requestId = `lead-instruction:${ticket.id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
+        const body = JSON.stringify({ action: args.action, ticket_id: ticket.id,
+          ...args.trigger_id === undefined ? {} : { trigger_id: args.trigger_id },
+          ...args.text === undefined ? {} : { text: args.text },
+          ...args.reason === undefined ? {} : { reason: args.reason } })
+        const message = host.store.leads.send({ project: project.id, kind: 'instruction', from: 'orchestrator', to: 'lead',
+          requestId, ticketId: ticket.id, body })
+        const lead = await host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+        const detail = args.action === 'attach' ? `attach Trigger ${args.trigger_id}`
+          : args.action === 'stop' ? `stop it${args.reason === undefined ? '' : ` (${args.reason})`}`
+            : args.action === 'retry' ? 'retry its stuck Assignment'
+              : args.action === 'note' ? `pass this fact to the worker: "${args.text}"`
+                : 'ask the worker that reported waiting for a status report'
+        await host.sessions.prompt(lead.id, requestId, `The Orchestrator relays a person's instruction for Ticket ${ticket.id} `
+          + `("${ticket.title}"): ${detail}. Answer with lead_instruction_reply(request_id "${requestId}", ticket_id `
+          + `"${ticket.id}") and act only if the instruction applies to this project's work.`, 'queue')
+        host.store.leads.deliver(message.id)
+        return { request_id: requestId, delivered: true }
       },
     }),
     tool({

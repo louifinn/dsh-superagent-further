@@ -12,8 +12,21 @@ import type { LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
 import type { Store } from './store.ts'
 
-/** The Engine project-request commands the Lead tools and the reply enforcement use. */
+/**
+ * The Engine ticket commands a project Lead may use on the live tickets of its own project (ADR-0008): maintaining
+ * liveness inside a mandate the Ticket already holds, never creating or extending one.
+ */
+export interface LeadTicketCommands {
+  attach(ticketId: string, triggerId: string, note?: string): Ticket
+  stopTicket(ticketId: string, reason?: string): Ticket
+  retryTicket(ticketId: string): Ticket
+  note(ticketId: string, text: string): Ticket
+  requestStatus(ticketId: string): boolean
+}
+
+/** The Engine commands the Lead tools and the reply enforcement use: project requests plus its own Tickets. */
 export type LeadEngine = Pick<EngineForMainSession, 'disposeProjectRequest' | 'replyProjectRequest' | 'completeProjectRequest'>
+  & LeadTicketCommands
 
 /** Host dependencies of the Lead dispatch. */
 export interface LeadDispatchHost {

@@ -1044,7 +1044,7 @@ export class DshExecutor implements Executor {
       // A quiet final after orchestrator_report is not a new status or an empty handoff.
       if (said) this.relay(resultRelay(updated, 'waiting', said))
       else if (!before.trim()) {
-        this.relay(resultRelay(updated, 'waiting', 'Worker ended without a status report. Use orchestrator_ticket_request_status to request one.'))
+        this.relay(resultRelay(updated, 'waiting', 'Worker ended without a status report. Ask the project Lead to request one.'))
       }
     })
     this.host.log.info('report.recorded ticket=%s state=waiting outcome=%s', ticket.id,

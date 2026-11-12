@@ -14,7 +14,7 @@ import { z } from 'zod'
 /** Who a record is from or to: the Orchestrator, a project's Lead, or a person. */
 export type LeadParty = 'orchestrator' | 'lead' | 'person'
 /** What a record carries: work to start or continue, a settled report, a question, or a notice. */
-export type LeadMessageKind = 'assignment' | 'report' | 'question' | 'notice'
+export type LeadMessageKind = 'assignment' | 'report' | 'question' | 'notice' | 'instruction'
 /** A durable message between the Orchestrator and a project's Lead. */
 export interface LeadMessage {
   id: string
@@ -38,7 +38,7 @@ export interface LeadMessage {
 /** The fields a sender supplies; the Store stamps `id` and `at`. */
 export type LeadMessageInput = Omit<LeadMessage, 'id' | 'at' | 'deliveredAt' | 'ackAt'>
 
-const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'report', 'question', 'notice']),
+const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'report', 'question', 'notice', 'instruction']),
   from: z.enum(['orchestrator', 'lead', 'person']), to: z.enum(['orchestrator', 'lead', 'person']), requestId: z.string(),
   ticketId: z.string().optional(), body: z.string(), at: z.string(), deliveredAt: z.string().optional(), ackAt: z.string().optional() }).strict()
 

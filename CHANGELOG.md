@@ -6,6 +6,24 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Changed
+
+- A person's Ticket instruction (attach, stop, retry, note, status request) now reaches the Worker only
+  through its project Lead. The Orchestrator's `orchestrator_lead_instruction` writes one durable
+  `lead_message` of kind `instruction` and prompts the Lead with a stable request id; the Lead applies it
+  through its own `lead_ticket_*` tools and answers with `lead_instruction_reply`, which acknowledges the
+  message and notifies the Orchestrator exactly once. The direct `orchestrator_ticket_retry`,
+  `orchestrator_ticket_request_status` and `orchestrator_ticket_note` tools are removed; the panel's own
+  `POST tickets/:id/retry|stop` stays a direct person action. ADR-0008 records the decision; the
+  remaining `orchestrator_route` attach/stop path and the instruction timeout are follow-ups.
+
+### Fixed
+
+- A project can no longer lose its Lead. `Sessions.ensure` unarchives an archived Lead before returning
+  it, `Runtime.initialize` gives every project with an open Ticket a Lead Session at startup, and saving
+  the Execution settings refuses to remove a project that still has open Tickets. A Workspace switch
+  therefore no longer strands a project's Tickets on an archived Lead that DSH blocks.
+
 ## [0.4.2] - 2026-11-12
 
 ### Fixed

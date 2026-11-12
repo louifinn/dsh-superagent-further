@@ -169,8 +169,10 @@ it('lets a worker follow a related thread for context, which the main Session he
     reason: 'The issue it fixes.' } })])
   expect(h.relays(h.runtime.masterId)).toEqual([])
   await expect(h.runTool(sessionId, 'orchestrator_thread_follow', { thread: 'github', reason: 'x' })).rejects.toThrow(/<source>:<id>/)
-  expect(await h.runTool(h.runtime.masterId, 'orchestrator_ticket_note', { ticket_id: ticket.id, text: 'Ticket B renamed the setting.' }))
-    .toMatchObject({ reason: 'Noted for the worker' })
+  const asked = await h.runTool(h.runtime.masterId, 'orchestrator_lead_instruction',
+    { action: 'note', ticket_id: ticket.id, text: 'Ticket B renamed the setting.' }) as { request_id: string }
+  await h.runTool('lead-default', 'lead_instruction_reply', { request_id: asked.request_id, ticket_id: ticket.id,
+    text: 'Noted for the worker.' })
   await h.runtime.idle()
   expect(h.deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === sessionId).map(call => call.text))
     .toEqual([expect.stringContaining('Note from the orchestrator, for context only: Ticket B renamed the setting.')])

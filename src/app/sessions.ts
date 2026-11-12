@@ -221,6 +221,11 @@ export class Sessions {
       result = await ctx.sessionController.resolveAgent(id as SessionId)
     }
     if ('error' in result) throw result.error
+    // DSH still resolves an archived Session but gates every model step of it. A Lead that a workspace switch archived
+    // must be resumed before the worker path hands it a prompt, not only when the orchestrator workspace migrates.
+    if (this.ctx.workspaceRegistry.archivedSessionIds.includes(id as SessionId)) {
+      await this.ctx.workspaceRegistry.unarchiveSession(id as SessionId)
+    }
     const settings = this.host.store.settings()
     await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model, this.host.values)
     await this.decorate(result.agent)
@@ -237,6 +242,22 @@ export class Sessions {
     const agent = await this.ensure(leadSessionId(projectId), cwd, title, 'lead')
     this.host.store.set(KV.lead.sessions(projectId), agent.id)
     return agent
+  }
+
+  /**
+   * Ensures the Lead Session of every registered project that still has an open Ticket, so a restart repairs a Lead that
+   * was never created or that DSH archived. A project no longer configured is skipped; its Tickets are a settings problem
+   * (the Acceptance refuses work for a project that names none), not a Lead to spawn here.
+   */
+  async ensureOpenTicketLeads(): Promise<void> {
+    const projects = this.host.store.settings().executor.projects
+    const open = new Set(this.host.store.tickets.open().flatMap(ticket => ticket.project ? [ticket.project] : []))
+    for (const projectId of open) {
+      const project: Project | undefined = projects.find(item => item.id === projectId)
+      if (!project) continue
+      try { await this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`) }
+      catch (error) { this.warn('could not ensure the Lead of project %s: %s', projectId, String(error)) }
+    }
   }
   /**
    * Returns a project's Lead Session, recovered from the Store's recorded id or recreated when it is not loaded, and
@@ -396,9 +417,18 @@ export class Sessions {
     if (this.bindings.get(agent) !== binding) return
     const register = this.registerTool(agent, binding)
     // A Lead gets the preset's native tools (including delegation) plus its project tools; an Executor Session gets the
-    // application tools its worker uses.
+    // application tools its worker uses. The Lead's ticket commands go through the Engine, bound once the Runtime composes it.
+    const engine = this.leadEngine
+    const tickets = engine === undefined ? undefined : {
+      attach: (ticketId: string, triggerId: string, note?: string) => engine.attach(ticketId, triggerId, note),
+      stop: (ticketId: string, reason?: string) => engine.stopTicket(ticketId, reason),
+      retry: (ticketId: string) => engine.retryTicket(ticketId),
+      note: (ticketId: string, text: string) => engine.note(ticketId, text),
+      requestStatus: (ticketId: string) => engine.requestStatus(ticketId),
+    }
     const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
-      notify: (session, text) => this.notifyWorker(project.id, session, text) }, project) : host.tools(agent, ticket)
+      notify: (session, text) => this.notifyWorker(project.id, session, text), ...tickets === undefined ? {} : { tickets } }, project)
+      : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
       : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })

@@ -37,7 +37,7 @@ export const USER_ERRORS = {
   notReady: ['refused', 'Ticket is not ready for delivery. Keep progress internal and wait for a verified ready report; do not relabel progress as an answer or send it through another channel.'],
   notAttention: ['refused', 'Attention requires the ticket\'s current attention question in human_action. Routine unfinished work stays internal.'],
   notQuestion: ['refused', 'An answer must target the original human question, not a worker report or automated trigger'],
-  noAnswer: ['refused', 'No worker answer is ready for this human trigger. Wait for the worker\'s report, or request one with orchestrator_ticket_request_status, which acts only on a worker that reported waiting; ordinary progress cannot be relabelled as an answer.'],
+  noAnswer: ['refused', 'No worker answer is ready for this human trigger. Wait for the worker\'s report, or ask the project Lead for a status report, which acts only on a worker that reported waiting; ordinary progress cannot be relabelled as an answer.'],
   noChannel: ['refused', 'No reply channel for this ticket or trigger'],
   panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands) can only be changed in the management panel'],
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
@@ -63,6 +63,7 @@ export const USER_ERRORS = {
   incidentInvalid: ['refused', 'The incident record is not valid: {reason}'],
   incidentTransition: ['refused', 'An incident cannot change from {from} to {to}'],
   incidentUnknown: ['missing', 'Unknown incident: {incident}'],
+  projectHasOpenTickets: ['refused', 'Project {projects} still has {count} open Ticket(s); end them before removing the project'],
 } as const satisfies Record<string, readonly ['missing' | 'refused', string]>
 export type UserErrorCode = keyof typeof USER_ERRORS
 

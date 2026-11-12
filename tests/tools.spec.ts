@@ -192,10 +192,12 @@ it('answers every routing tool in one shape: the decision it recorded, why, and 
   h.runtime.receive(other); await h.runtime.idle()
   expect(await route({ kind: 'attach', ticket_id: ticket.id, trigger_id: other.id })).toEqual({ trigger_id: other.id, kind: 'attach',
     reason: expect.any(String), ticket: card })
-  const status = await run('orchestrator_ticket_request_status', { ticket_id: ticket.id })
-  expect(status).toEqual({ reason: 'The worker is not waiting; nothing was sent', ticket: card })
+  // Retry and status are the project Lead's calls now: the Orchestrator relays an instruction and prompts the Lead.
+  expect(await run('orchestrator_lead_instruction', { action: 'status', ticket_id: ticket.id }))
+    .toEqual({ request_id: expect.any(String), delivered: true })
   await h.runTool(sessionId, 'orchestrator_report', { state: 'failed', summary: 'The build broke.' })
-  expect(await run('orchestrator_ticket_retry', { ticket_id: ticket.id })).toEqual({ reason: 'Started a new assignment', ticket: card })
+  expect(await run('orchestrator_lead_instruction', { action: 'retry', ticket_id: ticket.id }))
+    .toEqual({ request_id: expect.any(String), delivered: true })
   const chatter = feishu('4', '@bot 谢谢')
   h.runtime.receive(chatter); await h.runtime.idle()
   expect(await route({ kind: 'ignore', trigger_id: chatter.id, reason: 'thanks' })).toEqual({ trigger_id: chatter.id, kind: 'ignore', decision: 'ignore',

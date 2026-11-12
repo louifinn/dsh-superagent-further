@@ -137,6 +137,13 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 - Only the Orchestrator's side writes domain state (Tickets, Assignments, replies). The Lead may only
   propose: its messages become effects that the Orchestrator applies through the Engine, as reports
   do today. A Lead never mutates Policy, settings or another project's state.
+- A person's Ticket instruction — attach, stop, retry, note or a status request — reaches the Worker
+  only through the project Lead. `orchestrator_lead_instruction` writes one durable `lead_message` of
+  kind `instruction` and prompts the Lead with a stable request id; the Lead applies it through its own
+  `lead_ticket_*` tools and answers with `lead_instruction_reply`, which acknowledges the message and
+  notifies the Orchestrator exactly once (a duplicate answer is refused). The Orchestrator never writes
+  a Worker's Input stream, Assignment or lifecycle state directly; the panel's own
+  `POST tickets/:id/retry|stop` stays a direct person action (ADR 0008).
 - The Lead's own status (which Ticket it runs, what waits for a person) is a projection read from the
   records and the Ticket table, not a second source of truth.
 

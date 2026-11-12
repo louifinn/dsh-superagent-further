@@ -72,7 +72,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
     ['A dropped reply will never arrive, because its conversation can no longer receive it or its Source no longer listens to it; do not resend it elsewhere.',
       'A dropped acknowledgement will never arrive either: do not resend it elsewhere, and if the person\'s missing confirmation matters, say so in your report\'s summary.']],
   ['The main Session has no tool that messages a worker', 'replies',
-    ['wait for the worker\'s report, or request one with orchestrator_ticket_request_status when the ticket is idle'], ['ask the worker']],
+    ['wait for the worker\'s report, or ask the project Lead to request one when the ticket is idle'], ['ask the worker']],
   ['The main Session has no tool that messages a worker', 'shared', ['leave those activities to workers'], ['delegate']],
   ['The main Session has no tool that messages a worker', 'cli', ['leaves other context reads and local downloads to workers'], ['delegate']],
   ['The main Session has no tool that messages a worker', 'dispatch', [], ['Ask a worker']],

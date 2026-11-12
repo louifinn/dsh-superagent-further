@@ -33,6 +33,31 @@ export interface LeadToolsHost {
   readonly session: string
   /** Relays a notice to a worker or reviewer Session of this project; the Sessions layer validates the Session belongs to it. */
   notify(session: string, text: string): Promise<{ delivered: true }>
+  /** The Engine's ticket commands; the runtime binds them once its composition is complete (ADR-0008). */
+  readonly tickets?: LeadTicketHost
+}
+
+/** The Engine ticket commands a project Lead may use on the live Tickets of its own project. */
+export interface LeadTicketHost {
+  attach(ticketId: string, triggerId: string, note?: string): Ticket
+  stop(ticketId: string, reason?: string): Ticket
+  retry(ticketId: string): Ticket
+  note(ticketId: string, text: string): Ticket
+  requestStatus(ticketId: string): boolean
+}
+
+/** The live Ticket of this Lead's project, refusing an unknown Ticket or one of another project. */
+function ticketOf(host: LeadToolsHost, project: Project, id: string): Ticket {
+  const ticket = host.store.tickets.get(id)
+  if (!ticket) throw new Error(`Unknown Ticket ${id}`)
+  if (ticket.project !== project.id) throw new Error(`Ticket ${id} belongs to project ${ticket.project}, not ${project.id}`)
+  return ticket
+}
+
+/** The Engine's ticket commands, refusing when the runtime did not bind them. */
+function ticketCommands(host: LeadToolsHost): LeadTicketHost {
+  if (!host.tickets) throw new Error('Lead ticket commands are not bound in this runtime')
+  return host.tickets
 }
 
 /** What one Ticket looks like to its project's Lead: the stage a person sees and the executor's latest state. */
@@ -278,6 +303,105 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
     execute: async ({ id, summary }: { id: string; summary: string }) => {
       const result = await host.lead.complete(requestOf(host, project, id), summary)
       return { ...projectRequestView(result.request), reply_delivered: result.delivered }
+    },
+  }), tool({
+    name: 'lead_ticket_note',
+    description: 'Add one fact or constraint to a live Ticket of this project, for its worker to read on the next turn. This grants '
+      + 'no authority: it neither starts work nor answers a question. The Orchestrator sends this on a person\'s instruction.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).max(200).describe('The live Ticket of this project.'),
+      text: z.string().trim().min(1).max(2_000).describe('The fact or constraint, in the language of the work.'),
+    }).strict(),
+    execute: async ({ ticket_id, text }: { ticket_id: string; text: string }) => {
+      ticketOf(host, project, ticket_id)
+      ticketCommands(host).note(ticket_id, text)
+      return { ticket_id, noted: true }
+    },
+  }), tool({
+    name: 'lead_ticket_request_status',
+    description: 'Ask a worker of this project that reported waiting for a status report, once. It only queues the request that a live worker '
+      + 'reads on its next turn; the Orchestrator sends this on a person\'s instruction.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).max(200).describe('The live Ticket of this project.'),
+    }).strict(),
+    execute: async ({ ticket_id }: { ticket_id: string }) => {
+      ticketOf(host, project, ticket_id)
+      const requested = ticketCommands(host).requestStatus(ticket_id)
+      return requested ? { ticket_id, requested } : { ticket_id, requested, reason: 'The worker is not waiting for a status report.' }
+    },
+  }), tool({
+    name: 'lead_ticket_retry',
+    description: 'End a stuck Assignment of this project and start a new one, when the person asked for a retry. The Engine still '
+      + 'refuses a Ticket whose latest report awaits a person\'s answer.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).max(200).describe('The live Ticket of this project.'),
+    }).strict(),
+    execute: async ({ ticket_id }: { ticket_id: string }) => {
+      ticketOf(host, project, ticket_id)
+      ticketCommands(host).retry(ticket_id)
+      return { ticket_id, retried: true }
+    },
+  }), tool({
+    name: 'lead_ticket_stop',
+    description: 'Stop a live Ticket of this project at the person\'s instruction: its assignments end and its worker stops. This '
+      + 'does not complete or drop the Ticket; a person decides what happens to it next.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).max(200).describe('The live Ticket of this project.'),
+      reason: z.string().trim().min(1).max(500).optional().describe('Why the person stopped it, recorded with the ending.'),
+    }).strict(),
+    execute: async ({ ticket_id, reason }: { ticket_id: string; reason?: string }) => {
+      ticketOf(host, project, ticket_id)
+      ticketCommands(host).stop(ticket_id, reason ?? 'Stopped from the project Lead.')
+      return { ticket_id, stopped: true }
+    },
+  }), tool({
+    name: 'lead_ticket_attach',
+    description: 'Attach a Trigger of this project to a live Ticket of this project at the person\'s instruction. The worker reads '
+      + 'the new input on its next turn; attaching the same message twice is refused by the Engine.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).max(200).describe('The live Ticket of this project.'),
+      trigger_id: z.string().trim().min(1).max(200).describe('The Trigger to attach, from this project\'s repository.'),
+      note: z.string().trim().min(1).max(2_000).optional().describe('Why the person attached this message.'),
+    }).strict(),
+    execute: async ({ ticket_id, trigger_id, note }: { ticket_id: string; trigger_id: string; note?: string }) => {
+      ticketOf(host, project, ticket_id)
+      ticketCommands(host).attach(ticket_id, trigger_id, note)
+      return { ticket_id, trigger_id, attached: true }
+    },
+  }), tool({
+    name: 'lead_instruction_reply',
+    description: 'Answer an instruction the Orchestrator relayed for one of this project\'s Tickets, and act on it when it '
+      + 'applies: attach a Trigger, stop the Ticket, retry a stuck Assignment, pass a note to the worker, or ask for a status '
+      + 'report. One reply per instruction; the Ticket must belong to this project.',
+    schema: z.object({
+      request_id: z.string().trim().min(1).max(300).describe('The instruction request id from the Orchestrator.'),
+      ticket_id: z.string().trim().min(1).max(200).describe('The Ticket the instruction names.'),
+      text: z.string().trim().min(1).max(8_000).describe('The Lead\'s answer, in the language of the work.'),
+    }).strict(),
+    execute: async ({ request_id, ticket_id, text }: { request_id: string; ticket_id: string; text: string }) => {
+      const message = host.store.leads.getByRequest('lead', request_id)
+      if (!message || message.kind !== 'instruction') throw new Error(`Unknown instruction ${request_id}`)
+      if (message.project !== project.id) throw new Error(`Instruction ${request_id} belongs to project ${message.project}, not ${project.id}`)
+      if (message.ticketId !== ticket_id) throw new Error(`Instruction ${request_id} is not about Ticket ${ticket_id}`)
+      if (message.ackAt !== undefined) throw new Error(`Instruction ${request_id} was already answered`)
+      ticketOf(host, project, ticket_id)
+      const instruction = JSON.parse(message.body) as { action?: string; trigger_id?: string; text?: string; reason?: string }
+      const commands = ticketCommands(host)
+      const action = instruction.action
+      if (action === 'note') commands.note(ticket_id, instruction.text ?? text)
+      else if (action === 'retry') commands.retry(ticket_id)
+      else if (action === 'stop') commands.stop(ticket_id, instruction.reason)
+      else if (action === 'attach') {
+        if (instruction.trigger_id === undefined) throw new Error(`Instruction ${request_id} names no Trigger to attach`)
+        commands.attach(ticket_id, instruction.trigger_id, text)
+      } else if (action === 'status') {
+        if (!commands.requestStatus(ticket_id)) throw new Error('The worker is not waiting for a status report')
+      } else throw new Error(`Instruction ${request_id} names an unknown action`)
+      host.store.leads.ack(message.id)
+      // The Orchestrator reads the answer as a relay notice at its next turn; the durable record above remains for audit.
+      host.store.leads.send({ project: project.id, kind: 'notice', from: 'lead', to: 'orchestrator',
+        requestId: `lead-instruction-answer:${request_id}`, ticketId: ticket_id, body: text })
+      return { replied: true, action }
     },
   }), tool({
     name: 'lead_notify_worker',

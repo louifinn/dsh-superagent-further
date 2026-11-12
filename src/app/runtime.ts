@@ -596,6 +596,13 @@ export class Runtime implements SourceHost, RuntimeHandle {
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
+    // Every open Ticket must have a usable Lead before a worker, a request or a person needs one: a restart repairs a Lead
+    // that was never created or that DSH archived (ADR-0008).
+    try {
+      await this.sessions.ensureOpenTicketLeads()
+    } catch (error) {
+      this.log.warn('dsh-superagent-further could not ensure the Leads of the open tickets: %s', String(error))
+    }
     // A Lead turn that ended while the Host was down may have left requests or worker reports unanswered: prompt it for
     // each one now, so a restart does not silently drop a request.
     try {

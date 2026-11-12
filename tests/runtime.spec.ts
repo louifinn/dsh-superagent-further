@@ -511,7 +511,7 @@ it('binds a PR the worker reports from the Ticket\'s own project repository', as
   const { ticket, sessionId } = await acceptedTicket()
   const workspace = join(directory, 'other')
   await runtime.settings.save('executor', { ...runtime.store.settings().executor,
-    projects: [{ id: 'other', name: 'Other', workspace, repository: 'acme/other', branch: '' }] }, runtime.store.blockRevision('executor'), 'panel')
+    projects: [...runtime.store.settings().executor.projects, { id: 'other', name: 'Other', workspace, repository: 'acme/other', branch: '' }] }, runtime.store.blockRevision('executor'), 'panel')
   runtime.store.tickets.save({ ...runtime.store.tickets.get(ticket.id)!, project: 'other' })
   // The agent's PR lives in the project's repository, which is what the report has to read it from.
   vi.mocked(Commands.prototype.gh).mockImplementation(async (args: string[]) => {
@@ -534,7 +534,7 @@ it('binds the PR a report links in its summary when it passes no pr_number', asy
   const { ticket, sessionId } = await acceptedTicket()
   const workspace = join(directory, 'other')
   await runtime.settings.save('executor', { ...runtime.store.settings().executor,
-    projects: [{ id: 'other', name: 'Other', workspace, repository: 'acme/other', branch: '' }] }, runtime.store.blockRevision('executor'), 'panel')
+    projects: [...runtime.store.settings().executor.projects, { id: 'other', name: 'Other', workspace, repository: 'acme/other', branch: '' }] }, runtime.store.blockRevision('executor'), 'panel')
   runtime.store.tickets.save({ ...runtime.store.tickets.get(ticket.id)!, project: 'other' })
   vi.mocked(Commands.prototype.gh).mockImplementation(async (args: string[]) => {
     if (args[1] === 'user') return { login: 'agent-bot' } as never
@@ -1734,7 +1734,7 @@ it('relays the status-request hint when a worker\'s turn ends with no text and n
   ;(runtime as unknown as { ctx: Context }).ctx.emit('agent/status', { agent, status: 'idle' } as never)
   await vi.waitFor(() => expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'waiting' }))
   expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', ticket: { ticket_id: ticket.id }, state: 'waiting',
-    summary: expect.stringContaining('orchestrator_ticket_request_status') })
+    summary: expect.stringContaining('Ask the project Lead to request one') })
 })
 
 it('fails a ticket at once on a worker error that is not passing, and relays it', async () => {
