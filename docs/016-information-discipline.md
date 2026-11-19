@@ -222,6 +222,10 @@ change code, Policy, settings or a Mandate. That boundary is what makes automati
 "detect, do not fix" decision of [ADR 0004](adr/0004-deterministic-incident-detection.md); [ADR 0008](adr/0008-information-discipline.md)
 records the distinction.
 
+A deployment that cannot yet resolve a parent model does not pretend to degrade: it records the configuration gap and
+escalates to the next level. The parent-model rule is the target, not a claim that every current deployment already has
+two distinct role models.
+
 ## Requests to inform the person
 
 A level that finds something a person must know may ask to tell them. The request is information in its own right and
