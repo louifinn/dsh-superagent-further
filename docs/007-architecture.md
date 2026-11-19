@@ -4,6 +4,10 @@ This is the developer guide to the implementation. It maps the concepts in [001 
 
 The Orchestrator and the main Session are the same Session: the documents and the panel call it the Orchestrator, and the code and prompts call it `orchestrator`.
 
+## Information discipline (normative addition)
+
+The direction of information is normative in the later information-discipline document (016) and [ADR 0008](adr/0008-information-discipline.md). This document describes how the current implementation delivers messages. Where it describes a worker report or a worker's question relayed directly into the main Session, or an assignment prompted directly into an Executor Session, that is the current path and is being replaced: the target is Executor → Lead → Orchestrator for a report and Orchestrator → Lead → Executor for an assignment. A same-level message is carried by the common parent, one fact has one authoritative record and one direction, and a person's direct word is a Directive recorded and propagated once. The module map below still names the modules and their current responsibilities; where a module's current responsibility differs from 016, 016 is normative for the target and the implementation follows through the tracked issues.
+
 ## Core classes and glue
 
 Core classes own domain concepts and external boundaries behind small interfaces. Glue translates tool arguments, HTTP requests, Source payloads and DeepSeek Harness events into calls to those classes, then turns results into cards, views and messages.

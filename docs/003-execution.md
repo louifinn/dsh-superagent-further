@@ -20,6 +20,15 @@ A `person` stage means the Ticket cannot continue without human input. A new hum
 
 An `idle` Ticket has finished its turn without an outstanding question. A Trigger on a subscribed Thread can continue it.
 
+## Information flow
+
+- **An assignment comes from the Lead.** The Orchestrator hands the Ticket to the project Lead; the Lead starts, steers and settles the Executor. The Lead may decide the order and the concurrency inside its project, but every Executor receives its work from its Lead, and the Orchestrator does not start an Executor directly.
+- **A report goes to the Lead first.** The Executor reports through its Lead; the Lead validates it, decides what the Orchestrator must know, and passes it up with the original text and its provenance. The Orchestrator does not receive a worker report directly.
+- **An ending reaches the Lead.** Every terminal event — merged, closed, completed, dropped, stopped or failed — is information the Lead must know, not only a merged pull request. The Lead decides how to tell the workers whose work it ends.
+- **Same-level information is carried by the parent.** Two Executors of one Lead exchange information through the Lead; two Leads exchange it through the Orchestrator. No Executor contacts another Executor, another project's Lead, or the Orchestrator.
+- **A person's direct word is a Directive** ([002](002-authorization.md)). It is authoritative for the work it names, effective once, and is passed upward by the addressed level as well as downward to the branches it changes.
+- **One fact, one record, one direction.** A retry or a second channel does not create a second source; a forwarded fact keeps its original text and provenance. The direction is fixed by the fact's origin, and a fact is not sent back the way it came.
+
 ## The Executor
 
 Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the configured execution root, which defaults to `<stateDir>/work`, in a `<project>` subdirectory when the Ticket names a registered project.
@@ -44,7 +53,7 @@ A handoff to a person frees the slot immediately and leaves the Report in effect
 
 At handoff, subagents stop. Shell jobs, such as a server offered for review, may continue until the Assignment ends. They hold no slot and are exempt from the 30-minute limit, including after later turns. Their completion does not wake the Executor; it reads the results on its next turn.
 
-A person can also start a turn by writing directly in the Executor Session. Its background work follows the same rules.
+A person can also start a turn by writing directly in the Executor Session. Its background work follows the same rules. That message is a Directive: the Executor acts within its Mandate and passes the person's actual word to its Lead, which passes it to the Orchestrator.
 
 When an Assignment ends, its shell jobs are killed without waking the Session. Its subagents are released, and any completion turns they wake are dropped. The replacement Assignment and its waiting Inputs start after that shutdown finishes.
 
@@ -104,6 +113,11 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 - **Review gate:** a change Ticket may carry a review its project Lead started with `lead_review`. A `clean` verdict lets a followed pull request's merge end the Ticket; a `blocked` verdict keeps it open even after the merge, so a person resolves the findings (docs/012 D14).
 - **Verification evidence:** a Report may carry at most 20 checks, each a name, an optional command, an optional integer exit code and optional evidence text. The Assignment keeps them, the Ticket shows them as evidence, and a request's result notice counts them. The Executor reports only checks it actually ran.
 - **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a person's later message on its Threads resumes it.
+
+### Endings and notification
+
+Every ending is information as well as state. The Lead hears of the ending, and the person hears the result exactly once: one fact, one notification. A merged pull request, a closed pull request, a completed answer, a dropped Ticket, a stopped Ticket and a failed Ticket all follow this rule; the pull-request path is one case, not the only case.
+
 ### Pull requests
 
 When a followed pull request merges or closes, the Orchestrator also tells the Ticket's project Lead, which relays the end to the Ticket's worker Sessions (`lead_notify_worker`); GitHub timelines already show the merge, so the IM notice is the only external Channel notice. A `change` Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
@@ -112,7 +126,7 @@ The Ticket is done when none of the pull requests it opened remain open. If it o
 
 A close does not end the Ticket while resumed, retried or recovered work is unfinished. It also waits if the Executor acknowledged or answered a follow-up it owns but has not since made a non-progress Report or ended a turn after reading that message. A later `ready` Report ends the Ticket once the same pull-request completion rule is satisfied.
 
-Chat Channels receive one final notice about the pull-request outcome, and a root project Request adds one aggregate report across its Tickets and derived requests when its Lead completes it. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
+Chat Channels receive one final notice about the pull-request outcome — one fact, one notification — and a root project Request adds one aggregate report across its Tickets and derived requests when its Lead completes it. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
 
 "Awaiting review" therefore means a `ready` Report with a pull request on a `change` Ticket.
 
@@ -141,6 +155,14 @@ Threads followed only for context still deliver messages, but do not give the Ti
 Sources poll subscribed Threads while a live Ticket subscribes, and for two weeks after the later of the last Trigger and the subscribing Tickets' end. Afterwards, messages arrive only through ordinary intake: GitHub notifications or Feishu live events.
 
 ## Failure and recovery
+
+### When a level cannot continue
+
+A Session that stops before finishing is not a final state. The level above follows one ladder, each step bounded and recorded: continue the work; retry the failed step; degrade the model and continue; replace the Executor; escalate to the next level. The last level that cannot act tells the person.
+
+A persistent model failure uses the parent's model: the Executor uses the Lead's model, the Lead uses the Orchestrator's model. If the parent is failing too, the failure escalates. If every level fails, the person receives a failure notice with the concrete identity of the failure — role, Session, Ticket or project, provider and model, error kind and code, time, what recovery was attempted, and what the person must do. A generic notice is not sufficient.
+
+Recovery restores the flow of work; it does not change code, Policy, settings or a Mandate ([ADR 0004](adr/0004-deterministic-incident-detection.md)). A person's explicit stop or request to wait is never overridden by the ladder. Noise control may delay or group a failure, but it may not delete a live high-severity failure from the record or the notification path.
 
 ### Executor blocked or failed
 

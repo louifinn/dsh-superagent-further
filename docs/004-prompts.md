@@ -15,6 +15,23 @@ A team can edit three team sections, add skills, and override every built-in sys
 
 The built-in text covers the roles, tool usage, host mechanics, authorization rules, and the GitHub and Feishu skills. It refers to the team sections by their headings instead of repeating them.
 
+## Information rules in the prompts
+
+Every role prompt carries the same information rules, so a model does not have to infer them from its position:
+
+- A person's direct word is a Directive. The addressed Session executes it within its authority, never treats it as a
+  Policy or Mandate change, and passes it up as well as down in its next report or turn.
+- An Executor reports to its Lead, and only to its Lead. A Lead passes on what the Orchestrator must know, preserving
+  the original text; the Orchestrator does not receive a worker report directly.
+- A terminal ending, a failure that changes what another level can do, an escalation and a cross-project dependency are
+  always passed on. Routine progress stays internal.
+- A worker that needs a person told asks its Lead; a Lead asks the Orchestrator. A top-level failure alerts the person
+  directly with the concrete failure, not a generic summary.
+- One fact is stated once. A role does not re-send a fact that already reached the same recipient, add a second wording
+  of it, or send it back the way it came.
+
+The full discipline is the later numbered document 016; these rules are the prompt-level expression of it.
+
 ### Built-in parts and templates
 
 Overrides use these keys:

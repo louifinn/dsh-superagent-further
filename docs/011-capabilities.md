@@ -1037,3 +1037,34 @@ The operator can stage a built runtime, ask the running supervisor to swap to it
 - **Crash and stale requests.** `journal.json` remains the source of truth. A crash at `swap`, `load`, `init` or `commit` can leave `current.json` naming a candidate the swap wrote but never loaded, initialized or committed; before resolving any version the next start reconciles both pointers to the journal's recorded baseline (`current.json` written or removed from the record, `previous.json` restored, removed when the record says `null`, or left untouched when the record predates the field), logs `update.pointers-reconciled phase=… current=… previous=…`, clears a stale processing claim, appends an `interrupted` history entry and never re-runs the failed swap. When the crashed candidate's `init` had already migrated the database and the journal records a pre-swap backup whose baseline schema is older than the database, the same recovery restores that backup first, re-reads the schema and logs `update.database-restored phase=… schema=… backup=…`; a missing, unreadable or truncated backup, a path outside `runtime/backups/` or an unrecorded baseline schema leaves the database untouched (`update.database-restore-skipped …`) and the ordinary refusal stands. The restore is WAL-safe: the backup is copied to `<db>.restoring.tmp`, synced and verified as a readable database before it is published as the complete-copy marker `<db>.restoring`, and only then are the failed database's `-wal`/`-shm` sidecars removed and the copy renamed into place, so a failed copy never drops a committed migration that only the WAL holds. A crash after the marker exists is finished on the next boot before the schema is read (`update.database-restore-finished schema=…`); a partial `<db>.restoring.tmp` is discarded and the database is left alone. A committed journal never restores. A crash inside `commit` also returns to the baseline, because serving was never durable; a committed journal that lost only its history append gets the missing `applied` entry from the claimed request. A malformed or unknown-API request is renamed away and recorded as `rejected`; a concurrent request is refused by the deploy CLI and by the panel.
 - **History and surface.** `<stateDir>/runtime/history.jsonl` is append-only, bounded and atomic per line (applied, rolledback, failed, interrupted, rejected with ids, phases and timings). `Supervisor.updateStatus()`/`history()` project the pointers, journal, pending request, rollback eligibility, deploy hints and recent history; the runtime exposes read-only same-origin `GET updates`, and `POST updates/rollback` requires `{confirm:'ROLLBACK'}`, audits `updates.rollback`, writes one request and answers 409 while a request is pending or an update is running. The Updates tab shows all of it with a confirm-token rollback action, and Overview links a pending or failed update as needing a person. The `update-failures` incident rule is live.
 - **Tests and drill:** `tests/update.spec.ts` (the state machine, rollback restore, downgrade refusal, two-boot crash recovery at `swap`, `init` and a schema-bumping crash with pointer reconciliation and database restore, a committed journal that never restores, a missing backup that fails closed, a committed update that lost only its history append, the packaged runtime never recorded as previous, a backup under an open WAL writer, real-runtime drain and restart, malformed request, stop during drain), `tests/update-surface.spec.ts` (projection, eligibility, exclusive request creation), `tests/deploy.spec.ts` (staging and the CLI), `tests/drill.spec.ts` (16 scenarios), `tests/panel-updates.spec.tsx` and the extended `tests/http.spec.ts`, `tests/incidents.spec.ts` and `tests/client.spec.tsx`. `pnpm drill` runs the fault-injection harness against a throwaway state directory and writes `.artifacts/drills/<timestamp>.json`. Live HMR remains development-only; production updates use this swap.
+
+## Part P — Information discipline (accepted 2026-11-19)
+
+The operator adopted a discipline for how information moves through the organization. The normative document is 016
+(added after this one) and the decision is [ADR 0008](adr/0008-information-discipline.md). The decisions:
+
+- **One fact, one authoritative record and one direction.** Delivery, retry, a second channel or a summary is not a
+  second source; a forwarded fact keeps its original text and its provenance.
+- **Adjacent levels only; same level through the parent.** Executor → Lead → Orchestrator for reports; Orchestrator →
+  Lead → Executor for work; worker-to-worker through the Lead; Lead-to-Lead through the Orchestrator.
+- **The Lead is the mandatory carrier.** It receives every assignment, report and terminal ending, and passes on what
+  the Orchestrator must know.
+- **A person's direct word is a Directive.** Authoritative for that message, effective once, propagated up and down;
+  the addressed node is the temporary highest source for that message; the parent may adjust other branches but must not
+  reverse the addressed instruction.
+- **Terminal endings are obligations.** Merged, closed, completed, dropped, stopped and failed all reach the Lead; a
+  merged pull request is one case, not the only case.
+- **Notification to the person is authorized information.** An Executor asks its Lead; a Lead asks the Orchestrator; the
+  Orchestrator may speak. A top-level failure alerts the person directly with the concrete identity of the failure, and
+  every request is durable and answered.
+- **Failure ownership follows the tree, with a recovery ladder.** Continue, retry, degrade the model, replace, escalate;
+  the person is the final owner of an Orchestrator failure. Recovery is not repair, so ADR 0004's "detect, do not fix"
+  stands.
+- **Noise control may delay, merge or group a fact; it may not delete a live high-severity fact** from the record or the
+  notification path.
+- **A review request is a subject, not a change.** A whole-repository review has a named subject, a report and a
+  coverage statement, and never requires a pull request.
+
+Implementation gaps are tracked by the information-discipline epic in the issue tracker. Earlier parts of this document
+remain the record of the capabilities they describe; where they conflict with 016, 016 is normative for direction and
+obligations.

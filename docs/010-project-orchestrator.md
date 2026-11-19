@@ -14,6 +14,8 @@ also carries architecture work through a person's recorded approval, and a root 
 aggregate report. A Lead may also escalate work outside its project for the Orchestrator to decide (D13), and an installation
 automation delivery can become an installation Request from the main Session (D12). The rest of this document is unchanged.
 
+Update (2026-11-19, information discipline): the operator adopted the information-discipline program (016 and ADR 0008). This document's target model stands, with these normative additions: the Lead is the mandatory carrier — the Orchestrator hands each assignment to the Lead and receives every report and every terminal ending back through it; the Orchestrator does not start an Executor or receive a worker report directly; a person's direct word is a Directive that the Lead propagates up to the Orchestrator and down to its other Executors, without reversing the Executor the person addressed; an escalation and a needs-attention request are pushed to the Orchestrator rather than only listed for it; and every ending reaches the Lead, not only a merged pull request. The "Communication rules" and "Endings reach the Lead" sections are read with these additions; where an implementation status below describes the opposite, it is history.
+
 ## Why
 
 Today one main Session routes every project, and every Ticket gets its own root DSH Session
@@ -112,13 +114,13 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 
 1. A Source Trigger reaches the Orchestrator; Eval accepts it and the Engine creates the Ticket and
    its first Assignment (today's path, unchanged).
-2. A dispatch effect writes a `project_message` record (`kind: assignment`, the Ticket id, project,
+2. A dispatch effect writes a `lead_message` record (`kind: assignment`, the Ticket id, project,
    the assignment's brief) and prompts the Lead Session with a stable request id.
 3. The Lead reads the Ticket through its project-scoped tools, decides how to execute it and starts
    one worker subagent (`startActivation`, `agentPreset: dsh-superagent-further-worker`, `cwd` = the Ticket's
    checkout, `parent` = the Lead agent, reserved id `worker-<ticketId>`).
 4. The worker reports through the existing `orchestrator_report` tool; the Lead validates it, asks a
-   person when the Ticket stage is `person`, and writes a `project_message` (`kind: report`) back to
+   person when the Ticket stage is `person`, and writes a `lead_message` (`kind: report`) back to
    the Orchestrator, which keeps the domain: replies, finish notes, the Ticket's end. The Report can
    end the Ticket inside the tool call (a `ready` Report on an `answer` Ticket, or a `dropped`
    Report), so the Lead must not treat that end as a reason to interrupt the worker.
@@ -131,9 +133,17 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 
 **Communication rules.**
 
-- A `project_message` row is written before anything is delivered, carries a `requestId` and an
+- A `lead_message` row is written before anything is delivered, carries a `requestId` and an
   idempotency key, and is delivered by effects; the receiver records delivery and acknowledgement.
   A retry re-delivers the same row, and the receiver drops a duplicate by `requestId`.
+- Every worker report reaches the Lead before the Orchestrator. The Lead decides what the
+  Orchestrator must know and passes the original report up with its provenance; the Orchestrator
+  does not receive a worker report directly.
+- A person's direct word is a Directive. The Lead propagates it up to the Orchestrator and down to
+  the affected Executors, except the Executor the person addressed; it is effective once and never
+  a permanent hierarchy change.
+- A new escalation, a needs-attention request and a failed Lead delivery are pushed to the
+  Orchestrator, not only listed for it.
 - Only the Orchestrator's side writes domain state (Tickets, Assignments, replies). The Lead may only
   propose: its messages become effects that the Orchestrator applies through the Engine, as reports
   do today. A Lead never mutates Policy, settings or another project's state.
@@ -151,18 +161,21 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
   otherwise the Assignment is marked interrupted and requeued through the Engine.
 - The existing host lock still allows one host per state directory; Leads live inside it.
 
-## Pull request endings reach the Lead
+## Endings reach the Lead
 
 When the GitHub Source observes that a followed pull request merged or closed, the Ticket ends in the core (unless a
 reviewer blocked it). The Orchestrator then tells the project Lead through the durable `lead_message` channel
 (`LeadDispatch.pullEnded`): the message names the pull request, the ended Ticket and the worker Session(s) to notify, and
-the Lead relays it with `lead_notify_worker`, one call per Session. A project-less installation Ticket has no Lead, so
+the Lead relays it with `lead_notify_worker`, one call per Session. The same path carries every other ending — a
+person's stop, a panel stop, an Eval stop, a dropped Ticket, a completed answer and a failed Ticket: the Lead is told,
+and it decides how to tell the workers whose work it ends. A merged pull request is the common case, not the only case.
+A project-less installation Ticket has no Lead, so
 nothing is relayed for it, and the notice is written once per Ticket. This keeps the end of a change visible to the people
 who did the work without waking a worker on its own: a worker Session only runs when its Lead sends it something.
 
 ## Data model changes
 
-- **Schema 13** adds `project_message`: `id, projectId, from ('orchestrator'|'lead'|'person'),
+- **Schema 13** adds `lead_message`: `id, projectId, from ('orchestrator'|'lead'|'person'),
   to ('orchestrator'|'lead'), kind ('assignment'|'report'|'question'|'notice'), requestId,
   ticketId?, body, at, deliveredAt?, ackAt?`. Its writer is a `LeadMessages` module of its own, the
   same way the Outbox owns its receipts; the Engine remains the only writer of domain tables.
@@ -183,7 +196,7 @@ who did the work without waking a worker on its own: a worker Session only runs 
   and search, skills, compaction, and a delegation group with `tool-subagent` and
   `tool-subagent-control`; app tools `lead_assign` (start a worker subagent for a Ticket),
   `lead_status` (its running subagents and pending messages) and `lead_report` (send a
-  `project_message`), registered by `Sessions` when the Lead agent is decorated. It has no tool that
+  `lead_message`), registered by `Sessions` when the Lead agent is decorated. It has no tool that
   edits settings, Policy, Sources or another project.
 - The Lead's prompt is built from the existing prompt parts plus a project section: project name,
   repository, workspace, base branch, the current allowed list, and the rule that it may only propose

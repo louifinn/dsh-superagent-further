@@ -662,3 +662,24 @@ snapshots at zero diff until its step says otherwise.
   surface like the other roles.
 - [ ] Docs 001/004/006/007 gain the sections and module/test rows the phases require as each lands;
   CHANGELOG and the README counts stay synchronized.
+## Information discipline program (2026-11-19)
+
+The operator adopted the information discipline: document 016 is normative and
+[ADR 0008](adr/0008-information-discipline.md) records the decision. The documentation lands first; implementation is
+tracked by the information-discipline epic and its children. The phases below are a reading order, not a schedule; each
+item keeps `pnpm check` green and cites its issue.
+
+- [ ] **Adjacent propagation and the Lead carrier.** Lead carries assignments, reports and every terminal ending; no
+  Orchestrator↔Executor direct path; one authoritative record per fact with direction and hop (#12, #13, #14, #15).
+- [ ] **User Directives.** A person's direct word is authoritative once, propagates up and down, and never reverses the
+  addressed node (#20, #21, #22).
+- [ ] **Terminal notices and the alert channel.** One fact one notification; every ending reaches the Lead; failures and
+  incidents reach the person through a configured alert channel (#17, #18, #19, #30).
+- [ ] **Failure ownership, model degradation and the top alert.** Continue/retry/degrade/replace/escalate; the person
+  owns an Orchestrator failure; a full-stack model failure alerts with concrete detail (#23, #24, #25, #26, #27, #28).
+- [ ] **Notification approval chain and timeouts.** Executor→Lead→Orchestrator→person, durable and answered; a request
+  that is not handled in time escalates (#29, #31).
+- [ ] **Derivation, cross-source and full-repository review.** Roots and depth are explicit; the same need is not
+  silently duplicated; a review is a subject with a report and coverage (#32, #33, #34, #35).
+- [ ] **Documentation, boundary and acceptance.** Reconcile the documents, decide the shared-state boundary, and add the
+  information-propagation acceptance baseline (#36, #37, #38).
