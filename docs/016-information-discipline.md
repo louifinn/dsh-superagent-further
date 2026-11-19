@@ -9,7 +9,7 @@ This document is written as a discipline, not as a code design. It describes wha
 who must tell whom, and what "timely" means. How a deployment stores or delivers a message is an implementation detail;
 the obligations below do not depend on it.
 
-## 1. Why information discipline
+## Why information discipline
 
 An agent organization can fail in two ways: it can do the wrong work, or it can know the wrong things. The earlier
 documents address the first — authority, Mandates, admission, evidence. They do not address the second. Three failures
@@ -28,7 +28,7 @@ person must act or can use a result. That rule is about *progress reports*, not 
 that prevents a wrong action, or that lets a level adjust before damage, earns its cost. Silence while working remains a
 virtue; silence about what another level must know is a defect.
 
-## 2. The tree and its deformation
+## The tree and its deformation
 
 The organization is a tree of authority. The person stands above the Orchestrator; the Orchestrator above each project
 Lead; a Lead above its Executors and its reviewer; Sources feed the Orchestrator. Normally the person holds the
@@ -43,13 +43,15 @@ to the other Leads that must adjust.
 The deformation is per message. The next message starts from the normal tree. No chain of automatic acknowledgements may
 form: one input is propagated once and is then consumed.
 
-## 3. Principles
+## Principles
 
 **P1 — Adjacent levels only.** Information travels between a level and its direct parent or direct child. A message that
 would skip a level is carried by the skipped level, not sent around it.
 
 **P2 — No same-level direct exchange.** Two Executors of the same Lead, two Leads, or two reviewers do not speak to each
-other. Their common parent carries the information.
+other. Their common parent carries the information. A level also does not read another level's authoritative records or
+files directly: a shared store is not a communication channel. Where the runtime shares storage, the deployment isolates
+the reads or records the residual risk and detects it; a tool-level absence is not a guarantee.
 
 **P3 — No skipping.** The Orchestrator does not send work or facts to an Executor; the Executor does not report to the
 Orchestrator. The Lead is the mandatory carrier in both directions.
@@ -101,7 +103,7 @@ narration. It never justifies withholding a fact that changes another level's de
 belongs to the direct superior, and when no superior can act, it reaches the person. The top is never allowed to be
 uninformed.
 
-## 4. Roles and their information obligations
+## Roles and their information obligations
 
 - **Person.** The ultimate authority. Not a membership concept in the domain model; a person's direct word is recorded
   as a Directive, not as an identity or a Mandate. A person may address any level; the answer returns to the level and
@@ -122,7 +124,7 @@ uninformed.
 - **Source.** Feeds the Orchestrator with events. It is not a role that decides or routes; its Channel is a delivery
   address for the person.
 
-## 5. Directives
+## Directives
 
 A Directive is the record of a person's direct word. It carries: who spoke, where, the text, the affected project or
 Ticket if any, and its one-shot scope. It is not an Eval, not a Decision, not a Mandate.
@@ -143,7 +145,7 @@ If a level cannot comply — the instruction is outside its authority, unsafe, o
 quietly refuse. It reports upward with the concrete reason, and the level that can decide does so, or the person is
 told.
 
-## 6. New information and derived work
+## New information and derived work
 
 New information arises from: a Source event, an Executor's finding, a reviewer's verdict, a pull request or CI result, an
 incident, an automation delivery, a diagnosis, an external session, or the panel. Every source follows P1–P7.
@@ -160,7 +162,18 @@ without a root must still carry an ownership and a notification decision.
 A Lead receiving a routine local finding may keep it in the project. It must pass it on when it changes another project,
 a commitment to a person, a terminal state, a failure, or an escalation.
 
-## 7. Notification and channels
+When the same need arrives through two Sources, it is one intake fact for the Orchestrator: correlate it or record why it
+is treated as separate. Two deliveries of one need must not become two unrelated pieces of work by default.
+
+Every Ticket that runs has a project and therefore a Lead. A request no registered project can own is refused at
+acceptance; an installation-level Request still names a registered project for every delivery unit, so there is no
+project-less Ticket execution path.
+
+A common request shape (a multi-project review, a multi-project change) has an acceptance template: the deliverable, the
+delivery units, the dependency edges and, for a review, the subject. A missing field is a concrete rejection with a next
+step, never an eventual timeout or a silent downgrade.
+
+## Notification and channels
 
 One fact, one notification per recipient. A recipient is a role or a person, not a channel. Sending the same fact on two
 channels to the same recipient is duplication; sending two wordings of the same fact is also duplication.
@@ -186,7 +199,7 @@ level to ask. Even then the alert is audited.
 A notification is complete when the recipient has it, or when the sender has recorded that the channel is unavailable
 and has escalated. "The panel shows it" is not completion.
 
-## 8. Failure, recovery and model degradation
+## Failure, recovery and model degradation
 
 A Session that stops before finishing is not a final state. The level above follows one ladder: continue the work;
 retry; degrade and continue; replace the executor; escalate. Each step has a bound and leaves a record. A person's
@@ -209,7 +222,7 @@ change code, Policy, settings or a Mandate. That boundary is what makes automati
 "detect, do not fix" decision of [ADR 0004](adr/0004-deterministic-incident-detection.md); [ADR 0008](adr/0008-information-discipline.md)
 records the distinction.
 
-## 9. Requests to inform the person
+## Requests to inform the person
 
 A level that finds something a person must know may ask to tell them. The request is information in its own right and
 follows the same discipline:
@@ -221,12 +234,16 @@ follows the same discipline:
   Orchestrator approves and sends, or refuses with a reason. A Lead does not notify the person directly except for a
   fact the Lead owns and the person must act on (for example an approval it is waiting for); even then the Orchestrator
   is informed.
-- **Orchestrator → person.** Direct, with the channel rules of §7.
+- **Orchestrator → person.** Direct, with the channel rules in the notification and channels section.
 
 Every request is durable and answered. No level may silently swallow a request to inform. An urgent top-level failure
 is the only path that bypasses approval, and it is still recorded.
 
-## 10. Review as a subject
+Every request has a deadline. If it is not answered by then, it escalates to the direct superior with the original
+request and the elapsed time; the superior may decide, return it with a question, or refuse with a reason. The deadline
+is a deployment setting with a safe default, not a value each sender invents.
+
+## Review as a subject
 
 "Review the whole repository" is a review deliverable, not a change. It has a named subject — a repository, a ref, a
 standard or a set of paths — a report, evidence and a statement of coverage. It must never require a pull request or a
@@ -236,11 +253,18 @@ and the Request carries one aggregate result.
 A Lead may start an independent reviewer for a change Ticket. That reviewer is a quality gate on a change, not the same
 thing as a person's requested review. The two must not be conflated in the domain, in the panel or in the result.
 
-## 11. Timeliness and guarantees
+## Timeliness and guarantees
 
-"Timely" means within the current turn of the level that learns the fact, not "eventually". If the level cannot deliver
-in that turn, it records the fact and escalates; a retry may continue in the background, but the obligation is not
-suspended.
+"Timely" means: the level that learns the fact acts in its current turn. If its turn has already ended, it acts at the
+start of its next turn and no later than its next report. If it cannot deliver in that turn, it records the fact and
+escalates; a retry may continue in the background, but the obligation is not suspended. Waiting for a convenient later
+moment is not timely.
+
+Before a deployment can claim this discipline, it publishes a **must-know matrix**: for each class of information — a
+terminal event, a failure, a Directive, an escalation, a cross-project dependency, a request to inform the person —
+which levels must know, in which direction, by which deadline and through which channel. The matrix is the acceptance
+basis; a sender does not decide coverage case by case. The matrix lives with the deployment's information policy, and
+changing it is a reviewed decision.
 
 Guarantees:
 
@@ -253,7 +277,11 @@ Guarantees:
   has been told.
 - No fact may be delivered twice to the same recipient, in two wordings, or in the reverse direction.
 
-## 12. Relationship to the earlier documents
+## Relationship to the earlier documents
+
+This document is the single normative source for the discipline. The earlier documents state the local consequence
+for their own subject; a short summary is allowed, but it is subordinate and must not create a second authority. Where
+a summary and this document differ, this document wins. Their relationship is:
 
 - [000](000-philosophy.md): the attention rule stands; P11 limits it to progress, not knowledge. The "few concepts" rule
   yields for Information and Directive because no existing concept can carry origin, direction and one-shot authority.
@@ -269,8 +297,51 @@ Guarantees:
   notification duty.
 - [011](011-capabilities.md) Part P records the program decisions.
 
-## 13. Open work
+## Non-goals
+
+- A second durable message bus, a shared task board or a second notification truth: one authoritative record per fact,
+  and delivery is an effect.
+- A permanent hierarchy change from a Directive: it deforms the tree for one message and is consumed.
+- Automatic repair: recovery restores flow; it does not change code, Policy, settings or a Mandate.
+- A person as a membership identity: a Directive records an intervention, not a member.
+- Extra progress narration: silence about progress remains the rule.
+
+## Acceptance criteria
+
+A deployment satisfies this document only when all of the following hold and are exercised by an acceptance baseline:
+
+1. The must-know matrix exists and every class names its required levels, direction, deadline and channel.
+2. For each terminal event, a trace shows every required level received it, once, in the correct direction and within
+   its deadline; a delivery failure is recorded and escalated.
+3. Every cross-role message has one authoritative record and one origin; no forbidden edge (Orchestrator↔Executor,
+   Lead↔Lead, Executor↔Executor) carries a message; no fact is delivered in the reverse direction.
+4. A same-level message reaches the peer only through the common parent, with the original text and provenance intact.
+5. A Directive is recorded once, propagates up and down once, leaves the addressed node's instruction un-reversed, and a
+   redelivery produces no second adjustment.
+6. A same fact produces one user-facing notification per recipient; no two wordings and no second channel for the same
+   recipient.
+7. Every failure has its direct superior as owner; a persistent model failure uses the parent's model; a full-stack
+   failure produces a person alert naming role, Session, Ticket or project, provider and model, error kind and code,
+   time and attempted recovery.
+8. A request to inform the person is durable, answered, and either sent once or refused with a reason; a top-level
+   failure bypasses approval and is audited.
+9. A whole-repository review names its subject, delivers a report with evidence and coverage, and never requires a pull
+   request.
+10. A shared-state read path is isolated or recorded as accepted risk and detected; the discipline is not claimed on the
+    strength of tool-level absence alone.
+11. The documents keep one normative source: no document contradicts this one; a local summary is subordinate and
+    clearly local, never a second authority.
+
+## Out of scope
+
+The following are decided by the tracked issues, not by this document: storage, schema and tool names; exact timeout
+values, alert-channel configuration and severity routing (#19, #31); the shared-state isolation decision (#37); the
+must-know matrix format and the acceptance harness (#38); the cross-Source correlation policy (#32); the acceptance
+template details (#35); duplicated-document cleanup, terminology and the README index (#36). The implementation order is
+a planning decision, not a normative one.
+
+## Open work
 
 The gaps between this discipline and the current implementation are tracked in the repository's issue tracker under the
-information-discipline epic. This document deliberately does not prescribe code, storage or tool names; an
+information-discipline epic (#11). This document deliberately does not prescribe code, storage or tool names; an
 implementation may choose them, as long as the obligations above hold.

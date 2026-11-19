@@ -169,8 +169,9 @@ reviewer blocked it). The Orchestrator then tells the project Lead through the d
 the Lead relays it with `lead_notify_worker`, one call per Session. The same path carries every other ending — a
 person's stop, a panel stop, an Eval stop, a dropped Ticket, a completed answer and a failed Ticket: the Lead is told,
 and it decides how to tell the workers whose work it ends. A merged pull request is the common case, not the only case.
-A project-less installation Ticket has no Lead, so
-nothing is relayed for it, and the notice is written once per Ticket. This keeps the end of a change visible to the people
+A Ticket that belongs to no registered project cannot run: acceptance refuses it and onboarding requires a project, so
+there is no project-less execution path. An installation-level Request still names a registered project for every
+delivery unit, so every Ticket has a Lead. The notice is written once per Ticket. This keeps the end of a change visible to the people
 who did the work without waking a worker on its own: a worker Session only runs when its Lead sends it something.
 
 ## Data model changes

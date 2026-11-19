@@ -46,7 +46,7 @@ move domain-writing authority to a Lead and it does not turn detection into repa
    rewrite the fact.
 
 3. **One fact has one authoritative record and one direction.** Delivery, retry, a second channel or a summary is not a
-   second source. The direction of a fact is fixed by its origin and, for a Directive, by the deformation of §2 of 016.
+   second source. The direction of a fact is fixed by its origin and, for a Directive, by the deformation of the tree section of 016.
    Reverse propagation is forbidden. Two notifications of the same fact to the same recipient are a defect, not
    redundancy.
 
@@ -55,7 +55,7 @@ move domain-writing authority to a Lead and it does not turn detection into repa
    the affected branches in one pass; the addressed node is the temporary highest source for that message; the parent
    may adjust its other branches and its own work but must not reverse the addressed node's instruction; the
    Orchestrator may adjust other projects but not reverse the source project's adjustment. The Directive is consumed
-   once; a redelivery is a duplicate, not a second adjustment. The exact jurisdiction is in 016 §5.
+   once; a redelivery is a duplicate, not a second adjustment. The exact jurisdiction is in 016, Directives.
 
 5. **Timely propagation is an obligation.** A terminal ending, a failure that changes what a level can do, a Directive,
    an escalation and a cross-project dependency must be passed on within the level's current turn, or recorded and
@@ -64,7 +64,7 @@ move domain-writing authority to a Lead and it does not turn detection into repa
 6. **Notification to the person is authorized information.** An Executor asks its Lead; a Lead asks the Orchestrator; the
    Orchestrator may speak. Every request is durable and answered. A top-level failure is the exception: the person is
    alerted directly, with the concrete identity of the failure, and the alert is audited. Channel selection follows
-   016 §7: the source conversation first, one configured alert channel for urgency, GitHub on GitHub, the panel and
+   016, Notification and channels: the source conversation first, one configured alert channel for urgency, GitHub on GitHub, the panel and
    the digest as slow surfaces.
 
 7. **Failure ownership follows the tree.** The Lead owns an Executor's failure; the Orchestrator owns a Lead's failure;
@@ -75,7 +75,7 @@ move domain-writing authority to a Lead and it does not turn detection into repa
 
 8. **Recovery is not repair.** Automatic continuation, retry, model degradation and re-dispatch restore the flow of
    work. They do not change code, Policy, settings or a Mandate, and they do not resolve an incident. ADR 0004's
-   "detect, never fix automatically" stands; 016 §8 and this decision distinguish restoration from repair.
+   "detect, never fix automatically" stands; 016, Failure, recovery and model degradation and this decision distinguish restoration from repair.
 
 9. **Noise control may delay, merge or group; it may not delete a live high-severity fact** from the record or from the
    notification path. A budget that would silently drop a critical condition is a defect.
@@ -104,7 +104,7 @@ move domain-writing authority to a Lead and it does not turn detection into repa
 ## Consequences
 
 - The target direction differs from the current implementation in several places; the gap is tracked as issues under
-  the information-discipline epic, not silently ignored. The documentation is normative now; the code follows.
+  the information-discipline epic (#11), not silently ignored. The documentation is normative now; the code follows.
 - The Lead gains obligations and loses none of its existing limits: it still proposes rather than writes domain records,
   and it still cannot change Policy, settings or another project's state.
 - A Directive adds a small amount of state and a one-pass propagation plan. The "few concepts" rule of 000 is amended
@@ -127,4 +127,4 @@ move domain-writing authority to a Lead and it does not turn detection into repa
   [010 Project-level orchestrator](../010-project-orchestrator.md), [012 Project requests](../012-project-requests.md)
 - [ADR 0001](0001-ticket-end-authority.md) — ticket end authority
 - [ADR 0004](0004-deterministic-incident-detection.md) — detect, never fix automatically
-- The information-discipline epic and its child issues in the repository's issue tracker
+- The information-discipline epic (#11) and its child issues in the repository's issue tracker

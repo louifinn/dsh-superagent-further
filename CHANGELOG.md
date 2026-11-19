@@ -12,7 +12,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   between the person, the Orchestrator, the Leads and the Executors (adjacent levels only, one authoritative source and
   direction, same-level via the parent, one-shot Directives, terminal obligations, failure ownership and escalation to
   the person). `docs/adr/0008-information-discipline.md` records the decision; docs 000/001/002/003/004/005/007/009/010/011/012
-  are reconciled with it, and the implementation gaps are tracked by the information-discipline epic in the issue tracker.
+  are reconciled with it, and the implementation gaps are tracked by the information-discipline epic (#11) in the issue
+  tracker.
 - The context-surface design document `docs/015-context-surfaces.md` (Issue #6, roadmap Sprint 45).
   It records the structural fix for the three context-management defects that share one root cause —
   a role's model-facing surface is modeled four times (prompt assembly, resource visibility, surface

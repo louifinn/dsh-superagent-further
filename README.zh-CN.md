@@ -209,7 +209,8 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 - [012 项目请求](docs/012-project-requests.md)：项目请求、升级与安装级工作的设计
 - [013 运维手册](docs/013-operations-runbook.md)：日常检查、状态备份、故障恢复与升级
 - [014 自进化](docs/014-self-evolution.md)（[中文对照](docs/014-self-evolution.zh-CN.md)）：运行中发现 superagent 自身问题并按管辖分流为自修工单或上游 Issue 的设计
-- [016 信息传播纪律](docs/016-information-discipline.md)：信息在人、Orchestrator、Lead 与 Executor 之间如何流动的规范性规则——仅相邻层级、单一来源、单一方向、一次性 Directive、终局义务与故障升级
+- [015 上下文表面](docs/015-context-surfaces.md)：每个角色的模型可见表面的声明式设计
+- [016 信息纪律](docs/016-information-discipline.md)：信息在人、Orchestrator、Lead 与 Executor 之间如何流动的规范性规则——仅相邻层级、单一来源、单一方向、一次性直接指令（Directive）、终局义务与故障升级
 - [SECURITY.md](SECURITY.md)：信任边界与漏洞报告方式
 - [CONTRIBUTING.md](CONTRIBUTING.md)：面向人、普通编码智能体，以及 Orchestrator、Lead、Worker、Reviewer 的协作流程、检查门禁与交接规范
 - [工具参考](docs/reference/tools.md)：从模型看到的工具工厂生成
