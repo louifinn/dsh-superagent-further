@@ -243,6 +243,10 @@ manual for a running installation is 006.
 - [013 Operations runbook](docs/013-operations-runbook.md): daily checks, state backups, recovery and upgrades
 - [014 Self-evolution](docs/014-self-evolution.md): the design for discovering superagent's own problems in
   flight and routing them to a self-fix Ticket or an upstream Issue
+- [015 Context surfaces](docs/015-context-surfaces.md): the declarative model-facing surface for each role
+- [016 Information discipline](docs/016-information-discipline.md): the normative rules for how information moves
+  between the person, the Orchestrator, the Leads and the Executors — adjacent levels, one source, one direction,
+  one-shot Directives, terminal obligations and failure escalation
 - [SECURITY.md](SECURITY.md): the trust boundaries and the vulnerability-reporting path
 - [CONTRIBUTING.md](CONTRIBUTING.md): the loop, gates and role hand-offs for a person, an ordinary coding agent, an Orchestrator, a Lead, a Worker and a Reviewer
 - [Tool reference](docs/reference/tools.md): generated from the tool factories the model sees

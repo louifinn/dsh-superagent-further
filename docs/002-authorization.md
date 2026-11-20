@@ -21,7 +21,7 @@ A whitelisted person who addresses the agent explicitly always learns the outcom
 
 Every message on a subscribed Thread reaches its subscribed Tickets as context, including messages from bots and CI. This delivery bypasses the gate and grants no new authority. Each Ticket remains limited by its Mandate.
 
-A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. While an Executor owns the message, it takes no Eval and gets no Decision. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere.
+A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. While an Executor owns the message, it takes no Eval and gets no Decision. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere. The Executor must also treat the person's message as a Directive: it passes the person's actual word and its effect to its Lead in its next report or turn, so the Lead and the Orchestrator know. A request beyond its Mandate is handed back, not obeyed.
 
 Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.
 
@@ -52,6 +52,18 @@ A project's Lead Session can dispose of work that the admission gate does not ca
 Accepting a work request creates an ordinary domain Request and its staged Tickets under a Mandate whose basis is `{ via: 'lead', project, project_request_id }` with explicit strength. Every Ticket stays confined to that project and its Threads. Accepting an architecture request creates only a standalone design Ticket; the implementation Request and its Tickets exist only after a person approves the proposal on the root Thread (003 Execution describes the round trip). Work that belongs to another project, or that only the Orchestrator may authorize, stays an Orchestrator Request: the Lead escalates instead of widening its own request. An accepted escalation creates an installation-level Request under the Mandate basis `{ via: 'escalation', project, request }`; an installation automation delivery creates one under `{ via: 'installation', automation }`. The Orchestrator's own finding about superagent itself may become work too: `orchestrator_request_create` with `via: 'discovery'` creates an installation-level Request under `{ via: 'discovery' }`, with no Source message and no automation behind it, and its delivery units still name registered projects.
 
 The raising Session receives the Lead's reply, and the worker names the requests it leaves open in its completion report. When the root request and its derived work have ended, the Lead closes it with one aggregate report to the Channels the chain started from.
+
+## Direct intervention
+
+A person may write directly into the Orchestrator, a project Lead or an Executor Session. Such a message is not a Trigger, an Eval or a Mandate. It is a **Directive**: the record of an intervention. Its rules are:
+
+- **Authoritative for that message, within the addressed level's authority.** The level executes it without asking an upper level for permission. It does not become a standing permission.
+- **Never a Policy or Mandate change.** It cannot widen a scope, change an admission rule, grant a rule or alter a setting. Work beyond the addressed level's authority is handed back upward with a concrete reason, not performed.
+- **Propagated once, up and down.** The addressed level tells its parent, up to the Orchestrator; it also tells the branches whose work changes. For that message the addressed node is the temporary highest source: its parent may adjust its other branches and its own work, but must not reverse the addressed instruction; the Orchestrator may adjust other projects, but must not reverse the source project's adjustment.
+- **Effective once.** A redelivery of the same message is a duplicate, not a second adjustment. No acknowledgement loop, no recursion, and no permanent change to the hierarchy.
+- **Answered where the person spoke.** The answer follows the channel rules of the information discipline; it is a notification, not a new Decision.
+
+A Directive is not a substitute for a project request or an escalation. Work that needs another project or the installation still goes up as a request; the Directive only directs the work the addressed level may arrange.
 
 ## Strength
 
