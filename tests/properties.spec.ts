@@ -15,6 +15,9 @@ import { migrateTo22, migrateTo23, migrateTo24, migrateTo25 } from '../src/app/m
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { Engine, MemoryRepositories, key } from '../src/core/index.ts'
 import type { Assessor, Executor, Outcome, Policy, ProjectRequest, Trigger } from '../src/core/index.ts'
+import { FIELD_KEYS, PROJECTION_POLICY, field, project } from '../src/app/projection.ts'
+import { RESOURCE_NAMES } from '../src/app/resources.ts'
+import { ROLE_IDS, SURFACES } from '../src/app/surfaces.ts'
 import { assessmentOutcome, DEFAULT_RULES, type AdmissionDirection, type Assessment } from '../src/policy.ts'
 import { branchCiTrigger, ciTrigger, issueTrigger, pullTrigger } from '../src/sources/github-trigger.ts'
 
@@ -269,6 +272,74 @@ describe('Reconcile', () => {
         await automations.reconcile()
         expect(JSON.stringify(store.automations.records()), `seed ${seed}`).toBe(settled)
       } finally { store.close() }
+    }
+  })
+})
+
+describe('context projection invariants', () => {
+  const text = (r: ReturnType<typeof rng>): string => {
+    const alphabet = ['a', 'b', ' ', '\\n', '\\t', '字', '…', '-', 'Z']
+    let value = ''
+    const length = r.int(0, 5_000)
+    for (let i = 0; i < length; i++) value += r.pick(alphabet)
+    return value
+  }
+
+  it('never cuts a followable field without naming the read that reveals the rest', () => {
+    for (const seed of SEEDS) {
+      const r = rng(seed)
+      for (const key of FIELD_KEYS) for (let round = 0; round < 6; round++) {
+        const value = text(r)
+        const rule = PROJECTION_POLICY[key]
+        const target = field(key, { resource: 'ticket', id: 't1' })
+        const projected = project(target, value)
+        const width = rule.width ?? 0
+        if (rule.policy === 'pointer') {
+          expect(projected.inline, `seed ${seed} ${key}`).toBe('')
+          expect(projected.chars, `seed ${seed} ${key}`).toBe(value.length)
+          continue
+        }
+        if (value.length <= width) {
+          expect(projected.chars, `seed ${seed} ${key}`).toBeUndefined()
+          continue
+        }
+        expect(projected.chars, `seed ${seed} ${key}`).toBe(value.length)
+        expect(projected.read, `seed ${seed} ${key}`).toBe('ticket/t1')
+      }
+    }
+  })
+
+  it('never widens the inline text past its policy width', () => {
+    for (const seed of SEEDS) {
+      const r = rng(seed)
+      for (const key of FIELD_KEYS) {
+        const rule = PROJECTION_POLICY[key]
+        const width = rule.width ?? 0
+        const projected = project(field(key), text(r).padEnd(width + r.int(1, 200), 'x'))
+        if (rule.policy === 'pointer') expect(projected.inline, `seed ${seed} ${key}`).toBe('')
+        else expect(projected.inline.length, `seed ${seed} ${key}`).toBeLessThanOrEqual(width + 1)
+      }
+    }
+  })
+
+  it('keeps every read-resource name one of the resources the runtime pages', () => {
+    for (const key of FIELD_KEYS) {
+      const resource = PROJECTION_POLICY[key].resource
+      if (resource === undefined) continue
+      expect(RESOURCE_NAMES.some(name => name === resource || name.startsWith(`${resource}/`)), key).toBe(true)
+    }
+    for (const role of ROLE_IDS) for (const read of SURFACES[role].reads) {
+      expect(RESOURCE_NAMES, `${role} ${read}`).toContain(read)
+    }
+  })
+
+  it('is deterministic for every seed', () => {
+    for (const seed of SEEDS) {
+      const r = rng(seed)
+      for (const key of FIELD_KEYS) {
+        const value = text(r)
+        expect(project(field(key), value), `seed ${seed} ${key}`).toEqual(project(field(key), value))
+      }
     }
   })
 })

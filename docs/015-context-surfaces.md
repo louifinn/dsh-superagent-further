@@ -299,6 +299,14 @@ to `BUDGET`" patch is closed as insufficient.
 ## Explicitly rejected shortcuts
 
 - Adding `lead` to `BUDGET` and to `it.each` — fixes one symptom, leaves three duplicate role models.
+
+## Implementation status
+
+All seven steps are implemented: golden baselines (`00a1e11`), the production inventory (`9e6deda`), every role's prompt
+derived from `SURFACES` (`8ae97df`), the projection policy table with its generated page and architecture rule
+(`dfcc3df`), the generated budget page with the Lead and reviewer measured (`cf0f218`), the Lead on the project-scoped
+read path (`f810ee2`), and the four invariants as property tests. `pnpm check` is green and the acceptance criteria above
+are covered by those commits and tests.
 - Writing the criteria table by hand in a document — it drifts; it must be generated from the
   projection policy.
 - Giving the Lead a second bespoke read tool — that is the defect, not the fix.
