@@ -5,6 +5,12 @@ are merged. The operator later added D11 (Lead-raised work from automation deliv
 self-bootstrap, Sprint 26) and D13 (Lead escalation to the Orchestrator, Sprint 27), all implemented. `docs/011-capabilities.md`
 Parts E–G record the decision summaries.
 
+Update (2026-11-19, information discipline): the operator adopted the information-discipline program (016 and ADR 0008).
+D3's mandatory reply stands. D4's "passive durable parent" is historical: the Lead is now the mandatory carrier, worker
+reports reach it first, and it passes them up to the Orchestrator. D6 and D13 gain the notification duty: a completed
+root request, an accepted escalation and a worker request to inform a person must have a person-notification path, or a
+recorded decision that no person channel exists and why.
+
 ## Why
 
 Today only the Orchestrator (the main Session) can create a Request: a Request exists only as the result of an
@@ -91,11 +97,13 @@ request_create({ title, instruction, kind?: 'work'|'architecture', parent?: stri
 ```
 
 It stores the ProjectRequest (project from the worker's Ticket), marks the request pending, and delivers a message to
-the project Lead Session; if the Lead is not running, `Sessions.ensureLead` + wake as usual. **Today the Lead is a
-passive durable parent**: an assignment is written as a `lead_message` row and is never prompted, and worker reports go
-to the main Session (`src/executor/dsh.ts:544-555`, `src/app/tools/executor.ts:84-117`). This phase also adds the effect
-kind that actually prompts the Lead (`Sessions.prompt(leadSessionId, …)`) for raised requests and unanswered worker
-reports, so the mandatory-reply gate has something to gate on. Idempotency: one open
+the project Lead Session; if the Lead is not running, `Sessions.ensureLead` + wake as usual. At the time of this phase the Lead was a **passive durable parent**: an assignment was written as a `lead_message` row
+and was not prompted, and worker reports went to the main Session (`src/executor/dsh.ts:544-555`,
+`src/app/tools/executor.ts:84-117`). The information-discipline program (016, ADR 0008) replaces that arrangement: the
+Lead is the mandatory carrier, it is prompted for its assignments, worker reports and terminal endings reach it first,
+and it passes the original report up to the Orchestrator. This phase also adds the effect kind that actually prompts the
+Lead (`Sessions.prompt(leadSessionId, …)`) for raised requests and unanswered worker reports, so the mandatory-reply gate
+has something to gate on. Idempotency: one open
 request per (ticket, title) — a repeated call returns the existing id. The worker's ordinary `report` gains
 `requests: string[]` so a completion report states what it raised.
 
@@ -237,7 +245,10 @@ the Mandate basis is `{ via: 'escalation', project, request }`, its actor `dsh-s
 trusts that basis like a Lead accept, because the Orchestrator decided it rather than a Source message. Reject and
 needs-info record the reply and create no work. The reply is written as a `lead_message` notice for the source project
 and delivered to its Lead, which reports it onward through the original worker; a repeated escalation of the same title
-in the same Lead Session returns the open request. A person's architecture approval is unaffected: architecture work
+in the same Lead Session returns the open request. The Orchestrator is told of a new escalation rather than only finding
+it by polling. An accepted escalation that a person must know about reaches the person through the Orchestrator's
+notification duty; a rootless escalation must still have a person-notification path or a recorded decision that no
+person channel exists and why. A person's architecture approval is unaffected: architecture work
 still needs a root Thread, so escalation stays inside the work kind.
 
 ## Phases / missions

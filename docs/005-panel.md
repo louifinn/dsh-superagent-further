@@ -2,6 +2,8 @@
 
 Open **Superagent** in the DeepSeek Harness Web sidebar to supervise the agent. The panel prioritizes work that needs a person, then system health and history. This document builds on [000 Philosophy](000-philosophy.md) through [004 Prompts](004-prompts.md).
 
+The panel is a slow surface. It makes a fact visible and lets a person act; it is never a second source of truth, and it does not replace the obligation to tell the person who must act. Every panel action is a command, and its effect is announced through the same information records as any other action; a fact that exists only in the panel has not been propagated.
+
 Open **Superagent** for the Overview tab: what needs a person, the last day, and the Executor. The Source tab adds
 each Source's health and, for a polling Source, when it checks next. The release check in the deployment guide says how
 to capture these views for a release; screenshots are deliberately not committed, because a real host shows the
