@@ -327,8 +327,11 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
         turn++
         take(true)
       })
-      // Every Session has a header; an independent child has no parent Session here.
-      const session = { id: sessionId, header: {} as Record<string, unknown>, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
+      // Every Session has a header; an independent child has no parent Session here. `append` records the event so a
+      // second seeding (or a durable model selection) is visible to code that reads the Session's history.
+      const events: { type: string; data: unknown }[] = []
+      const session = { id: sessionId, header: {} as Record<string, unknown>, snapshotEvents: () => events as never, requestHeader: () => undefined,
+        append: vi.fn((type: string, data: unknown) => { events.push({ type, data }) }) }
       let status = 'idle'
       const idle: (() => void)[] = []
       // A cancel drops the inbox unless kept, and the turn it stops ends a moment later, which DSH says.

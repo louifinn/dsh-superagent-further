@@ -8,6 +8,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- A persistent model failure now falls back to the parent level's model (issue #24): a Worker whose requests keep
+  exhausting retries switches to its project Lead's current model for its next request, and a Lead whose requests keep
+  failing switches to the Orchestrator's; the switch is a recovery step that appends a durable model selection and logs
+  the old and new provider/model, without touching the Mandate, Policy or any other setting. A project Lead may now carry
+  its own model (Settings → Execution; empty shares the worker model), and the reviewer subagent inherits the Lead's
+  configured model. When every level fails, the model-failure alert and the `models` health entry carry the raw detail.
 - Unfinished work now recovers through a bounded ladder (issue #23): a running Assignment whose worker ends a turn
   without a report, or reports failed, gets one continue prompt, then one restart — a failed report through retry, any
   other through the interrupted path with a recovery note — and after that only the Lead and the attention path escalate;

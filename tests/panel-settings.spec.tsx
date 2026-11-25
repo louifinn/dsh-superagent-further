@@ -58,7 +58,7 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
     prepare: 'git worktree add "$DSH_SUPERAGENT_DIR"', blockedCommands: ['gh-personal', 'gh.other'], projects: [], worktreeKeepDays: 7,
     timeouts: { requestHours: 6, escalationHours: 4, attentionHours: 24 },
     logLevel: 'info', logRetentionDays: 7, incidents: { enabled: true, autoDiagnose: true, dailyBudget: 2, diagnoseDailyBudget: 2, minimumSeverity: 'high', alertChatId: '', alertMinimumSeverity: 'high', alertDailyLimit: 4, alertRecovery: true },
-    model: { provider: 'worker-provider', model: 'worker-model', reasoningEffort: 'high' } })
+    model: { provider: 'worker-provider', model: 'worker-model', reasoningEffort: 'high' }, lead: null })
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/eval',
     'settings/executor'])
 })

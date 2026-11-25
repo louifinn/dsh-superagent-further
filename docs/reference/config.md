@@ -218,6 +218,7 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
     "executor": {
       "default": {
         "model": null,
+        "lead": null,
         "maxWorkers": 3,
         "projectWorkers": 2,
         "directory": "",
@@ -247,6 +248,36 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
       "type": "object",
       "properties": {
         "model": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reasoningEffort": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lead": {
           "default": null,
           "anyOf": [
             {

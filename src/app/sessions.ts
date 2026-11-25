@@ -1,6 +1,6 @@
 /** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -14,7 +14,7 @@ import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth, type BudgetRetryStatus } from './retry-health.ts'
-import { initializeRoleModel } from './role-models.ts'
+import { initializeRoleModel, resolveRoleModel, sessionModel, switchSessionModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
@@ -28,6 +28,9 @@ import type { CaptureLogs } from './logs.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
+
+/** The retry attempt at which a managed Session's model falls back to its parent's current model (issue #24). */
+const MODEL_ESCALATION_ATTEMPTS = 2
 
 /** Host dependencies used by `Sessions`. */
 export interface SessionsHost {
@@ -146,6 +149,8 @@ export class Sessions {
   /** Decorated agents mapped to their registered disposers and skill scope until the agent is disposed or `Sessions.dispose()` runs. */
   private readonly bindings = new Map<Agent, SessionBinding>()
   private readonly retryHealth = new RetryHealth()
+  /** The model each managed Session already fell back to during its current retry wait (`sessionId` -> `provider/model`), so one outage never bounces a Session twice. */
+  private readonly modelEscalations = new Map<string, string>()
   private readonly ctx: Context
   /** Prompts a project's Lead about raised Project Requests and enforces the mandatory reply at its turn end. */
   readonly lead: LeadDispatch
@@ -236,7 +241,11 @@ export class Sessions {
       await this.ctx.workspaceRegistry.unarchiveSession(id as SessionId)
     }
     const settings = this.host.store.settings()
-    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model, this.host.values)
+    // The orchestrator keeps the assessor model; a project Lead may carry its own model and otherwise shares the
+    // executor model with workers; the reviewer subagent inherits the Lead's model (issue #24).
+    const model = role === 'orchestrator' ? settings.eval.model
+      : role === 'lead' ? settings.executor.lead ?? settings.executor.model : settings.executor.model
+    await initializeRoleModel(ctx, result.agent, model, this.host.values)
     await this.decorate(result.agent)
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
@@ -374,7 +383,60 @@ export class Sessions {
     this.host.health.set(retries.length
       ? { state: 'error', detail: retries.slice(0, 5).map(item => `${item.sessionId}: ${item.provider} is over its model budget; retried ${item.attempts} times, waiting since ${item.since}; the model and retry policy are unchanged`).join('; ') + (retries.length > 5 ? `; ${retries.length - 5} more Sessions` : ''), at: retries.at(-1)!.lastAt }
       : { state: 'ready', detail: 'No managed Session is waiting on a model budget retry' })
+    // A Session that keeps failing on the same model falls back to its parent's current model (issue #24); the first
+    // attempt only retries, and a recovered or stopped Session forgets the fallback so a later outage can escalate again.
+    const waiting = new Set(retries.map(item => item.sessionId))
+    for (const sessionId of [...this.modelEscalations.keys()]) if (!waiting.has(sessionId)) this.modelEscalations.delete(sessionId)
+    for (const retry of retries) {
+      if (retry.attempts < MODEL_ESCALATION_ATTEMPTS) continue
+      void this.escalateModel(retry.sessionId, `${retry.provider} failed ${retry.attempts} times on its model budget`)
+        .catch(error => this.warn('could not fall back from the model of %s: %s', retry.sessionId, String(error)))
+    }
     this.host.onModelRetries?.(retries)
+  }
+  /** The role a managed Session id encodes; the master Session is the orchestrator and has no parent model. */
+  private modelLevel(sessionId: string): 'orchestrator' | 'lead' | 'worker' | undefined {
+    if (sessionId === this.host.masterId) return 'orchestrator'
+    if (sessionId.startsWith('lead-')) return 'lead'
+    if (sessionId.startsWith('worker-')) return 'worker'
+    return undefined
+  }
+  /** The Lead Session a worker falls back to, taken from its Ticket's project. */
+  private parentLeadOf(agent: Agent): string | undefined {
+    const ticket = this.ticketOf(agent)
+    return ticket?.project === undefined ? undefined : leadSessionId(ticket.project)
+  }
+  /** A role's configured model, resolved through the live provider; unset roles inherit their documented fallback. */
+  private async configuredModel(level: 'orchestrator' | 'lead' | 'worker'): Promise<ModelSelection | undefined> {
+    const settings = this.host.store.settings()
+    const model = level === 'orchestrator' ? settings.eval.model
+      : level === 'lead' ? settings.executor.lead ?? settings.executor.model : settings.executor.model
+    return model ? await resolveRoleModel(this.ctx, model, this.host.values) : undefined
+  }
+  /**
+   * Fall a managed Session back to its parent's current model after repeated model-budget failures (issue #24): a worker
+   * takes its project Lead's model, a Lead takes the orchestrator's, and the orchestrator itself only reaches a person
+   * through the model-fault alert. The next request uses the new model; Mandate, Policy and every other setting stay put.
+   */
+  async escalateModel(sessionId: string, reason: string): Promise<{ sessionId: string; level: 'worker' | 'lead'; from?: ModelSelection; to: ModelSelection } | undefined> {
+    const level = this.modelLevel(sessionId)
+    if (level !== 'worker' && level !== 'lead') return undefined
+    const agent = this.ctx.agents.get(sessionId as SessionId)
+    if (!agent) return undefined
+    const parentId = level === 'worker' ? this.parentLeadOf(agent) : this.host.masterId
+    if (!parentId) return undefined
+    const parent = this.ctx.agents.get(parentId as SessionId)
+    const to = (parent ? sessionModel(parent) : undefined) ?? await this.configuredModel(level === 'worker' ? 'lead' : 'orchestrator')
+    if (!to) return undefined
+    const from = sessionModel(agent) ?? await this.configuredModel(level)
+    if (from && from.provider === to.provider && from.model === to.model) return undefined
+    const target = `${to.provider}/${to.model}`
+    if (this.modelEscalations.get(sessionId) === target) return undefined
+    await switchSessionModel(this.ctx, agent, to)
+    this.modelEscalations.set(sessionId, target)
+    this.warn('switched the model of %s from %s to %s: %s; the next request uses the parent model', sessionId,
+      from ? `${from.provider}/${from.model}` : 'the default', target, reason)
+    return { sessionId, level, ...(from ? { from } : {}), to }
   }
   private ticketOf(agent: Agent): Ticket | undefined {
     const ticketId = ticketOfSession(agent.id)
@@ -391,6 +453,8 @@ export class Sessions {
     this.bindings.set(agent, binding)
     // An answer ticket reads the live checkout under a read-only profile; a change ticket works inside its own worktree.
     if (ticket) this.ctx.permissionPresets.set(agent.session, canComplete(ticket.deliverable) ? 'read-only' : 'danger-full-access')
+    // A Lead-hosted worker starts as a subagent, so `ensure` never seeds it; give it the executor model here (issue #24).
+    if (ticket) await initializeRoleModel(this.ctx, agent, host.store.settings().executor.model, host.values)
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
     this.updateModelHealth()

@@ -4,6 +4,52 @@ import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { RoleModel } from '../policy.ts'
 
+/** The model a managed Session last selected, or undefined while it runs on the host default (issue #24). */
+export function sessionModel(agent: Agent): ModelSelection | undefined {
+  const events = agent.session.snapshotEvents()
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!
+    if (event.type !== 'model/selection') continue
+    const data = event.data as unknown as Record<string, unknown> | null
+    if (!data || typeof data !== 'object' || typeof data.provider !== 'string' || typeof data.model !== 'string') return undefined
+    return { provider: data.provider, model: data.model,
+      ...(typeof data.reasoningEffort === 'string' ? { reasoningEffort: data.reasoningEffort as ModelSelection['reasoningEffort'] } : {}) }
+  }
+  return undefined
+}
+
+/**
+ * Switch a managed Session to another model for its next request (issue #24). The selection is appended so the switch is
+ * durable, and a one-shot override hands it to the next assembled request; DSH re-reads the appended selection afterwards.
+ * This is a recovery step, not an authorization change: the Mandate, Policy and every other Session setting stay as they are.
+ */
+export async function switchSessionModel(ctx: Context, agent: Agent, selection: ModelSelection): Promise<void> {
+  agent.session.append('model/selection', selection)
+  let armed = true
+  let assembled: ModelSelection | undefined
+  agent.ctx.effect(() => {
+    const disposers = [
+      agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+        if (!armed) return next()
+        const result = await next()
+        armed = false
+        assembled = selection
+        return { ...result, variables: { ...result.variables, provider: selection.provider, model: selection.model } }
+      }, { prepend: true }),
+      agent.ctx.on('agent/request', async (_payload, next) => {
+        const result = await next()
+        if (!assembled) return result
+        const { reasoningEffort: _inherited, ...rest } = result
+        const switched = { ...rest, ...assembled }
+        assembled = undefined
+        return switched
+      }, { prepend: true }),
+    ]
+    return () => disposers.forEach(dispose => dispose())
+  })
+  await ctx.sessionPersistence.flush()
+}
+
 /** Resolve a configured route through the live provider; catalog membership is not a restriction. */
 export async function resolveRoleModel(ctx: Context, model: RoleModel, values: Pick<RuntimeHostValues, 'ReasoningEffortId'>): Promise<ModelSelection> {
   const value = await ctx.llm.resolveCallConfig({ provider: model.provider, model: model.model,

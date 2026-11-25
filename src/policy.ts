@@ -217,6 +217,8 @@ export const ExecutorTimeoutsSchema = z.object({
 export type ExecutorTimeouts = z.infer<typeof ExecutorTimeoutsSchema>
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
+  /// The project Lead's model (issue #24); empty shares `model`. The reviewer subagent inherits the Lead's model.
+  lead: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
   /// How many executors one project may run at once; the global maxWorkers still caps the whole host.
   projectWorkers: z.number().int().min(LIMITS.projectWorkers.min).max(LIMITS.projectWorkers.max).default(2),

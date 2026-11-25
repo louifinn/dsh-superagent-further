@@ -4,7 +4,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import { agentEvents, installModelSelection, type Agent, type ModelSelection, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { initializeRoleModel } from '../src/app/role-models.ts'
+import { initializeRoleModel, sessionModel, switchSessionModel } from '../src/app/role-models.ts'
 import { testValues } from './fixtures/values.ts'
 const contexts: Context[] = []
 afterEach(async () => { await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose())); vi.restoreAllMocks() })
@@ -63,4 +63,19 @@ it('inherits the host when unset and fails unavailable routes before recording a
   resolve.mockRejectedValueOnce(new Error('unknown provider'))
   await expect(initializeRoleModel(ctx, agent, { provider: 'unknown', model: 'x' }, testValues)).rejects.toThrow('unknown provider')
   expect(agent.session.snapshotEvents().some(event => event.type === 'model/selection')).toBe(false)
+})
+
+it('reads the current model and switches a Session for its next request as a recovery step', async () => {
+  const { ctx, agent, flush, request } = await fixture()
+  await initializeRoleModel(ctx, agent, { provider: 'worker', model: 'one' }, testValues)
+  await ctx.systemPrompt.assemble()
+  expect(await request()).toEqual({ provider: 'worker', model: 'one' })
+  expect(sessionModel(agent)).toMatchObject({ provider: 'worker', model: 'one' })
+  const switched = { provider: 'lead', model: 'two' }
+  await switchSessionModel(ctx, agent, switched)
+  expect(flush).toHaveBeenCalledTimes(2)
+  await ctx.systemPrompt.assemble()
+  expect(await request()).toEqual(switched)
+  expect(sessionModel(agent)).toMatchObject(switched)
+  expect(agent.session.snapshotEvents().filter(event => event.type === 'model/selection')).toHaveLength(2)
 })
