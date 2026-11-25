@@ -204,7 +204,17 @@ async function acceptedTicket(trigger = feishu('1', '@bot 修一下回归'), del
   const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复回归',
     worktree_name: worktreeName, deliverable, acknowledgement: '收到，修复回归。' })
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
-  return { trigger, ticket, sessionId: `worker-${ticket.id}` }
+  await assign(ticket.id)
+  return { trigger, ticket: runtime.store.tickets.get(ticket.id)!, sessionId: `worker-${ticket.id}` }
+}
+/** Starts a Ticket's pending Assignment through its project Lead, as the durable dispatch asks (docs/010, #12). */
+async function assign(ticketId: string): Promise<void> {
+  const ticket = runtime.store.tickets.get(ticketId)!
+  const assignment = ticket.assignments.at(-1)
+  if (!assignment || assignment.state !== 'pending') return
+  const project = runtime.store.settings().executor.projects.find(item => item.id === ticket.project)!
+  const lead = await runtime.sessions.ensureLead(project.id, project.workspace, project.name)
+  await runTool(lead.id, 'lead_assign', { assignment_id: assignment.id })
 }
 const pullThread = (ticketId: string) => ({ source: 'github', id: `pull-${ticketId}` })
 /** Follows a change Ticket's pull request while it is open. */
@@ -411,6 +421,7 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', decision(again.id))
   expect(accepted).toMatchObject({ decision: 'accept', ticket: { ticket_id: expect.any(String) } })
   const ticket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
+  await assign(ticket.id)
   expect(ticket.mandate).toMatchObject({ strength: 'inferred', basis: expect.objectContaining({ via: 'admission', rules: ['copy'], observation: { mode: 'auto' } }) })
   expect(runtime.store.replyStatus(key('ack', again.id))).toBeDefined()
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('Proactively accepted under copy') })
@@ -431,6 +442,7 @@ it('accepts silently under a rule that says so, gives the worker the rule proced
   const ticket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
   expect(runtime.store.replyStatus(key('ack', trigger.id))).toBeUndefined()
   await runtime.idle()
+  await assign(ticket.id)
   expect(sections.get(`worker-${ticket.id}`)!.text({})).toContain(mandateInstructions({ strength: 'inferred' }))
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('沉默地复现和修复 (silent-bugfix): Reproduce minimally first; accept silently.') })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: 'x' })).rejects.toThrow('not ready')
@@ -774,10 +786,13 @@ it('keeps Issue Triggers stored before Issues arrived through notifications read
 it('relaunches running assignments after a restart with a recovery note', async () => {
   const { ticket } = await acceptedTicket()
   runtime.executor.resume()
+  // The restart only hands the replacement Assignment to the Lead; its grant starts it.
+  await runtime.idle()
   const recovered = runtime.store.tickets.get(ticket.id)!
   expect(recovered.assignments.map(item => item.state)).toEqual(['ended', 'pending'])
   expect(recovered.inputs).toEqual([expect.objectContaining({ kind: 'text', text: expect.stringContaining('host restarted') })])
   deliveries.mockClear()
+  await assign(ticket.id)
   await runtime.pump()
   await runtime.idle()
   expect(runtime.store.tickets.get(ticket.id)!.assignments[1]).toMatchObject({ state: 'running' })
@@ -929,6 +944,7 @@ it('retries only a failed, blocked or undelivered ticket with a new assignment, 
   expect(guards.get(`worker-${ticket.id}`)!()).toBeUndefined()
   const retried = await runtime.engine.retryTicket(ticket.id)
   await runtime.idle()
+  await assign(ticket.id)
   expect(waitsForPerson(runtime.store.tickets.get(ticket.id)!)).toBe(false)
   expect(runtime.store.tickets.get(ticket.id)!.assignments.map(item => item.state)).toEqual(['ended', 'running'])
   expect(retried.assignments.length).toBeGreaterThan(current.assignments.length)
@@ -940,6 +956,7 @@ it('retries only a failed, blocked or undelivered ticket with a new assignment, 
   agents.delete(`worker-${ticket.id}`)
   runtime.engine.retryTicket(ticket.id)
   await runtime.idle()
+  await assign(ticket.id)
   expect(relays(`worker-${ticket.id}`).at(-1)).toMatchObject({ ticket_id: ticket.id, title: '修复回归', trigger: expect.objectContaining({ text: '@bot 修一下回归' }) })
   expect(search(viewsOf(runtime), '修复', new TextCache(0)).tickets).toEqual([expect.objectContaining({ id: ticket.id })])
   expect(decisionList(viewsOf(runtime), [], 0, 10, '2999-01-01T00:00:00Z').items).toEqual([])
@@ -1366,6 +1383,7 @@ it('counts a ticket whose directory the host prepared before prepare commands ex
   subprocess.spawn.mockClear()
   await runtime.engine.retryTicket(ticket.id)
   await runtime.idle()
+  await assign(ticket.id)
   expect(subprocess.spawn.mock.calls.some(([spec]) => spec.argv[0] === prepareCommand('')[0])).toBe(false)
   expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.state).toBe('running')
 })
@@ -1488,6 +1506,7 @@ it('resumes several ended tickets on one thread from one message without the lau
   const second = await acceptedTicket(another)
   for (const ticket of [first, second]) await runTool(ticket.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
   await receive(feishu('32', '还有问题', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
+  for (const ticket of [first, second]) await assign(ticket.ticket.id)
   await vi.waitFor(() => expect([first, second].map(ticket => runtime.store.tickets.get(ticket.ticket.id)!.ended)).toEqual([undefined, undefined]), { timeout: 3000 })
   await vi.waitFor(() => expect([first, second].map(ticket => runtime.store.tickets.get(ticket.ticket.id)!.assignments.at(-1)!.state)).toEqual(['running', 'running']), { timeout: 3000 })
 })
@@ -1788,11 +1807,21 @@ it('relays the status-request hint when a worker\'s turn ends with no text and n
     summary: expect.stringContaining('Ask the project Lead to request one') })
 })
 
-it('fails a ticket at once on a worker error that is not passing, and relays it', async () => {
+it('fails a ticket at once on a worker error that is not passing, and tells the Lead', async () => {
   const { ticket, sessionId } = await acceptedTicket()
   ;(runtime as unknown as { ctx: Context }).ctx.emit('agent/error', { agent: agents.get(sessionId), turn: 1, step: 1, error: new Error('Invalid tool schema') } as never)
   await vi.waitFor(() => expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed', summary: expect.stringContaining('Invalid tool schema') }))
-  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', ticket: { ticket_id: ticket.id }, state: 'failed' })
+  // The failure reaches the Lead as a durable report; only its lead_report reaches the Orchestrator (docs/010, #12).
+  const message = await vi.waitFor(() => {
+    const found = runtime.store.leads.list('default', 50).find(item => item.requestId.startsWith('executor-report:'))
+    expect(found).toBeDefined()
+    return found!
+  })
+  expect(message).toMatchObject({ kind: 'report', from: 'executor', to: 'lead', ticketId: ticket.id })
+  expect(message.body).toContain('Invalid tool schema')
+  await reportUpward()
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'lead_report', ticket: { ticket_id: ticket.id },
+    report_id: `executor-failed:${ticket.assignments.at(-1)!.id}` })
 })
 
 it('refuses the main Session a bash command that runs sleep and a long job wait, as reports arrive by themselves, and no worker', async () => {
@@ -1932,6 +1961,7 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
   expect(runs()).toBe(before + 1)
   runtime.engine.retryTicket(prepared.ticket.id)
   await runtime.idle()
+  await assign(prepared.ticket.id)
   expect(runs()).toBe(before + 2)
   expect(runtime.store.tickets.get(prepared.ticket.id)!.assignments.at(-1)).toMatchObject({ state: 'running' })
 })
@@ -2020,6 +2050,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   const childId = `worker-${ticket.id}`
   expect(ticket.project).toBe('app')
+  await assign(ticket.id)
   // A Feishu Trigger names no repository, so the environment takes the project's repository, not the deployment's.
   expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({
     DSH_SUPERAGENT_PROJECT: 'app', DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/app' })
@@ -2072,12 +2103,15 @@ it('splits an accept into one Ticket per project, and starts the second once the
   const secondChild = `worker-${second!.id}`
   expect(agents.has(secondChild)).toBe(false)
   const firstChild = `worker-${first!.id}`
+  await assign(first!.id)
+  await vi.waitFor(() => expect(agents.has(firstChild)).toBe(true))
   followWithPull(first!.id)
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(firstChild) } as never)
   await runTool(firstChild, 'orchestrator_report', { state: 'ready', summary: 'done' })
   mergeWithPull(first!.id)
   await runtime.idle()
   expect(runtime.store.tickets.get(second!.id)!.assignments).toHaveLength(1)
+  await assign(second!.id)
   expect(agents.has(secondChild)).toBe(true)
   const sent: { id: string; kind: string; text: string }[] = []
   const outbox = vi.spyOn(runtime.outbox, 'send').mockImplementation((message) => { sent.push(message) })
@@ -2111,6 +2145,7 @@ it('splits a two-project review into answer tickets that complete without a work
   expect(tickets.map(ticket => ticket.deliverable)).toEqual(['answer', 'answer'])
   for (const ticket of tickets) {
     const childId = `worker-${ticket.id}`
+    await assign(ticket.id)
     await vi.waitFor(() => expect(agents.has(childId)).toBe(true))
     await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
     await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'reviewed; no findings' })
@@ -2145,11 +2180,14 @@ it('adopts a Lead-hosted child after a restart instead of starting a new Session
   await runtime.idle()
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   const childId = `worker-${ticket.id}`
+  await assign(ticket.id)
   expect(agents.has(childId)).toBe(true)
   subagents.sendMessage.mockClear()
   await restart()
   await runtime.ready
   await runtime.idle()
+  // The restart leaves the Assignment pending; its Lead grants it, waking the child it already hosts.
+  await assign(ticket.id)
   // The reserved child id already exists, so the recovered host wakes that child from its Lead instead of creating a Session.
   expect(subagents.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'lead-app' }), childId, expect.any(Array), expect.anything())
   expect(agents.has(childId)).toBe(true)
@@ -2382,6 +2420,7 @@ it('gives the Assignment a restart starts the messages the replaced one had deli
   inbox.nextTurn.length = 0; inbox.nextStep.length = 0
   const next = await restart()
   await next.ready; await next.idle()
+  await assign(ticket.id)
   expect(next.store.tickets.get(ticket.id)!.assignments.map(item => item.state)).toEqual(['ended', 'running'])
   expect(sent()).toBe(2)
 })

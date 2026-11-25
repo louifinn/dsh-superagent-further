@@ -16,7 +16,8 @@ import { feishuKind, feishuTrigger } from '../../src/sources/feishu.ts'
 import { githubKind } from '../../src/sources/github.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
-import type { Trigger } from '../../src/core/index.ts'
+import type { Ticket, Trigger } from '../../src/core/index.ts'
+import { leadSessionId } from '../../src/app/sessions.ts'
 import type { Machine } from '../../src/deployment.ts'
 import type { JobEvent, JobView } from '../../src/executor/background.ts'
 import { buildRuntimeHost } from '../../src/supervisor/host.ts'
@@ -420,14 +421,30 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     if (results[0]!.refused) throw new Error(String(results[0]!.refused))
     return results[0]!
   }
-  async function acceptedTicket(trigger: Trigger, deliverable: 'change' | 'answer' = 'change') {
+  /**
+   * Accepts a trigger into a Ticket and, unless `assign: false`, has its project Lead start the Assignment as the
+   * Orchestrator dispatch asks: `lead_assign` is the only entry into a worker Session (docs/010, issue #12).
+   */
+  async function acceptedTicket(trigger: Trigger, deliverable: 'change' | 'answer' = 'change', options: { assign?: boolean } = {}) {
     runtime.receive(trigger)
     await runtime.idle()
     const result = await route({ kind: 'accept', trigger_id: trigger.id, title: `Fix ${trigger.id}`, worktree_name: 'fix-regression',
       deliverable, acknowledgement: '收到，修复回归。' })
     await runtime.idle()
     const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+    if (options.assign !== false) await assign(ticket.id)
     return { trigger, ticket, sessionId: `worker-${ticket.id}` }
+  }
+  /** The project Lead starts Ticket's pending Assignment with `lead_assign`, and (unless `settle: false`) the launch settles. */
+  async function assign(ticketId: string, options: { settle?: boolean } = {}) {
+    const ticket = runtime.store.tickets.get(ticketId)
+    if (!ticket) throw new Error(`Unknown Ticket ${ticketId}`)
+    if (!ticket.project) throw new Error(`Ticket ${ticketId} has no project to dispatch through`)
+    const assignment = ticket.assignments.at(-1)
+    if (!assignment) throw new Error(`Ticket ${ticketId} has no Assignment to start`)
+    await runTool(leadSessionId(ticket.project), 'lead_assign', { assignment_id: assignment.id })
+    if (options.settle !== false) await runtime.idle()
+    return runtime.store.tickets.get(ticketId)!
   }
   /** Ends a change Ticket the way its own merged pull request does, so its ready report may finish it. */
   function mergeWithPull(ticketId: string) {
@@ -452,7 +469,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
+  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, assign, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
     jobs, subagents, step, claim, permissionPresets }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

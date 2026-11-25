@@ -233,6 +233,14 @@ async function drive(host: Host) {
   expect(routed.results.map(result => result.decision)).toEqual(['accept', 'ignore', 'ignore'])
   expect(routed.results[2]!.reason).toMatch(/^Ignored from its card/)
   const a = routed.results[0]!.ticket!.ticket_id
+  // The dispatch effect writes the grant, and with it creates the project Lead the grant is asked of.
+  await runtime.idle()
+  const assign = async (ticketId: string) => {
+    const assignment = runtime.store.tickets.get(ticketId)!.assignments.at(-1)!
+    await run('lead-default', 'lead_assign', { assignment_id: assignment.id })
+    await runtime.idle()
+  }
+  await assign(a)
   const answer = { trigger_id: request.id, purpose: 'answer', text: '是配置。' }
   const refusal = await run(master, 'orchestrator_reply', answer).then(() => '', (error: Error) => error.message)
   const proposal = feishu('5', '把副标题改成“浏览网页”', { mentions: [] })
@@ -246,6 +254,7 @@ async function drive(host: Host) {
     direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'it names the text' } })).ticket as { ticket_id: string }
   const b = proactive.ticket_id
   await runtime.idle()
+  await assign(b)
   const [workerA, workerB] = [a, b].map(workerSessionId) as [string, string]
   await run(workerA, 'orchestrator_report', { state: 'progress', summary: 'Needs a decision.', human_action: 'Desktop too?' })
   await run(workerA, 'orchestrator_report', { state: 'progress', summary: 'It reads the config.', human_action: null, reply_to_trigger_id: request.id })
@@ -275,6 +284,9 @@ async function drive(host: Host) {
     await runtime.pump()
     expect(runtime.store.tickets.get(a)!.inputs.some(input => input.kind === 'resumed')).toBe(true)
   })
+  // The follow-up woke the ended Ticket; its Lead starts the new Assignment with the resumed input.
+  await runtime.idle()
+  await assign(a)
   const policy = runtime.store.settings().policy
   // The rule ticket b was accepted under changes, so its worker is told how; every rule but copy is disabled, which tells no one.
   const rules = policy.rules.map(rule => rule.id === 'copy' ? { ...rule, instruction: `${rule.instruction} Keep the wording short.` }
@@ -291,6 +303,8 @@ async function drive(host: Host) {
   runtime.executor.resume()
   await runtime.pump()
   await runtime.idle()
+  // The restart hands the replacement Assignment to the Lead; its grant starts it with the recovery note.
+  await assign(b)
   return { a, b, workerA, workerB, refusal }
 }
 

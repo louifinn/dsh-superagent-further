@@ -14,6 +14,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   Orchestrator decision sends one notice on the root request's Channel asking a person to decide it. Both
   passes are idempotent. The two windows are safe code constants for now; operator-configurable windows and
   a timeout for a worker's own attention question remain open.
+- An Assignment is now dispatched through its project Lead (the other half of issue #12): `Executor.dispatch` writes a
+  durable `lead_message` (`kind: assignment`, `requestId: lead-assignment:<assignmentId>`, naming the Ticket, project,
+  Assignment and worker Session) and prompts the Lead, which starts the worker with the new `lead_assign` tool — the only
+  entry into the launch path. `assignForLead` revalidates the live Ticket, the latest pending Assignment and the
+  unacknowledged dispatch; a missing grant is refused and recorded as `assignment.dispatchRefused`. `reconcile`
+  backfills the dispatch messages of pending Assignments at startup.
 
 ### Changed
 
@@ -25,6 +31,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   `orchestrator_ticket_request_status` and `orchestrator_ticket_note` tools are removed; the panel's own
   `POST tickets/:id/retry|stop` stays a direct person action. ADR-0008 records the decision; the
   remaining `orchestrator_route` attach/stop path and the instruction timeout are follow-ups.
+- The Executor port's `start` is renamed `dispatch`, and no Orchestrator-side code starts a worker any more: the launch
+  is private to `assignForLead`, a failed launch notice goes up through `LeadDispatch.reportReceived` instead of a
+  direct relay to the main Session, `launch` no longer writes the post-start assignment message, and `resume()` no
+  longer starts a pending Assignment (docs 003/007/010/012, `prompts/lead.md`).
 
 ### Fixed
 

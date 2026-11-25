@@ -102,10 +102,15 @@ it('runs prepare commands in the background, side by side, while accepts, intake
   const first = [feishu('1', '@bot 修一'), feishu('2', '@bot 修二')]
   for (const trigger of first) h.runtime.receive(trigger)
   await h.runtime.idle()
+  const tickets: string[] = []
   for (const [index, trigger] of first.entries()) {
     const accepted = await h.route({ kind: 'accept', trigger_id: trigger.id, title: 'fix', worktree_name: `fix-${index}`, acknowledgement: '收到。' })
     expect(accepted).toMatchObject({ decision: 'accept', ticket: { state: 'working/queued' } })
+    tickets.push((accepted.ticket as { ticket_id: string }).ticket_id)
   }
+  // The dispatch effects write both grants while no prepare command has started; each Lead then grants, without waiting.
+  await waitUntil(() => h.runtime.store.leads.list('default', 10).filter(message => message.kind === 'assignment').length === 2)
+  for (const ticketId of tickets) await h.assign(ticketId, { settle: false })
   await waitUntil(() => prepares() === 2)
   // A Source loop's next message is stored at once, and a pass relays it while both prepare commands still run.
   const later = feishu('3', '@bot 修三')
@@ -125,6 +130,9 @@ it('keeps a launch that a pause cut short queued, and finishes it once processin
   const trigger = feishu('1', '@bot 修一')
   h.runtime.receive(trigger); await h.runtime.idle()
   await h.route({ kind: 'accept', trigger_id: trigger.id, title: 'fix', worktree_name: 'fix-one', acknowledgement: '收到。' })
+  await h.runtime.idle()
+  const started = h.runtime.store.tickets.list().at(-1)!
+  await h.assign(started.id, { settle: false })
   await waitUntil(() => h.subprocess.spawn.mock.calls.some(([spec]) => spec.argv[0] === SHELL))
   await h.runtime.settings.pause(true, 'panel')
   prepare.resolve(); await h.runtime.idle()
@@ -176,6 +184,9 @@ it('counts a launch under way against maxWorkers, so a bot\'s Input for an idle 
   h.hooks.prepare = prepare.promise
   h.runtime.receive(feishu('5', '@bot 修二')); await h.runtime.idle()
   await h.route({ kind: 'accept', trigger_id: feishu('5', '').id, title: 'two', worktree_name: 'fix-two', acknowledgement: '收到。' })
+  await h.runtime.idle()
+  const accepted = h.runtime.store.tickets.list().find(ticket => ticket.id !== one.ticket.id)!
+  await h.assign(accepted.id, { settle: false })
   await waitUntil(() => h.subprocess.spawn.mock.calls.filter(([spec]) => spec.argv[0] === SHELL).length === 2)
   h.runtime.receive(botMessage()); await h.runtime.pump()
   expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toHaveLength(1)
@@ -320,6 +331,8 @@ describe('a worker whose work runs in the background', () => {
     // Delivering a person's message fails, and a person retries: the subagent is released, and a second Assignment starts.
     h.runtime.engine.deliveryFailed(one.ticket.id, latestAssignment(ticket())!.id, 'Session busy')
     h.runtime.engine.retryTicket(one.ticket.id); await h.runtime.idle()
+    // The retried Assignment is dispatched to the Lead again; only its grant starts the replacement worker.
+    await h.assign(one.ticket.id)
     await vi.waitFor(() => expect(latestAssignment(ticket())).toMatchObject({ state: 'running' }))
     expect(h.subagents.live(child)).toBe(false)
     // The second Assignment's turn ends: it is reported waiting.
@@ -662,6 +675,8 @@ describe('what a worker read', () => {
     const { one, thanks, ticket } = await completed()
     const pass = failing(one.sessionId, '谢谢')
     h.runtime.receive(thanks); await h.runtime.idle()
+    // The message woke the Ticket; its Lead starts the new Assignment, whose launch attempts the delivery.
+    await h.assign(one.ticket.id)
     expect(ticket().delivery).toBeDefined()
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'progress', summary: 'Looking' })
     pass()
@@ -692,6 +707,9 @@ describe('what a worker read', () => {
     h.ctx.on('agent/inbox/claimed', ({ message }) => { claimed.push(message.id) })
     // The restart cancels the worker's turn and keeps its inbox, where the note waits.
     h.runtime.executor.resume()
+    // The restart only hands the replacement Assignment to the Lead; its grant starts it.
+    await h.runtime.idle()
+    await h.assign(one.ticket.id)
     await vi.waitFor(() => expect(claimed).toContain(copies()[0]![0].id))
     expect(copies()).toHaveLength(1)
   })
@@ -708,6 +726,8 @@ describe('what a worker read', () => {
     const waiting: string[][] = [], launch = agent.followup.getMockImplementation()!
     agent.followup.mockImplementation(message => { waiting.push([...agent.inbox.nextTurn, ...agent.inbox.nextStep].map(item => item.id)); launch(message) })
     h.runtime.executor.resume()
+    await h.runtime.idle()
+    await h.assign(one.ticket.id)
     await vi.waitFor(() => expect(copies()).toHaveLength(2))
     // A Lead message id is fixed per target, so the launch cannot use it to recognise the copy waiting in the inbox; the
     // dispatcher's own bookkeeping delivers that copy once instead.
@@ -721,6 +741,8 @@ describe('what a worker read', () => {
     // A step claims it and the restart cuts the step off before the Session took it, which drops it.
     h.claim(one.sessionId)
     h.runtime.executor.resume()
+    await h.runtime.idle()
+    await h.assign(one.ticket.id)
     await vi.waitFor(() => expect(sent()).toBe(2))
     await h.runtime.idle(); await later()
     expect(sent()).toBe(2)
@@ -729,6 +751,7 @@ describe('what a worker read', () => {
     const { one, thanks } = await completed()
     // The resumed Assignment's message wakes the worker; its next step takes the note that it resumed and the message.
     h.runtime.receive(thanks); await h.runtime.idle()
+    await h.assign(one.ticket.id)
     h.step(one.sessionId)
     await later()
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })
@@ -739,6 +762,8 @@ describe('what a worker read', () => {
     const { one, thanks, ticket } = await completed()
     const pass = failing(one.sessionId, '谢谢')
     h.runtime.receive(thanks); await h.runtime.idle()
+    // The Lead starts the Assignment the message woke; its failed delivery is retried below.
+    await h.assign(one.ticket.id)
     idle(one.sessionId)
     await vi.waitFor(() => expect(latestAssignment(ticket())?.report?.state).toBe('waiting'))
     pass()
@@ -837,6 +862,8 @@ it('resumes an ended ticket a person wrote to during a pause once it lifts, unde
   await followUp('2', 'om_1')
   expect(h.runtime.store.tickets.get(first)).toMatchObject({ ended: expect.anything(), undelivered: [expect.any(String)] })
   await h.runtime.settings.pause(false, 'panel'); await pass()
+  // The wake dispatched a new Assignment to the Lead; its grant starts the worker.
+  await h.assign(first)
   expect(h.runtime.store.tickets.get(first)).toMatchObject({ assignments: [expect.anything(), expect.objectContaining({ state: 'running' })] })
   expect(h.runtime.store.tickets.get(first)).not.toHaveProperty('ended')
   // A Mandate the Policy no longer holds when the pause lifts does not resume: its sender left the list meanwhile.

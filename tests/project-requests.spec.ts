@@ -17,7 +17,7 @@ const policy: Policy = {
   admitsInferred: () => true,
 }
 const assessor: Assessor = { request: () => {} }
-const executor: Executor = { start: () => {}, deliver: () => {}, stop: () => {} }
+const executor: Executor = { dispatch: () => {}, deliver: () => {}, stop: () => {} }
 const outbox: Outbox = { send: () => {}, status: () => undefined, withdraw: () => {} }
 const scope: SourceScope = { scope: () => ({ listened: true, observed: false }) }
 

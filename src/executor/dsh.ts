@@ -13,6 +13,7 @@ import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
+import { assignmentOfRequest } from '../app/lead-messages.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
@@ -106,7 +107,7 @@ export interface ExecutorHost {
   readonly machine: Pick<Machine, 'stateDir'>
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
-  readonly sessions: Pick<Sessions, 'ensure' | 'ensureLead' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  readonly sessions: Pick<Sessions, 'ensure' | 'ensureLead' | 'prompt' | 'promptedId' | 'relay' | 'holds' | 'lead'>
   closing(): boolean
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
@@ -279,6 +280,8 @@ export class DshExecutor implements Executor {
   private readonly resuming = new Set<string>()
   /** Assignments whose launch is queued or running, so a message arriving meanwhile cannot start a second one. */
   private readonly launching = new Set<string>()
+  /** Assignments whose dispatch effect is queued, so a repeated Ticket command asks the Lead about it once. */
+  private readonly dispatching = new Set<string>()
   /**
    * The looks at background work of workers that went idle, by ticket, which hold their slots; a look ends when its worker
    * runs again or its Assignment ends.
@@ -304,7 +307,7 @@ export class DshExecutor implements Executor {
   private readonly turns = new Map<string, { turn: number; startedAt: number }>()
   /** Executor activations of Lead-hosted workers, by child Session id. */
   private readonly leads: LeadActivations
-  /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
+  /** Registers the `dispatch`, `launch` and `delivery` effect handlers; all are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(
       () => host.store.tickets.open().filter(ticket => this.running(ticket))
@@ -313,6 +316,10 @@ export class DshExecutor implements Executor {
       () => host.store.settings().executor.projectWorkers)
     // A Cordis service is read through get: a plain property access throws unless the plugin injects it.
     this.leads = new LeadActivations(() => host.context.get('subagents') as SubagentService | undefined)
+    // A dispatch asks the Ticket's project Lead to start the Assignment; it never starts a Session itself and takes no
+    // worker slot, so a Lead can grant an Assignment while every slot is busy (docs/010).
+    host.effects.handle('dispatch', payload => this.dispatchQueued(payload), { limit: () => host.paused() ? 0 : 4,
+      retry: [5000, 300_000] })
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
       retry: [5000, 300_000] })
@@ -374,13 +381,68 @@ export class DshExecutor implements Executor {
     await mkdir(directory, { recursive: true })
     await verifyDirectory(directory, this.host.context.subprocess, this.host.lifetime)
   }
-  /** Enqueues a `launch` effect for an accepted or resumed assignment; launches start in queue order as worker slots free up. */
-  start(ticket: Ticket, assignment: Assignment): void {
+  /**
+   * Queues the dispatch of a pending Assignment through its Ticket's project Lead (docs/010): a durable effect writes the
+   * Lead the `assignment` message and prompts it, and only the Lead's `lead_assign` starts the worker. No Orchestrator-side
+   * path starts a Session, so a dispatch after a restart resumes from the effect queue.
+   */
+  dispatch(ticket: Ticket, assignment: Assignment): void {
+    if (this.dispatching.has(assignment.id)) return
+    this.dispatching.add(assignment.id)
+    this.host.effects.enqueue('dispatch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
+  }
+  /** Runs a queued dispatch: re-reads the Ticket and asks its project Lead about the still-pending Assignment. */
+  private async dispatchQueued({ ticketId, assignmentId }: { ticketId: string; assignmentId: string }): Promise<void> {
+    try {
+      const ticket = this.host.store.tickets.get(ticketId)
+      const assignment = ticket && latestAssignment(ticket)
+      if (!ticket || !liveTicket(ticket) || assignment?.id !== assignmentId || assignment.state !== 'pending') return
+      await this.host.sessions.lead.assignmentPending(ticket, assignment)
+      this.host.log.info('assignment.dispatched ticket=%s assignment=%s', ticketId, assignmentId)
+    } finally { this.dispatching.delete(assignmentId) }
+  }
+  /**
+   * Queues the launch of a pending Assignment at its project Lead's request, the only path that starts a worker: the Lead
+   * calls it through `assignForLead` after the dispatch message reached it. The launch Effect does the Session start.
+   */
+  private start(ticket: Ticket, assignment: Assignment): void {
     // An Input can arrive while the launch runs; a second launch would collide with the child the first creates.
     // `assignmentStarted` delivers the waiting Inputs to the child once the first launch is done.
     if (this.launching.has(assignment.id)) return
     this.launching.add(assignment.id)
     this.host.effects.enqueue('launch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
+  }
+  /**
+   * Starts an Assignment at its project Lead's request (`lead_assign`), the one entry into `start` (docs/010, issue #12).
+   * The Lead must hold the unacknowledged dispatch message for this Assignment; a missing grant is refused and recorded,
+   * never replaced by an Orchestrator-side start. This method is bound to the Lead tools only.
+   * @throws when the Ticket cannot start this Assignment, or when the Lead holds no dispatch for it.
+   */
+  assignForLead(ticketId: string, assignmentId: string): { ticketId: string; assignmentId: string; sessionId: string } {
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket) throw new Error(`Unknown Ticket ${ticketId}`)
+    if (!liveTicket(ticket)) throw new Error(`Ticket ${ticketId} has ended; no Assignment starts on it`)
+    if (waitsForPerson(ticket)) throw new Error(`Ticket ${ticketId} waits for a person's Input before its Assignment starts`)
+    if (runningAssignment(ticket)) throw new Error(`Ticket ${ticketId} already runs an Assignment`)
+    const assignment = ticket.assignments.find(candidate => candidate.id === assignmentId)
+    if (!assignment) throw new Error(`Unknown Assignment ${assignmentId} on Ticket ${ticketId}`)
+    if (latestAssignment(ticket)?.id !== assignment.id) throw new Error(`Assignment ${assignmentId} is not the current Assignment of Ticket ${ticketId}`)
+    if (assignment.state !== 'pending') throw new Error(`Assignment ${assignmentId} is ${assignment.state}, not waiting to start`)
+    const project = ticket.project === undefined ? undefined : projectOf(this.host.store.settings().executor.projects, ticket.project)
+    if (!project) throw new Error(`Ticket ${ticketId} names no registered project; its Assignment cannot start`)
+    const grant = this.host.store.leads.list(project.id, 500)
+      .find(message => message.kind === 'assignment' && message.ackAt === undefined && assignmentOfRequest(message.requestId) === assignmentId)
+    if (!grant) {
+      this.host.log.warn('assignment.dispatchRefused ticket=%s assignment=%s reason=no-grant', ticketId, assignmentId)
+      throw new Error(`The Lead of project ${project.id} holds no dispatch for Assignment ${assignmentId}; start only what the Orchestrator dispatched`)
+    }
+    // Acknowledging the grant and queueing the launch commit together: a crash either keeps the grant or starts the worker.
+    this.host.store.atomic(() => {
+      this.host.store.leads.ack(grant.id)
+      this.start(ticket, assignment)
+    })
+    this.host.log.info('assignment.assigned ticket=%s assignment=%s session=%s', ticketId, assignmentId, workerSessionId(ticketId))
+    return { ticketId, assignmentId, sessionId: workerSessionId(ticketId) }
   }
   /** Enqueues a `delivery` effect to steer pending inputs into `ticket`'s running worker session. */
   deliver(ticket: Ticket, _assignment: Assignment): void { this.host.effects.enqueue('delivery', ticket.id, { ticketId: ticket.id }) }
@@ -706,16 +768,16 @@ export class DshExecutor implements Executor {
   private launchFailed(ticketId: string, assignmentId: string, error: unknown): void {
     const ticket = this.host.store.tickets.get(ticketId)
     if (!ticket || !liveTicket(ticket) || latestAssignment(ticket)?.id !== assignmentId) return
-    this.failed(ticketId, String(error))
+    this.failed(ticketId, assignmentId, String(error))
   }
-  /** Records a `failed` report on the ticket and relays the failure to the main Session in one transaction. */
-  private failed(ticketId: string, summary: string): void {
-    const ended = this.host.store.atomic(() => {
-      const updated = this.host.engine.report(ticketId, { state: 'failed', summary })
-      this.relay(resultRelay(updated, 'failed', summary))
-      return updated
-    })
+  /**
+   * Records a `failed` report on the ticket and tells its project Lead: the failure reaches the Orchestrator through the
+   * Lead's `lead_report`, never as an Executor relay into the main Session (docs/010, issue #12).
+   */
+  private failed(ticketId: string, assignmentId: string, summary: string): void {
+    const ended = this.host.store.atomic(() => this.host.engine.report(ticketId, { state: 'failed', summary }))
     this.host.log.info('report.recorded ticket=%s state=failed outcome=%s', ticketId, ended.ended?.outcome ?? 'none')
+    void this.host.sessions.lead.reportReceived(ended, { id: `executor-failed:${assignmentId}`, text: resultRelay(ended, 'failed', summary).text })
   }
   private relay({ id, text }: { id: string; text: string }): void { this.host.sessions.relay(id, text) }
   /** Start an independent reviewer subagent for a live change Ticket, recorded on the Ticket while its verdict waits. */
@@ -798,11 +860,6 @@ export class DshExecutor implements Executor {
       const activation = await this.leads.start(executorActivation({ childId: sessionId, title: ticket.title, cwd: workspace,
         text, lead, signal: this.host.lifetime, preset: WORKER_PRESET }))
       if (!current()) { void Promise.resolve(activation.dispose()).catch(() => {}); return }
-      // The dispatch is recorded against the Lead and marked delivered once its child runs, so the panel's waiting count and
-      // the Lead's message history describe the same dispatch.
-      const dispatch = this.host.store.leads.send({ project: project.id, kind: 'assignment', from: 'orchestrator',
-        to: 'lead', requestId: assignment.id, ticketId: ticket.id, body: text })
-      this.host.store.leads.deliver(dispatch.id)
       this.host.engine.assignmentStarted(ticket.id, assignment.id)
       this.host.log.info('assignment.launched ticket=%s assignment=%s session=%s', ticket.id, assignment.id, sessionId)
       return
@@ -876,7 +933,7 @@ export class DshExecutor implements Executor {
       this.host.log.warn('agent.error ticket=%s name=%s code=%s turn=%s step=%s', ticket.id,
         error instanceof Error ? error.name : 'Error', String((error as { code?: unknown } | undefined)?.code ?? ''), String(turn), String(step))
       if (this.retries(assignment.id, error)) { this.resumeAfter(ticket.id, assignment.id, error); return }
-      void this.background(Promise.resolve().then(() => { this.failed(ticket.id, String(error)) }))
+      void this.background(Promise.resolve().then(() => { this.failed(ticket.id, assignment.id, String(error)) }))
     }))
   }
   /** Unsubscribes from host agent events and clears pending transient-retry timers and turn bookkeeping. */
@@ -889,23 +946,20 @@ export class DshExecutor implements Executor {
     this.turns.clear()
   }
   /**
-   * Reconciles running and pending assignments across open tickets after a host restart: notifies Engine of interrupted
-   * running assignments and re-queues pending launches (which earlier versions may have kept outside the effect queue),
-   * while failed launches (`waitsForPerson`) wait for a person's message or a retry.
+   * Reconciles running assignments across open tickets after a host restart: it notifies the Engine of interrupted
+   * running assignments. Pending Assignments are not started here: the dispatch Effect asks the Lead, and
+   * `LeadDispatch.reconcile` backfills the ones accepted before dispatch went through the Lead (docs/010).
    */
   resume(): void {
-    // Launch pending tickets oldest first (in acceptance order).
     for (const ticket of this.host.store.tickets.open().sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-      const running = runningAssignment(ticket), latest = latestAssignment(ticket)
-      if (running) {
-        // A restart within this process left DSH's Sessions, jobs and subagents running: they stop first. The inbox keeps an
-        // Input that was handed over but not yet taken.
-        this.watchJobs(ticket.id)
-        this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.cancel({ kind: 'user' }, { keepInbox: true })
-        this.stopWork(ticket.id, 'dsh-superagent-further restarted', true)
-        this.host.engine.assignmentInterrupted(ticket.id, running.id)
-      }
-      else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.start(ticket, latest)
+      const running = runningAssignment(ticket)
+      if (!running) continue
+      // A restart within this process left DSH's Sessions, jobs and subagents running: they stop first. The inbox keeps an
+      // Input that was handed over but not yet taken.
+      this.watchJobs(ticket.id)
+      this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.cancel({ kind: 'user' }, { keepInbox: true })
+      this.stopWork(ticket.id, 'dsh-superagent-further restarted', true)
+      this.host.engine.assignmentInterrupted(ticket.id, running.id)
     }
   }
   /** Runs background worker event handling and updates the `worker` health entry on failure or recovery. */
@@ -948,7 +1002,7 @@ export class DshExecutor implements Executor {
           .then(lead => this.leads.send(lead, sessionId, text, this.host.lifetime))
         : this.host.sessions.prompt(sessionId, `retry:${assignmentId}:${tries}`, text, 'queue')
       void this.background(sent.finally(() => { if (waking) this.slots.free(ticketId); this.resuming.delete(assignmentId) })
-        .catch(failure => { this.failed(ticketId, String(failure)) }))
+        .catch(failure => { this.failed(ticketId, assignmentId, String(failure)) }))
     }
     this.after(TRANSIENT_BACKOFF_MS * 2 ** (tries - 1), go)
   }

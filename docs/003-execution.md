@@ -183,22 +183,22 @@ A person's message, a later Report that is neither `blocked` nor `failed`, or a 
 It is worked out from the stored Reports and Inputs, so a restart keeps it.
 ### Retry
 
-Available while an open Ticket is in `person / delivery`, `person / blocked` or `person / failed`: a new Assignment, which starts its worker again and takes the Inputs that wait, is the remedy for each.
+Available while an open Ticket is in `person / delivery`, `person / blocked` or `person / failed`: a new Assignment, which its project Lead starts again and which takes the Inputs that wait, is the remedy for each.
 
 Once a person's message reached a blocked or failed Ticket, the Executor has the message, so the Ticket shows as working, or as queued when a failed launch starts again, and offers no retry, unless delivering that message failed.
 
-A retry ends the current Assignment and starts a new one in the same Executor Session, directory, branch and pull request.
+A retry ends the current Assignment and dispatches a new one through the project Lead, in the same Executor Session, directory, branch and pull request.
 
 The Executor model applies only when a Session is created; an existing Session keeps its model.
 ### Restart
 
-Running Assignments end with "host restarted" and new ones start with a recovery note that tells the Executor to check its directory, git history and GitHub before repeating any outside action, oldest Ticket first.
+Running Assignments end with "host restarted" and new ones are dispatched through the project Lead and start with a recovery note that tells the Executor to check its directory, git history and GitHub before repeating any outside action, oldest Ticket first.
 
 Assignments that are waiting, ready, blocked or failed stay as they are, unless an Input reached them after that Report, in which case they start again too.
 
 Sessions, directories, Subscriptions, pending messages and the stored work below survive a restart, and so does the record of which messages each Executor Session took into its history, which a step does once it claimed them and before its model call: a message taken by a turn the restart cut off counts as read once a Report or the end of a turn follows, while one a step claimed but a cancel or error cut off before the history counts as unread.
 
-A retry or a restart gives the new Assignment again the messages delivered to the Assignment it replaces that its Executor Session did not take, which a cancel or a cut-off step may have dropped; a copy still waiting in the Session, kept by a restart or persisted across a crash, is taken out before the new Assignment's first message, so the new delivery is the only copy.
+A retry or a restart gives the new Assignment, once its Lead starts it, again the messages delivered to the Assignment it replaces that its Executor Session did not take, which a cancel or a cut-off step may have dropped; a copy still waiting in the Session, kept by a restart or persisted across a crash, is taken out before the new Assignment's first message, so the new delivery is the only copy.
 ### Stored work
 
 What dsh-superagent-further does after a decision, such as relaying a candidate or a follow-up to the main Session, a

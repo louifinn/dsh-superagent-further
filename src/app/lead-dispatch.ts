@@ -7,8 +7,8 @@
  * bounds the attempts without in-memory state. After two reminders a request is marked `needs-attention` in the
  * Store, visible to the panel and to the Orchestrator; it is never silently dropped.
  */
-import { key, projectRequestOpen, type Assignment, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
-import type { LeadMessage } from './lead-messages.ts'
+import { key, latestAssignment, liveTicket, projectRequestOpen, waitsForPerson, type Assignment, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
+import { assignmentOfRequest, assignmentRequest, type LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
 import type { Store } from './store.ts'
 
@@ -180,6 +180,32 @@ export class LeadDispatch {
   }
 
   /**
+   * Asks the project Lead to start a pending Assignment with `lead_assign`. The message is durable and written before its
+   * prompt, one per Assignment and attempt, so a repeated dispatch never prompts twice and a crash leaves a row startup
+   * recovers. Only the Lead's grant starts the worker: this method never calls the Executor (docs/010, issue #12).
+   */
+  async assignmentPending(ticket: Ticket, assignment: Assignment, again = 0): Promise<void> {
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    // A ticket waiting for a person starts nothing; the Input that resolves the wait dispatches it again.
+    if (waitsForPerson(ticket)) return
+    const requestId = assignmentRequest(assignment.id, again)
+    const existing = this.host.store.leads.getByRequest('lead', requestId)
+    // Already granted, or already in the Lead's hands: the launch effect retries, not a second message.
+    if (existing && (existing.deliveredAt !== undefined || existing.ackAt !== undefined)) return
+    const body = existing?.body ?? this.assignmentText(ticket, project, assignment)
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = existing ?? this.host.store.leads.send({ project: project.id, kind: 'assignment', from: 'orchestrator',
+        to: 'lead', requestId, ticketId: ticket.id, body })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not ask the Lead of project ${project.id} to start assignment ${assignment.id} on Ticket ${ticket.id}`, error)
+    }
+  }
+
+  /**
    * Records the worker's report for each unanswered request it names and prompts the Lead once. The requests are the
    * durable record; the report messages make an unanswered worker report visible in `lead_requests` too.
    */
@@ -294,8 +320,10 @@ export class LeadDispatch {
       const waiting = this.host.store.leads.waiting('lead', project.id)
         .filter(message => message.kind !== 'assignment' && !message.requestId.startsWith('lead-attention:'))
       const demands = this.demands(project.id)
-      if (!waiting.length && !demands.length) continue
       try {
+        // Dispatch rows recover first: an assignment message is started with `lead_assign`, never replayed as a prompt.
+        await this.reconcileAssignments(project)
+        if (!waiting.length && !demands.length) continue
         if (waiting.length) {
           const session = await this.host.ensureLead(project)
           for (const message of waiting.slice(-20)) {
@@ -309,6 +337,35 @@ export class LeadDispatch {
         this.host.warn?.(`could not recover Lead messages for project ${project.id}`, error)
       }
     }
+  }
+
+  /**
+   * Reconciles durable assignment dispatches after a restart (docs/010): a message whose Assignment can no longer start
+   * is acknowledged so it never counts as waiting work, and a pending Assignment accepted before dispatch went through
+   * the Lead — or whose message never reached it — is asked for again. Launch failures stay with the dispatch effect.
+   */
+  private async reconcileAssignments(project: Project): Promise<void> {
+    for (const message of this.host.store.leads.list(project.id, RECENT)) {
+      if (message.kind !== 'assignment' || message.ackAt !== undefined) continue
+      const assignmentId = assignmentOfRequest(message.requestId)
+      const ticket = message.ticketId === undefined ? undefined : this.host.store.tickets.get(message.ticketId)
+      const assignment = ticket?.assignments.find(candidate => candidate.id === assignmentId)
+      if (ticket && liveTicket(ticket) && assignment?.state === 'pending') continue
+      this.host.store.leads.ack(message.id)
+    }
+    for (const { ticket, assignment } of this.pendingAssignments(project.id)) {
+      await this.assignmentPending(ticket, assignment)
+    }
+  }
+
+  /** The dispatchable pending Assignments of a project: a Ticket's latest Assignment waiting for its Lead to start it. */
+  private pendingAssignments(projectId: string): { ticket: Ticket; assignment: Assignment }[] {
+    return this.host.store.tickets.open()
+      .filter(ticket => ticket.project === projectId)
+      .flatMap(ticket => {
+        const assignment = latestAssignment(ticket)
+        return assignment?.state === 'pending' && !waitsForPerson(ticket) ? [{ ticket, assignment }] : []
+      })
   }
 
   /** The unanswered Project Requests of a project, as the Lead tools list them. */
@@ -380,6 +437,13 @@ export class LeadDispatch {
 
   private projectOf(project: string | undefined): Project | undefined {
     return project === undefined ? undefined : this.host.store.settings().executor.projects.find(item => item.id === project)
+  }
+
+  private assignmentText(ticket: Ticket, project: Project, assignment: Assignment): string {
+    const worker = `worker-${ticket.id}`
+    return [`Ticket ${ticket.id} "${ticket.title}" in project ${project.id} has assignment ${assignment.id} waiting to start.`,
+      `Start it with the lead_assign tool, passing assignment_id ${assignment.id}. The worker runs in Session ${worker} and owns the work.`,
+      'Do not do the assignment yourself: reply to its report or question once it reaches you, and use lead_status to see the Ticket.'].join('\n\n')
   }
 
   private questionText(request: ProjectRequest): string {

@@ -160,6 +160,8 @@ it('reports an accepted request and its completion back into the submitting Sess
   expect(accepted.kind).toBe('accept')
   const ticket = h.runtime.store.tickets.get(accepted.ticketId!)!
   await h.runtime.idle()
+  // The Orchestrator dispatches the Assignment; its Lead starts it with `lead_assign` (docs/010, #12).
+  await h.assign(ticket.id)
   expect(h.runtime.outbox.status(key('session-reply', accepted.id, trigger.id))).toBe('sent')
   await h.runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'dropped', summary: 'The architecture notes already say it.' })
   await h.runtime.idle()

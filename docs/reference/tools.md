@@ -1888,6 +1888,27 @@ Parameters:
 }
 ```
 
+### `lead_assign`
+
+Start the Assignment the Orchestrator dispatched for this project, as the Lead who grants its launch. Without assignment_id it starts the one Assignment waiting for this Lead. The worker Session owns the work: do not do it yourself, and answer its report or question when it reaches you.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "assignment_id": {
+      "description": "The assignment id from a dispatch message; omit when exactly one Assignment waits for this Lead.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}
+```
+
 ### `lead_request_create`
 
 Raise a project request when a scheduled automation delivery finds work this project needs. Pass the automation id from the delivery marker. The Lead then decides it with lead_request_decide; an accepted work request creates its domain Request and Tickets at once. Only work requests can be raised here: an architecture request needs a worker-raised request anchored to a Trigger for its approval.
@@ -2835,4 +2856,4 @@ Parameters:
 
 ## Total
 
-54 distinct tools across 5 groups (61 registrations).
+55 distinct tools across 5 groups (62 registrations).
