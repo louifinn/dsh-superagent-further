@@ -131,7 +131,8 @@ When a root ProjectRequest's tickets and derived requests are done, the Lead cal
 queues one Outbox message per channel of `root.request_id`/`root.trigger_id` (the original source channel), listing
 every Ticket outcome, every derived Request and its outcome, and the summary. `request.ended` notices remain for the
 Request itself; the project-level report is the aggregate across the derived chain and is delivered once
-(idempotent id `project-result-<root id>`).
+(idempotent id `project-result-<root id>`). A root with no Channel at all has nowhere to aggregate into: its completion
+is reported on the operator alert chat, and the missing user Channel is recorded in the log (issue #30).
 
 ### D7. Architecture approval flow (R1)
 
@@ -249,9 +250,10 @@ needs-info record the reply and create no work. The reply is written as a `lead_
 and delivered to its Lead, which reports it onward through the original worker; a repeated escalation of the same title
 in the same Lead Session returns the open request. The Orchestrator is told of a new escalation rather than only finding
 it by polling. An accepted escalation that a person must know about reaches the person through the Orchestrator's
-notification duty; a rootless escalation must still have a person-notification path or a recorded decision that no
-person channel exists and why. A person's architecture approval is unaffected: architecture work
-still needs a root Thread, so escalation stays inside the work kind.
+notification duty; a rootless escalation has no user Channel of its own, so when the Orchestrator decides it the
+runtime hears `escalation.decided` and reports the decision on the operator alert chat, recording in the log that no
+user Channel exists; a rooted escalation still reports through the root. A person's architecture approval is unaffected:
+architecture work still needs a root Thread, so escalation stays inside the work kind.
 
 ## Phases / missions
 

@@ -171,6 +171,8 @@ Recovery restores the flow of work; it does not change code, Policy, settings or
 
 Incident records are durable whether or not anyone is watching the panel. With an alert chat set (Execution → Incidents), a new, reopened or resolved record at or above the alert severity is sent to that chat once per incident and change, within the daily alert cap; a resolved record is sent only when recovery alerts are on. The daily digest repeats up to five open incidents under "Needs attention" as the low-frequency backstop, so an incident is never visible only on a screen nobody opened.
 
+The same alert chat carries the two failures that would otherwise end inside the host (issues #26 and #30). When model requests fail over their budget on one or more managed Sessions, one message names each affected level — Executor, Lead or Orchestrator — with the provider, the attempt and the waiting time, stays deduplicated until the failing set clears, and is followed by a recovery message when recovery alerts are on; the `models` health entry keeps the raw retry detail. A Lead escalation with no root Channel and a project request with no root Channel have no user Channel of their own, so their decision and completion are reported on the alert chat, and the missing Channel is recorded in the log.
+
 ### Executor blocked or failed
 
 When an Executor Session reports `blocked` or `failed`, or fails to start or errors, which records `failed`, the Ticket takes no automatic Input.

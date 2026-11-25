@@ -1,7 +1,6 @@
 /** Incident alerts (issue #19): a person hears about an incident change once, within the configured caps. */
 import { describe, expect, it, vi } from 'vitest'
 import { SettingsSchema } from '../src/policy.ts'
-import type { Key } from '../src/kv.ts'
 import { Alerts } from '../src/app/alerts.ts'
 import { Logs } from '../src/app/logs.ts'
 import type { Incident } from '../src/core/incidents.ts'
@@ -72,7 +71,7 @@ describe('incident alerts', () => {
     lark.mockRejectedValueOnce(new Error('lark exploded'))
     expect(await alerts.notify(incident(), 'opened')).toBe(false)
     expect(logs).toContainEqual(expect.objectContaining({ level: 'warn', scope: 'alerts' }))
-    expect(state.get('incident-alert:incident-1:opened' as Key<boolean>)).toBeUndefined()
+    expect(state.size).toBe(0)
     lark.mockResolvedValueOnce({})
     expect(await alerts.notify(incident(), 'opened')).toBe(true)
   })

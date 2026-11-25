@@ -368,7 +368,7 @@ it('refuses approval commands for requests that cannot take them', () => {
 })
 
 it("lets the Orchestrator decide a project Lead's escalated request into one installation Request", () => {
-  const { engine, store, setClock } = open()
+  const { engine, store, setClock, emitted } = open()
   const raised = engine.escalateProjectRequest({ project: 'superagent', kind: 'escalation', title: 'Rework the shared build',
     instruction: 'The shared build belongs to another project; rework it there.', raised_by: { session: 'lead-superagent' } })
   expect(raised).toMatchObject({ kind: 'escalation', status: 'pending', replies: [], tickets: [] })
@@ -385,6 +385,9 @@ it("lets the Orchestrator decide a project Lead's escalated request into one ins
     { units: [{ project: 'project-check' }, { project: 'superagent', title: 'Follow up', after: [0] }] })
   expect(decided.status).toBe('accepted')
   expect(decided.replies.at(-1)).toMatchObject({ by: 'orchestrator', text: 'Owned by project-check now' })
+  // The runtime hears the decision so a rootless escalation can still reach a person (issue #30).
+  expect(emitted).toContainEqual({ type: 'escalation.decided', at: expect.any(String),
+    data: { escalationId: raised.id, disposition: 'accept' } })
   const created = store.requests.get(decided.request_id ?? '')
   expect(created?.channels).toEqual([])
   expect(created?.mandate.basis).toEqual({ via: 'escalation', project: 'superagent', request: raised.id })

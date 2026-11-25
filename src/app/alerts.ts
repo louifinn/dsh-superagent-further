@@ -1,8 +1,8 @@
 /**
- * Incident alerts (issue #19): a person hears about an incident outside the panel. The service turns the
- * incident record's opened/reopened/resolved changes into one Feishu message per incident and change, filtered by
- * the configured minimum severity, deduplicated by key and capped per UTC day. A failed send is only logged (and is
- * retried by the next change); the daily digest keeps repeating open incidents as a low-frequency backstop.
+ * Operator alerts (issues #19, #26 and #30): a person hears about something the panel alone would not tell them. The
+ * service sends one Feishu message to the configured alert chat for an incident change, a model failure or an
+ * escalation without a user Channel, deduplicated by the caller's key and capped per UTC day. A failed send is only
+ * logged (the next change tries again); the daily digest repeats open incidents as a low-frequency backstop.
  */
 import type { Commands } from '../infra/commands.ts'
 import type { Key } from '../kv.ts'
@@ -23,40 +23,45 @@ export interface AlertsHost {
   logs: Pick<Logs, 'record'>
 }
 
-/** Turns an incident change into the operator's alert chat, once, within its daily cap. */
+/** Turns an incident change or another operator fact into the alert chat, once, within the daily cap. */
 export class Alerts {
   private readonly host: AlertsHost
 
   constructor(host: AlertsHost) { this.host = host }
 
-  /** Sends the alert when the configuration and the caps allow it, and reports whether it was sent. */
-  async notify(incident: Incident, change: AlertChange): Promise<boolean> {
+  /** Sends one operator message for `dedupeKey` unless it was already sent or the chat is not configured. */
+  async send(dedupeKey: string, text: string): Promise<boolean> {
     const config = this.host.settings().executor.incidents
     const chat = config.alertChatId.trim()
     if (chat === '') return false
-    if (change === 'resolved' && !config.alertRecovery) return false
-    if (incidentSeverityRank(incident.severity) < incidentSeverityRank(config.alertMinimumSeverity)) return false
-    const replay = this.host.state.get(KV.incidents.alert(incident.id, change))
-    if (replay === true) return false
+    if (this.host.state.get(KV.alerts.sent(dedupeKey)) === true) return false
     const day = new Date().toISOString().slice(0, 10)
-    const sent = this.host.state.get(KV.incidents.alertDay(day)) ?? 0
+    const sent = this.host.state.get(KV.alerts.day(day)) ?? 0
     if (sent >= config.alertDailyLimit) return false
-    const subject = change === 'resolved' ? 'Incident resolved' : `Incident ${change}`
-    const text = [
-      `[dsh-superagent] ${subject}: ${incident.severity} ${incident.rule} — ${incident.status === 'resolved' ? '' : ''}${incident.title.slice(0, INCIDENT_TITLE_LIMIT)}`,
-      incident.detail,
-      'The incident record and its evidence bundle are in the panel; this message is a notification, not a fix.',
-    ].join('\n\n')
     try {
       await this.host.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key',
-        key('incident-alert', incident.id, change)], undefined, text)
-      this.host.state.set(KV.incidents.alert(incident.id, change), true)
-      this.host.state.set(KV.incidents.alertDay(day), sent + 1)
+        key('operator-alert', dedupeKey)], undefined, text)
+      this.host.state.set(KV.alerts.sent(dedupeKey), true)
+      this.host.state.set(KV.alerts.day(day), sent + 1)
       return true
     } catch (error) {
-      this.host.logs.record('warn', 'alerts', `Alert for incident ${incident.id} (${change}) could not be sent: ${
+      this.host.logs.record('warn', 'alerts', `Alert ${dedupeKey} could not be sent: ${
         error instanceof Error ? error.message : String(error)}`)
       return false
     }
+  }
+
+  /** Sends the alert for an incident change when the configuration and the caps allow it, and reports whether it was sent. */
+  async notify(incident: Incident, change: AlertChange): Promise<boolean> {
+    const config = this.host.settings().executor.incidents
+    if (change === 'resolved' && !config.alertRecovery) return false
+    if (incidentSeverityRank(incident.severity) < incidentSeverityRank(config.alertMinimumSeverity)) return false
+    const subject = change === 'resolved' ? 'Incident resolved' : `Incident ${change}`
+    const text = [
+      `[dsh-superagent] ${subject}: ${incident.severity} ${incident.rule} — ${incident.title.slice(0, INCIDENT_TITLE_LIMIT)}`,
+      incident.detail,
+      'The incident record and its evidence bundle are in the panel; this message is a notification, not a fix.',
+    ].join('\n\n')
+    return this.send(`incident:${incident.id}:${change}`, text)
   }
 }

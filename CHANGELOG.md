@@ -13,6 +13,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   by incident and change and capped per UTC day, and the recovery message has its own switch. A failed send is logged and
   retried by the next change; the daily digest now repeats up to five open incidents under “Needs attention” as a
   low-frequency backstop.
+- A model failure that leaves one or more managed levels without a working provider is reported to the same alert chat
+  (issue #26): one message names each failing Session level — Executor, Lead or Orchestrator — with its provider, attempt
+  and wait, is deduplicated until the failing set clears, and has a recovery message gated by the recovery switch; the
+  raw retry detail stays in the `models` health entry and no credentials are sent.
+- A rootless Lead escalation's decision and a rootless project request's completion now reach a person (issue #30): the
+  Engine announces `escalation.decided`, and both are reported on the alert chat, recording in the log that no user
+  Channel exists; a rooted request still reports through its own aggregate report.
 - A Lead escalation and a project request that reaches needs-attention now wake the Orchestrator
   instead of waiting for a pull (issue #16): the Engine announces `project-request.escalated`, the Runtime
   queues a durable `wake` prompt for the main Session naming `orchestrator_escalation_decide`, and

@@ -13,7 +13,7 @@ import { AgentDelivery, messageId } from './delivery.ts'
 import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
-import { RetryHealth } from './retry-health.ts'
+import { RetryHealth, type BudgetRetryStatus } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
@@ -51,6 +51,8 @@ export interface SessionsHost {
   readonly automations?: Automations
   /** A capture logger scoped to this part, so its warnings reach the panel's ring; when absent, only the Host logger sees them. */
   readonly log?: CaptureLogs
+  /** Called whenever the model-budget retry set changes, so the Runtime can alert a person about a real outage (issue #26). */
+  onModelRetries?(retries: readonly BudgetRetryStatus[]): void
 }
 
 /**
@@ -368,6 +370,7 @@ export class Sessions {
     this.host.health.set(retries.length
       ? { state: 'error', detail: retries.slice(0, 5).map(item => `${item.sessionId}: ${item.provider} is over its model budget; retried ${item.attempts} times, waiting since ${item.since}; the model and retry policy are unchanged`).join('; ') + (retries.length > 5 ? `; ${retries.length - 5} more Sessions` : ''), at: retries.at(-1)!.lastAt }
       : { state: 'ready', detail: 'No managed Session is waiting on a model budget retry' })
+    this.host.onModelRetries?.(retries)
   }
   private ticketOf(agent: Agent): Ticket | undefined {
     const ticketId = ticketOfSession(agent.id)

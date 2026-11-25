@@ -22,6 +22,8 @@ declare module './ports.ts' {
     'project-request.approval-requested': { projectRequestId: string }
     /** A project Lead escalated a request it cannot decide itself; the runtime wakes the Orchestrator to decide it (issue #16). */
     'project-request.escalated': { projectRequestId: string }
+    /** The Orchestrator decided a Lead escalation; a rootless one is reported on the alert chat (issue #30). */
+    'escalation.decided': { escalationId: string; disposition: string }
   }
 }
 
@@ -392,7 +394,7 @@ export class Engine {
    * escalation Mandate. Reject and needs-info move the request without creating work.
    */
   decideEscalation(id: string, disposition: ProjectRequestDisposition, input: EscalationDecisionInput): ProjectRequest {
-    return this.repo.atomic(() => {
+    const decided = this.repo.atomic(() => {
       const store = this.projectRequestStore()
       const request = store.get(id)
       if (!request) throw new ProjectRequestError('unknownProjectRequest')
@@ -427,6 +429,9 @@ export class Engine {
         status, decision, request_id: created.id, tickets: [...request.tickets, ...created.ticketIds],
       })
     })
+    // A rootless escalation has no user Channel; the runtime reports this decision on the alert chat (issue #30).
+    this.options.emit?.({ type: 'escalation.decided', at: this.now(), data: { escalationId: id, disposition: disposition.action } })
+    return decided
   }
   /**
    * The project requests of one project, or of every project, oldest first; `status` narrows the list to one state.

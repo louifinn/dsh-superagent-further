@@ -60,6 +60,7 @@ import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
 import { Alerts } from './alerts.ts'
+import { Faults } from './faults.ts'
 import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import { Updates } from './updates.ts'
@@ -121,6 +122,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   readonly incidents: Incidents
   /** Sends new, reopened and resolved incidents to the operator's alert chat (issue #19). */
   readonly alerts: Alerts
+  /** Routes model failures and rootless requests to the person (issues #26 and #30). */
+  readonly faults: Faults
   /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
   readonly diagnosis: Diagnosis
   /** The supervisor-owned update pipeline as the panel sees it: read-only status plus a rollback request writer (ADR-0007). */
@@ -235,9 +238,13 @@ export class Runtime implements SourceHost, RuntimeHandle {
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
+      this.alerts = new Alerts({ settings: () => store.settings(), commands, logs: this.logs,
+        state: { get: value => store.get(value), set: (value, next) => { if (next === undefined) store.delete(value); else store.set(value, next) } } })
+      this.faults = new Faults({ alerts: this.alerts, logs: this.logs, recovery: () => store.settings().executor.incidents.alertRecovery,
+        state: { get: value => store.get(value), set: (value, next) => { if (next === undefined) store.delete(value); else store.set(value, next) } } })
       const sessions = this.sessions = new Sessions({ context: ctx, values: host.values, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
-        closing: () => this.closing(), environment,
+        closing: () => this.closing(), environment, onModelRetries: retries => { void this.faults.modelRetries(retries) },
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
@@ -256,10 +263,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
         record: message => this.log.warn('dsh-superagent-further: %s', message),
       })
-      // Incident alerts (issue #19): a configured Feishu chat hears about new, reopened and resolved records; the
-      // small snapshot below lets the daily digest repeat open incidents when an alert was missed.
-      this.alerts = new Alerts({ settings: () => store.settings(), commands, logs: this.logs,
-        state: { get: value => store.get(value), set: (value, next) => store.set(value, next) } })
+      // The daily digest repeats open incidents as a low-frequency backstop (issue #19).
       const refreshIncidentDigest = (): void => {
         const open = store.incidents.list({ status: 'all' })
           .filter(incident => incident.status === 'detected' || incident.status === 'bundled' || incident.status === 'diagnosed')
@@ -340,6 +344,11 @@ export class Runtime implements SourceHost, RuntimeHandle {
                 text: sessionDecisionText(decision, trigger) })
             }
           }
+          // A rootless escalation has no user Channel; report the decision on the alert chat (issue #30).
+          if (event.type === 'escalation.decided') {
+            const request = store.projectRequests.get(event.data.escalationId)
+            if (request) void this.faults.escalationDecided(request, event.data.disposition)
+          }
           // Report a completed project request's whole derived chain once, through the Channels it started in (docs/012 D6).
           if (event.type === 'project-request.completed') {
             const root = store.projectRequests.get(event.data.projectRequestId)
@@ -348,6 +357,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
               const channels = projectResultChannels(root, id => store.requests.get(id), id => store.triggers.get(id))
               const report = projectResultNotices(root, channels, id => store.tickets.get(id), id => store.projectRequests.get(id), setup.deployment.repository)
               for (const message of report) outbox.send(message)
+              // A root with no Channel anywhere would otherwise end silently; the alert chat is its only person path (issue #30).
+              if (channels.length === 0) void this.faults.projectCompletedNoRoot(root, root.tickets)
             }
           }
           // Ask the root Channel to approve an architecture request's design once its design Ticket ended (docs/012 D7).
