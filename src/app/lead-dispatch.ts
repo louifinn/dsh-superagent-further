@@ -76,6 +76,41 @@ export function projectRequestView(request: ProjectRequest) {
 export class LeadDispatch {
   constructor(private readonly host: LeadDispatchHost) {}
 
+  /**
+   * Escalates a Lead that cannot be reached for one of the Orchestrator's notices (issue #27). The durable notice and
+   * wake record that the parent has taken over, so work is never silently parked behind an unreachable Lead; the
+   * Orchestrator then retries the Ticket, ends it, or repairs the Lead Session.
+   */
+  private unreachable(ticket: Ticket, event: string, error: unknown): void {
+    const reason = error instanceof Error ? error.message : String(error)
+    const id = key('lead-unreachable', ticket.id, event)
+    const summary = `The Lead of project ${ticket.project ?? '(none)'} could not be reached for ${event} on Ticket ${ticket.id}. `
+      + 'The Orchestrator takes over: retry the work with orchestrator_ticket_retry, end the Ticket, or repair the Lead Session.'
+    try {
+      this.host.notify(id, { lead_unreachable: { project: ticket.project ?? '', ticket_id: ticket.id, event, reason } }, summary)
+      this.host.wake?.(id, summary)
+    } catch (notice) {
+      this.host.warn?.(`could not escalate Ticket ${ticket.id} to the Orchestrator`, notice)
+    }
+    this.host.warn?.(`could not reach the Lead of project ${ticket.project ?? '(none)'} for ${event} on Ticket ${ticket.id}; escalated to the Orchestrator`, error)
+  }
+
+  /**
+   * Disposition instructions for a worker report that failed or blocked (issue #27): the Lead owns the next step, and the
+   * Orchestrator hears the decision only through `lead_report`. Other report states just need relaying.
+   */
+  private disposition(text: string): string {
+    let state: unknown
+    try {
+      ;({ state } = JSON.parse(text) as { state?: unknown })
+    } catch {
+      return ''
+    }
+    if (state !== 'failed' && state !== 'blocked') return ''
+    return `The report says the work ${state}. Dispose of it first: retry with lead_ticket_retry, end it with lead_ticket_stop, `
+      + 'or ask the worker with lead_notify_worker; then record the disposition upward with lead_report. '
+  }
+
   /** Prompts the project's Lead about a request a worker just raised. */
   async requestRaised(request: ProjectRequest): Promise<void> {
     const project = this.projectOf(request.project)
@@ -89,6 +124,10 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not prompt the Lead about project request ${request.id}`, error)
+      if (request.raised_by.ticket !== undefined) {
+        const ticket = this.host.store.tickets.get(request.raised_by.ticket)
+        if (ticket) this.unreachable(ticket, 'project request', error)
+      }
     }
   }
 
@@ -117,6 +156,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s pull request ended`, error)
+      this.unreachable(ticket, 'pull request ending', error)
     }
   }
 
@@ -149,6 +189,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id} ended`, error)
+      this.unreachable(ticket, 'ticket ending', error)
     }
   }
 
@@ -178,6 +219,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s Assignment ${assignment.id} stalled`, error)
+      this.unreachable(ticket, 'stalled assignment', error)
     }
   }
 
@@ -203,6 +245,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s attention question is overdue`, error)
+      this.unreachable(ticket, 'overdue attention', error)
     }
   }
 
@@ -229,6 +272,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not ask the Lead of project ${project.id} to start assignment ${assignment.id} on Ticket ${ticket.id}`, error)
+      this.unreachable(ticket, 'assignment dispatch', error)
     }
   }
 
@@ -257,6 +301,7 @@ export class LeadDispatch {
       for (const message of messages) this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not prompt the Lead about worker report on ticket ${ticket.id}`, error)
+      this.unreachable(ticket, 'worker request report', error)
     }
   }
 
@@ -273,6 +318,7 @@ export class LeadDispatch {
     if (this.host.store.leads.getByRequest('lead', requestId)) return
     const body = `The worker of Ticket ${ticket.id} "${ticket.title}" in project ${project.id} reported:\n${relay.text}\n\n`
       + 'Review the report, then relay it upward with the lead_report tool, passing report_id ' + relay.id + '. '
+      + this.disposition(relay.text)
       + 'Do not start new work or change the external thread unless a person asks.'
     try {
       const session = await this.host.ensureLead(project)
@@ -282,6 +328,7 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not prompt the Lead of project ${project.id} about the report on Ticket ${ticket.id}`, error)
+      this.unreachable(ticket, 'worker report', error)
     }
   }
 

@@ -178,6 +178,75 @@ describe('the stalled-Assignment notice', () => {
   })
 })
 
+describe('an unreachable Lead (issue #27)', () => {
+  const ticket = { id: 't1', title: 'Fix the header', project: 'app' } as Ticket
+
+  function hostWith(ensureLead: ReturnType<typeof vi.fn>) {
+    const messages: LeadMessage[] = []
+    let sequence = 0
+    const leads = {
+      send: vi.fn((input: Omit<LeadMessage, 'id' | 'at'>) => {
+        const record = { ...input, id: `message-${++sequence}`, at: '2026-01-01T00:00:00.000Z' } as LeadMessage
+        messages.push(record)
+        return record
+      }),
+      getByRequest: vi.fn((recipient: string, requestId: string) =>
+        messages.find(message => message.to === recipient && message.requestId === requestId)),
+      deliver: vi.fn(),
+    }
+    const host = {
+      store: {
+        leads,
+        tickets: { get: vi.fn(() => ticket) },
+        settings: () => ({ executor: { projects: [{ id: 'app', name: 'App', workspace: '/w', repository: '', branch: '' }] } }),
+      },
+      engine: () => ({}),
+      ensureLead,
+      prompt: vi.fn(async () => {}),
+      notify: vi.fn(),
+      wake: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as LeadDispatchHost
+    return { host, messages }
+  }
+
+  it('asks the Lead to dispose of a failed report before relaying it upward', async () => {
+    const { host, messages } = hostWith(vi.fn(async () => 'lead-app'))
+    const dispatch = new LeadDispatch(host)
+    await dispatch.reportReceived(ticket, { id: 'relay-1', text: JSON.stringify({ kind: 'worker_report', state: 'failed', summary: 'tests fail' }) })
+    expect(messages).toHaveLength(1)
+    // The durable Lead message carries the worker's own report; the prompt adds the disposition instructions.
+    expect(messages[0]!.body).toContain('"state":"failed"')
+    const prompt = (host.prompt as unknown as { mock: { calls: [string, string, string][] } }).mock.calls[0]!
+    expect(prompt[1]).toBe('executor-report:relay-1')
+    expect(prompt[2]).toContain('The report says the work failed')
+    expect(prompt[2]).toContain('lead_ticket_retry')
+    expect(prompt[2]).toContain('lead_ticket_stop')
+    expect(prompt[2]).toContain('lead_report')
+    expect(prompt[2]).toContain('report_id relay-1')
+  })
+
+  it('does not add disposition instructions to a ready report', async () => {
+    const { host } = hostWith(vi.fn(async () => 'lead-app'))
+    const dispatch = new LeadDispatch(host)
+    await dispatch.reportReceived(ticket, { id: 'relay-2', text: JSON.stringify({ kind: 'worker_report', state: 'ready', summary: 'done' }) })
+    const prompt = (host.prompt as unknown as { mock: { calls: [string, string, string][] } }).mock.calls[0]!
+    expect(prompt[2]).not.toContain('The report says the work')
+  })
+
+  it('escalates to the Orchestrator when the Lead cannot be reached', async () => {
+    const { host } = hostWith(vi.fn(async () => { throw new Error('Lead Session is gone') }))
+    const dispatch = new LeadDispatch(host)
+    await dispatch.reportReceived(ticket, { id: 'relay-3', text: JSON.stringify({ kind: 'worker_report', state: 'blocked', summary: 'needs input' }) })
+    expect(host.notify).toHaveBeenCalledWith(expect.any(String),
+      { lead_unreachable: expect.objectContaining({ project: 'app', ticket_id: 't1', event: 'worker report', reason: 'Lead Session is gone' }) },
+      expect.stringContaining('The Orchestrator takes over'))
+    const id = (host.notify as unknown as { mock: { calls: [string, ...unknown[]][] } }).mock.calls[0]![0]
+    expect(host.wake).toHaveBeenCalledWith(id, expect.stringContaining('The Orchestrator takes over'))
+    expect(host.warn).toHaveBeenCalledWith(expect.stringContaining('escalated to the Orchestrator'), expect.any(Error))
+  })
+})
+
 describe('the executor settings', () => {
   it('no longer carries an orchestration switch: a project Ticket always runs under its Lead', () => {
     expect('orchestration' in ExecutorConfigSchema.parse({})).toBe(false)

@@ -1051,8 +1051,10 @@ export class Runtime implements SourceHost, RuntimeHandle {
         this.sessions.notify(key('review-agent-error', record.id), { role: record.role, session: record.sessionId, error: identity, evidence: record.evidence },
           `Reviewer Session ${record.sessionId} of project ${record.project} reported ${identity}. Evidence: ${record.evidence}`)
       } else if (record.role === 'orchestrator') {
-        await this.alerts.send(`agent-error:${record.id}`, [...detail,
+        const sent = await this.alerts.send(`agent-error:${record.id}`, [...detail,
           'The Orchestrator has no parent. Fix the failure or report it to the operator; the evidence bundle carries the message.'].join('\n\n'))
+        // Without a configured alert chat the panel log is the operator's fallback (issue #27); the failure stays visible.
+        if (!sent) this.log.error('agent.error.orchestrator %s: %s evidence=%s', record.sessionId, identity, record.evidence)
       } else if (record.role === 'diagnosis') {
         this.log.warn('agent.error diagnosis session %s: %s evidence=%s', record.sessionId, identity, record.evidence)
       }

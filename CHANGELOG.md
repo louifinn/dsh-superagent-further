@@ -8,6 +8,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- The Lead is now a required hop instead of a best effort (issue #27): a worker's `failed` or `blocked` report reaches the
+  Lead with its disposition named (`lead_ticket_retry`, `lead_ticket_stop`, `lead_notify_worker`, then `lead_report`), and
+  when the Lead cannot be reached for a report, a stalled Assignment, an ending, an overdue question or a pending
+  Assignment, a durable `lead_unreachable` notice and Orchestrator wake take over the retry, ending or repair. A Lead's
+  own agent error already wakes the Orchestrator, and an Orchestrator failure with no alert chat falls back to the panel
+  error log.
 - Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
   Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
   or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
