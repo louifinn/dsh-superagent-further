@@ -28,6 +28,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- The layer boundary is now a tested and documented contract instead of a convention (issue #15): the
+  Orchestrator has no direct tool into a worker Session (the removed `orchestrator_ticket_note` stays
+  removed; the only cross-layer path is `orchestrator_lead_instruction` writing a durable Lead message),
+  a worker's report is a durable Lead message and only a read-only notice is mirrored to the
+  Orchestrator, and the shared OS account, state database and filesystem are declared an accepted
+  operational boundary rather than a security boundary in `docs/003-execution.md` and `SECURITY.md`.
 - A review or a change that spans registered projects no longer fails as a vague refusal or a silent
   downgrade: the admission and dispatch prompts name the delivery-contract shapes (a review is one
   `answer` request with one unit per project and no `worktree_name`; a change keeps one worktree name

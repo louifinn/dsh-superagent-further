@@ -94,7 +94,7 @@ Ticket-specific values come from its directory and originating Trigger. Other va
 
 Workers reach GitHub through the agent account's `gh` and Feishu through the bot's `lark-cli`. Blocked commands fail when invoked by name.
 
-These wrappers and directories establish defaults, not a security boundary. A worker can still execute a program by absolute path.
+These wrappers and directories establish defaults, not a security boundary. A worker can still execute a program by absolute path. All roles run as the same OS account and share the state database (`orchestrator.sqlite`) and the filesystem; the application's layer discipline (ADR-0008 and `tests/lead-instructions.spec.ts`) removes tools that would cross layers, but it is not an isolation mechanism. The shared account and state are an operational boundary accepted for a single-operator Host: do not run untrusted agents or multiple tenants on one Host (see SECURITY.md at the repository root).
 
 ## Merging
 

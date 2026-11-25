@@ -23,6 +23,10 @@ date with you.
   pull request or change policy; those need the origin Thread or a person.
 - **The Policy is the trust boundary.** A Trigger is accepted only under an enabled rule and an admission row; inferred
   acceptance is recorded, not acted on, unless `eval.mode` is `auto`. A Source cannot mint authority by itself.
+- **Worker Sessions share the operator's OS account, state database and filesystem.** The tool-layer adjacency rules
+  (ADR-0008: the Orchestrator has no direct tool into a worker Session, and a worker's report is a durable Lead message
+  mirrored read-only to the Orchestrator) are not isolation. Treat the Host as single-operator and run only trusted
+  agents on it; do not use the worker sandbox as a tenant boundary.
 - **State is local.** `orchestrator.sqlite` and the worktrees live under the profile's state directory; the plugin sends to the
   network only through the configured Sources (GitHub, Feishu) and the model provider.
 
