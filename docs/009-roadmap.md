@@ -801,3 +801,13 @@ or repair to the Orchestrator, while an Orchestrator failure falls back to the a
   silently duplicated; a review is a subject with a report and coverage (#32, #33, #34, #35).
 - [ ] **Documentation, boundary and acceptance.** Reconcile the documents, decide the shared-state boundary, and add the
   information-propagation acceptance baseline (#36, #37, #38).
+
+## Sprint 36 checklist
+
+Context surface model ([#6](https://github.com/louifinn/dsh-superagent-further/issues/6)): one declared surface per role, one projection function with four invariants, generated budgets, and reads derived from the surface.
+
+- [x] docs/015 (context surfaces) records the surface model, projection invariants, visibility lattice and migration order.
+- [ ] L1 — `src/app/surfaces.ts` declares one exhaustive surface per role; prompt assembly, including the Lead, derives from it.
+- [ ] L2 — `src/app/projection.ts` owns all context truncation; a property test per invariant.
+- [ ] L3 — budgets generated from surfaces with structured reasons; a CI drift gate.
+- [ ] L4 — resource reads derived from `surface.reads`; the Lead pages through the shared read capability.
