@@ -14,6 +14,7 @@ import { readResource, type MainResourceHost, type ResourceHost } from '../resou
 import type { Sessions } from '../sessions.ts'
 import type { Settings } from '../settings.ts'
 import type { Store } from '../store.ts'
+import { RESOURCE_NAMES } from '../resources.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 import { automationTools } from './automation.ts'
 import type { SourceLabelChange, SourceLabelResult } from '../../sources/kind.ts'
@@ -219,7 +220,7 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
   const resources: MainResourceHost = { ...host.resources, sessions: host.sessions, settings: host.settings }
   return [
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
-      false, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
+      RESOURCE_NAMES, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
     routeTool(host),
     tool({
       name: 'orchestrator_lead_instruction',

@@ -67,7 +67,7 @@ describe('Lead Sessions', () => {
         'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide', 'lead_request_escalate',
         'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'lead_ticket_attach',
         'lead_ticket_note', 'lead_ticket_request_status', 'lead_ticket_retry', 'lead_ticket_stop', 'memory_forget', 'memory_search',
-        'memory_write'])
+        'memory_write', 'orchestrator_read'])
       const status = await host.runTool('lead-app', 'lead_status', {}) as { project: Record<string, unknown>; tickets: { open: unknown[] };
         messages: unknown[] }
       expect(status.project).toMatchObject({ id: 'app', name: 'App', repository: 'acme/app' })
@@ -245,4 +245,22 @@ describe('dispatch through the project Lead (issue #12)', () => {
       expect(host.agents.has(`worker-${ticket.id}`)).toBe(false)
     } finally { await host.stop() }
   })
+  it('reads its own project\'s pages and refuses another project\'s, and never the installation lists', async () => {
+    const host = await startRuntime()
+    try {
+      const { ticket } = await host.acceptedTicket(feishu('7', '@bot 修七'), 'answer')
+      const page = await host.runTool('lead-default', 'orchestrator_read', { resource: `ticket/${ticket.id}` }) as { ticket_id: string }
+      expect(page.ticket_id).toBe(ticket.id)
+      await expect(host.runTool('lead-default', 'orchestrator_read', { resource: 'tickets' }))
+        .rejects.toThrow(/Unknown context resource/)
+      const settings = host.runtime.store.settings()
+      host.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [...settings.executor.projects,
+        { id: 'lib', name: 'Lib', workspace: join(host.directory, 'lib'), repository: 'acme/lib', branch: '' }] } })
+      mkdirSync(join(host.directory, 'lib'), { recursive: true })
+      await host.runtime.sessions.ensureLead('lib', join(host.directory, 'lib'), 'Project Lib')
+      await expect(host.runTool('lead-lib', 'orchestrator_read', { resource: `ticket/${ticket.id}` }))
+        .rejects.toThrow(/inaccessible/)
+    } finally { await host.stop() }
+  })
 })
+

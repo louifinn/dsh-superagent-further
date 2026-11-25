@@ -19,6 +19,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - Each role's character budgets (prompt, tool-schemas and injection) live beside its surface declaration with a
   structured reason, including the Lead and the reviewer, and `docs/budgets.md` is generated from that table and gated
   by `docs:check`; the model-surface test measures the running surface against it (part of #6).
+- A project Lead pages its own project through the same `orchestrator_read` the other roles use: `SURFACES.reads`
+  declares what each role may read (reviewer ⊆ worker ⊆ lead ⊆ orchestrator), the runtime hands the Lead a project-scoped
+  read that refuses another project's tickets, threads and triggers, and the installation lists stay the main Session's.
 - An Input now reaches a running worker only after its project Lead releases it (issue #41): the delivery records a
   durable `lead-fact:<assignmentId>:<inputId>` request for the Lead, `lead_fact` acknowledges it and
   `DshExecutor.deliverForLead` queues the delivery, a missing grant is refused and recorded as

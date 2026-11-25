@@ -46,7 +46,7 @@ describe('mounted surface', () => {
       lead: ['lead_assign', 'lead_fact', 'lead_instruction_reply', 'lead_notify_worker', 'lead_report', 'lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
         'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'lead_ticket_attach',
         'lead_ticket_note', 'lead_ticket_request_status', 'lead_ticket_retry', 'lead_ticket_stop', 'memory_forget',
-        'memory_search', 'memory_write'],
+        'memory_search', 'memory_write', 'orchestrator_read'],
       // An Executor Session: report, read what reached it, follow or detach Threads, and hand a Trigger back.
       worker: ['orchestrator_ack', 'orchestrator_read', 'orchestrator_report', 'orchestrator_thread_follow', 'orchestrator_thread_unrelated',
         'orchestrator_trigger_handback', 'request_create'],

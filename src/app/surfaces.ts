@@ -4,7 +4,7 @@
  * sweep here; the declarative `SURFACES` record, the projection table and the generated budgets arrive in the next
  * steps.
  */
-import { RESOURCES } from './resources.ts'
+import { RESOURCE_NAMES, RESOURCES } from './resources.ts'
 
 /** Every role whose model-facing surface the design has to account for; the Lead and reviewer gap is declared below. */
 export type RoleId = 'orchestrator' | 'worker' | 'lead' | 'reviewer'
@@ -60,9 +60,22 @@ export function uncollectedRoles(registered: readonly RoleId[]): RoleId[] {
   return ROLE_IDS.filter(role => !seen.has(role))
 }
 
-/** The resource grammar, as the inventory snapshots it: name, what it holds, and whether only an Executor may read it. */
-export const RESOURCE_GRAMMAR: readonly { name: string; holds: string; executor: boolean }[] =
-  RESOURCES.map(({ name, holds, executor }) => ({ name, holds, executor: executor === true }))
+/** The resource grammar, as the inventory snapshots it; which role may read a name comes from that role's reads. */
+export const RESOURCE_GRAMMAR: readonly { name: string; holds: string }[] = RESOURCES.map(({ name, holds }) => ({ name, holds }))
+
+const array = (items: readonly string[]): readonly string[] => [...items]
+
+/** The worker's reads (docs/015 D5): its own ticket, its messages, and the thread and trigger it was reached by. */
+export const WORKER_READS: readonly string[] = array([
+  'thread/<key>', 'ticket/<id>', 'ticket/<id>/assignment', 'ticket/<id>/assignments', 'ticket/<id>/inputs',
+  'ticket/<id>/result', 'ticket/<id>/report/<id>', 'ticket/<id>/transcript', 'ticket/<id>/message/<n>',
+  'ticket/<id>/input/<id>', 'trigger/<id>', 'prompts/<revision>', 'feishu/<trigger-id>/…', 'github/…',
+])
+
+/** The reviewer's reads are a subset of the worker's: the change it reviews is one ticket (docs/015 D5/D6). */
+export const REVIEWER_READS: readonly string[] = array([
+  'ticket/<id>', 'ticket/<id>/result', 'ticket/<id>/report/<id>', 'ticket/<id>/transcript', 'ticket/<id>/message/<n>',
+])
 
 /**
  * The prompt sections a surface may name, in the order the composer emits them. The names are the composer's vocabulary,
@@ -127,7 +140,7 @@ export const SURFACES: Record<RoleId, Surface> = {
       'orchestrator_escalations', 'orchestrator_escalation_decide', 'orchestrator_prompts_save', 'automation_create',
       'automation_list', 'automation_view', 'automation_edit', 'automation_run', 'automation_delete', 'memory_write',
       'memory_search', 'memory_forget'],
-    reads: [],
+    reads: RESOURCE_NAMES,
     runtimes: ['memory', 'automations', 'language'],
     budget: [
       { kind: 'prompt', chars: 47_400, reason: budgetReason('the headline prompt plus its generated parts, as the surface test composes it',
@@ -143,7 +156,7 @@ export const SURFACES: Record<RoleId, Surface> = {
       'environment'],
     tools: ['orchestrator_read', 'orchestrator_ack', 'orchestrator_thread_unrelated', 'orchestrator_thread_follow', 'orchestrator_trigger_handback',
       'request_create', 'orchestrator_report'],
-    reads: [],
+    reads: WORKER_READS,
     runtimes: ['language'],
     budget: [
       { kind: 'prompt', chars: 38_800, reason: budgetReason('the worker prompt, as the runtime hands it to the Executor Session',
@@ -157,12 +170,12 @@ export const SURFACES: Record<RoleId, Surface> = {
   lead: {
     sections: ['shared', 'role', 'team/communication', 'team/scope', 'team/delivery', 'subscriptions', 'replies', 'environment',
       'project'],
-    tools: ['lead_status', 'lead_requests', 'lead_assign', 'lead_fact', 'lead_request_create', 'lead_request_escalate',
+    tools: ['orchestrator_read', 'lead_status', 'lead_requests', 'lead_assign', 'lead_fact', 'lead_request_create', 'lead_request_escalate',
       'lead_review', 'lead_review_record', 'lead_request_decide', 'lead_request_approval', 'lead_request_approve',
       'lead_request_reply', 'lead_request_complete', 'lead_ticket_note', 'lead_ticket_request_status', 'lead_ticket_retry',
       'lead_ticket_stop', 'lead_ticket_attach', 'lead_instruction_reply', 'lead_notify_worker', 'lead_report', 'memory_write',
       'memory_search', 'memory_forget'],
-    reads: [],
+    reads: WORKER_READS,
     runtimes: ['memory', 'automations', 'language'],
     budget: [
       { kind: 'prompt', chars: 50_000, reason: budgetReason('the Lead prompt assembled from its surface sections and the project it owns',
@@ -176,7 +189,7 @@ export const SURFACES: Record<RoleId, Surface> = {
   reviewer: {
     sections: [],
     tools: [],
-    reads: [],
+    reads: REVIEWER_READS,
     runtimes: [],
     budget: [
       { kind: 'prompt', chars: 400, reason: budgetReason('the reviewer activation text, which is the only model-facing text this role has',

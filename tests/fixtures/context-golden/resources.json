@@ -13,8 +13,7 @@
   },
   {
     "name": "thread/<key>",
-    "holds": "one thread: its label and link, its tickets and latest decisions, and its triggers, newest first",
-    "executor": true
+    "holds": "one thread: its label and link, its tickets and latest decisions, and its triggers, newest first"
   },
   {
     "name": "decisions",
@@ -26,53 +25,43 @@
   },
   {
     "name": "ticket/<id>",
-    "holds": "a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first",
-    "executor": true
+    "holds": "a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first"
   },
   {
     "name": "ticket/<id>/assignment",
-    "holds": "its assignment text",
-    "executor": true
+    "holds": "its assignment text"
   },
   {
     "name": "ticket/<id>/assignments",
-    "holds": "its assignments, newest first, with the start of each report",
-    "executor": true
+    "holds": "its assignments, newest first, with the start of each report"
   },
   {
     "name": "ticket/<id>/inputs",
-    "holds": "its inputs, newest first",
-    "executor": true
+    "holds": "its inputs, newest first"
   },
   {
     "name": "ticket/<id>/result",
-    "holds": "its latest report",
-    "executor": true
+    "holds": "its latest report"
   },
   {
     "name": "ticket/<id>/report/<id>",
-    "holds": "the report of one of its assignments",
-    "executor": true
+    "holds": "the report of one of its assignments"
   },
   {
     "name": "ticket/<id>/transcript",
-    "holds": "its Executor Session's messages, newest first",
-    "executor": true
+    "holds": "its Executor Session's messages, newest first"
   },
   {
     "name": "ticket/<id>/message/<n>",
-    "holds": "one message of that transcript",
-    "executor": true
+    "holds": "one message of that transcript"
   },
   {
     "name": "ticket/<id>/input/<id>",
-    "holds": "one input it was delivered",
-    "executor": true
+    "holds": "one input it was delivered"
   },
   {
     "name": "trigger/<id>",
-    "holds": "a trigger's text, where it went, the message it replies to and the messages around it on its thread",
-    "executor": true
+    "holds": "a trigger's text, where it went, the message it replies to and the messages around it on its thread"
   },
   {
     "name": "settings",
@@ -92,8 +81,7 @@
   },
   {
     "name": "prompts/<revision>",
-    "holds": "one prompt version by number, or current, the one the Session works under",
-    "executor": true
+    "holds": "one prompt version by number, or current, the one the Session works under"
   },
   {
     "name": "prompts/defaults",
@@ -113,12 +101,10 @@
   },
   {
     "name": "feishu/<trigger-id>/…",
-    "holds": "a Feishu original, as the dsh-superagent-further-feishu skill describes",
-    "executor": true
+    "holds": "a Feishu original, as the dsh-superagent-further-feishu skill describes"
   },
   {
     "name": "github/…",
-    "holds": "a GitHub original, as the dsh-superagent-further-github skill describes",
-    "executor": true
+    "holds": "a GitHub original, as the dsh-superagent-further-github skill describes"
   }
 ]

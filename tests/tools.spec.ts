@@ -1,4 +1,5 @@
 /** Session tool registration, role-scoped resource reads, and routing/settings tool contracts. */
+import { SURFACES } from '../src/app/surfaces.ts'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
@@ -179,7 +180,7 @@ it('keeps the main Session\'s resources from an Executor Session, which lists on
   type Registered = { description: string; parameters: { properties: { resource: { description: string } } } }
   const registered = h.tools.get(sessionId)!.get('orchestrator_read') as unknown as Registered
   const offered = registered.description + registered.parameters.properties.resource.description
-  for (const { name, executor } of RESOURCES) expect(offered.includes(`${name}:`), name).toBe(!!executor)
+  for (const { name } of RESOURCES) expect(offered.includes(`${name}:`), name).toBe(SURFACES.worker.reads.includes(name))
   expect(offered).not.toMatch(/preview/i)
 })
 

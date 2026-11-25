@@ -22,40 +22,43 @@ import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 
 /** Resource descriptors exposed via orchestrator_read, marking which resources worker sessions may also read for their own ticket. */
-export const RESOURCES: readonly { name: string; holds: string; executor?: true }[] = [
+export const RESOURCES: readonly { name: string; holds: string }[] = [
   { name: 'tickets', holds: 'ticket cards, newest first; a card\'s state is person/review after a ready report, person/blocked or person/failed after those reports, person/answer with a question, person/delivery when an input could not reach the worker, working or working/queued while it works, idle once the worker ended its turn without a report, else how the ticket ended' },
   { name: 'triggers', holds: 'trigger cards with where each went, newest first' },
   { name: 'threads', holds: 'subscribed threads, newest activity first, with their labels, tickets, current assessment and polling errors' },
-  { name: 'thread/<key>', holds: 'one thread: its label and link, its tickets and latest decisions, and its triggers, newest first', executor: true },
+  { name: 'thread/<key>', holds: 'one thread: its label and link, its tickets and latest decisions, and its triggers, newest first' },
   { name: 'decisions', holds: 'decisions, newest first' },
   { name: 'decision/<id>', holds: 'one decision with its audit' },
   { name: 'ticket/<id>', holds: 'a ticket\'s card, the trigger, decision and threads it is tied to, its latest assignments with the start of each '
-    + 'report, and its inputs, newest first', executor: true },
-  { name: 'ticket/<id>/assignment', holds: 'its assignment text', executor: true },
-  { name: 'ticket/<id>/assignments', holds: 'its assignments, newest first, with the start of each report', executor: true },
-  { name: 'ticket/<id>/inputs', holds: 'its inputs, newest first', executor: true },
-  { name: 'ticket/<id>/result', holds: 'its latest report', executor: true },
-  { name: 'ticket/<id>/report/<id>', holds: 'the report of one of its assignments', executor: true },
-  { name: 'ticket/<id>/transcript', holds: 'its Executor Session\'s messages, newest first', executor: true },
-  { name: 'ticket/<id>/message/<n>', holds: 'one message of that transcript', executor: true },
-  { name: 'ticket/<id>/input/<id>', holds: 'one input it was delivered', executor: true },
+    + 'report, and its inputs, newest first' },
+  { name: 'ticket/<id>/assignment', holds: 'its assignment text' },
+  { name: 'ticket/<id>/assignments', holds: 'its assignments, newest first, with the start of each report' },
+  { name: 'ticket/<id>/inputs', holds: 'its inputs, newest first' },
+  { name: 'ticket/<id>/result', holds: 'its latest report' },
+  { name: 'ticket/<id>/report/<id>', holds: 'the report of one of its assignments' },
+  { name: 'ticket/<id>/transcript', holds: 'its Executor Session\'s messages, newest first' },
+  { name: 'ticket/<id>/message/<n>', holds: 'one message of that transcript' },
+  { name: 'ticket/<id>/input/<id>', holds: 'one input it was delivered' },
   { name: 'trigger/<id>', holds: 'a trigger\'s text, where it went, the message it replies to and the messages around it on its thread',
-    executor: true },
+    },
   { name: 'settings', holds: 'settings by block, each with the revision a save names: the small blocks whole, the Policy and the Source '
     + 'instances summarized' },
   { name: 'settings/proposals', holds: 'pending settings proposals with per-field diffs, newest first' },
   { name: 'settings/<block>', holds: 'one settings block whole, as orchestrator_settings_save takes it: policy, eval, executor, pause or '
     + 'source:<id>' },
   { name: 'prompts', holds: 'the prompt revision each Session reads, the skills, and the saved versions' },
-  { name: 'prompts/<revision>', holds: 'one prompt version by number, or current, the one the Session works under', executor: true },
+  { name: 'prompts/<revision>', holds: 'one prompt version by number, or current, the one the Session works under' },
   { name: 'prompts/defaults', holds: 'the built-in prompt configuration, and the built-in parts by the key an override names' },
   { name: 'prompt-preview/<id>', holds: 'a composed prompt that orchestrator_prompts_save previewed' },
   { name: 'models', holds: 'model providers, the DSH default and each role\'s model' },
   { name: 'models/<provider>', holds: 'one provider\'s models' },
-  { name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-further-feishu skill describes', executor: true },
-  { name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-further-github skill describes', executor: true },
+  { name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-further-feishu skill describes' },
+  { name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-further-github skill describes' },
 ]
-export const resourceGrammar = (executor: boolean): string => RESOURCES.filter(resource => !executor || resource.executor)
+/** The resource names a surface declares it may read (docs/015 D5); every name must be one the RESOURCES table carries. */
+export const RESOURCE_NAMES: readonly string[] = RESOURCES.map(resource => resource.name)
+/** The grammar a surface's own reads render into its read tool: only the resources that surface declares it reads. */
+export const resourceGrammar = (reads: readonly string[]): string => RESOURCES.filter(resource => reads.includes(resource.name))
   .map(resource => `${resource.name}: ${resource.holds}`).join('; ')
 
 export interface ResourceHost {
@@ -77,7 +80,7 @@ export interface MainResourceHost extends ResourceHost {
 }
 interface Read {
   host: ResourceHost; resource: string; rest: string; offset: number; limit?: number
-  sessionId: string; ticketId?: string; signal?: AbortSignal
+  sessionId: string; ticketId?: string; projectId?: string; signal?: AbortSignal
 }
 type Route = readonly [name: string, read: (read: Read) => unknown]
 
@@ -299,13 +302,46 @@ const ROUTES: readonly Route[] = [
  * Read a paginated resource for the main Session or a ticket's worker Session.
  * Legacy prefixes (`event/`, `task/`, `observation/`) remain accepted so references in older Session history stay readable.
  */
-export async function readResource(host: ResourceHost, resource: string, offset: number, limit: number | undefined, ticketId?: string,
-  signal?: AbortSignal) {
+/**
+ * The resource a project Lead may read (docs/015 D5/D6): the ticket, thread, trigger and prompt pages of its own
+ * project, never an installation-level list or another project's object.
+ */
+function projectResource(host: ResourceHost, name: string, projectId: string): void {
+  const tickets = host.store.tickets.list().filter(ticket => ticket.project === projectId)
+  if (name.startsWith('ticket/')) {
+    const ticket = host.store.tickets.get(name.slice('ticket/'.length).split('/')[0] ?? '')
+    if (ticket?.project !== projectId) throw new Error('Unknown or inaccessible ticket')
+    return
+  }
+  if (name.startsWith('thread/')) {
+    const thread = host.store.threads.get(name.slice('thread/'.length))
+    if (!thread || !thread.subscriptions.some(id => tickets.some(ticket => ticket.id === id))) {
+      throw new Error('Unknown or inaccessible thread')
+    }
+    return
+  }
+  if (name.startsWith('trigger/')) {
+    const id = name.slice('trigger/'.length)
+    const reached = tickets.some(ticket => ticket.origin.triggerIds.includes(id)
+      || ticket.follows?.some(follow => host.store.threads.get(follow.thread)?.subscriptions.includes(ticket.id)))
+    if (!reached) throw new Error('Unknown or inaccessible trigger')
+    return
+  }
+  if (name.startsWith('feishu/') || name.startsWith('github/')) return
+  if (name.startsWith('prompts/')) return
+  throw new Error('Unknown context resource')
+}
+
+export async function readResource(host: ResourceHost, resource: string, offset: number, limit: number | undefined,
+  scope: { ticketId?: string; projectId?: string } | undefined, signal?: AbortSignal) {
   const name = resource.replace(/^event\//, 'trigger/').replace(/^task\//, 'ticket/').replace(/^observation\//, 'decision/')
+  if (scope?.projectId !== undefined) projectResource(host, name, scope.projectId)
   const route = ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route)
   if (!route) throw new Error('Unknown context resource')
+  const ticketId = scope?.ticketId
+  const projectId = scope?.projectId
   const sessionId = ticketId ? workerSessionId(ticketId) : host.masterId
   const rest = route[0].endsWith('/') ? name.slice(route[0].length) : ''
   return route[1]({ host, resource: name, rest, offset, sessionId, ...limit ? { limit } : {}, ...ticketId ? { ticketId } : {},
-    ...signal ? { signal } : {} })
+    ...projectId ? { projectId } : {}, ...signal ? { signal } : {} })
 }

@@ -3,7 +3,8 @@
  * declared role set names the Lead/reviewer gap instead of omitting it.
  */
 import { describe, expect, it } from 'vitest'
-import { COLLECTED_ROLES, RESOURCE_GRAMMAR, ROLE_IDS, UNCOLLECTED_ROLES, collectSurfaces, uncollectedRoles, type RoleRegistration } from '../src/app/surfaces.ts'
+import { COLLECTED_ROLES, RESOURCE_GRAMMAR, ROLE_IDS, SURFACES, UNCOLLECTED_ROLES, collectSurfaces, uncollectedRoles, type RoleRegistration } from '../src/app/surfaces.ts'
+import { RESOURCE_NAMES } from '../src/app/resources.ts'
 import { RESOURCES } from '../src/app/resources.ts'
 
 const registration = (role: RoleRegistration['role']): RoleRegistration => ({
@@ -44,7 +45,14 @@ describe('context surface inventory', () => {
     expect(uncollectedRoles(['orchestrator', 'worker', 'lead', 'reviewer', 'lead'])).toEqual([])
   })
 
-  it('mirrors the resource grammar the model reads, with Executor-only visibility explicit', () => {
-    expect(RESOURCE_GRAMMAR).toEqual(RESOURCES.map(({ name, holds, executor }) => ({ name, holds, executor: executor === true })))
+  it('mirrors the resource grammar the model reads, and each role reads a declared subset of it', () => {
+    expect(RESOURCE_GRAMMAR).toEqual(RESOURCES.map(({ name, holds }) => ({ name, holds })))
+    const names = new Set(RESOURCE_GRAMMAR.map(resource => resource.name))
+    for (const role of ROLE_IDS) for (const read of SURFACES[role].reads) expect(names, `${role} ${read}`).toContain(read)
+    const subset = (lower: readonly string[], higher: readonly string[]) => lower.every(read => higher.includes(read))
+    expect(subset(SURFACES.reviewer.reads, SURFACES.worker.reads), 'reviewer subset of worker').toBe(true)
+    expect(subset(SURFACES.worker.reads, SURFACES.lead.reads), 'worker subset of lead').toBe(true)
+    expect(subset(SURFACES.lead.reads, SURFACES.orchestrator.reads), 'lead subset of orchestrator').toBe(true)
+    expect(subset(SURFACES.orchestrator.reads, RESOURCE_NAMES)).toBe(true)
   })
 })

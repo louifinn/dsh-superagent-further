@@ -52,7 +52,7 @@ import { Sessions, leadSessionId } from './sessions.ts'
 import { Settings } from './settings.ts'
 import { registerWorkspace, resumeWorkspaceMaster, retireMaster, type WorkspaceRegistryLike } from './workspace-root.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
-import type { ResourceHost } from './resources.ts'
+import { readResource, type ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { field, project as projectText } from './projection.ts'
 import { bindLeadApprovals, bindLeadAssignments, bindLeadFacts } from './tools/lead.ts'
@@ -253,7 +253,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
         onWorkerDisposed: sessionId => { void this.workerDisposed(sessionId) },
         recordAgentError: input => this.agentErrors.record(input),
         onAgentError: record => { void this.notifyAgentError(record) },
-        tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
+        tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent),
+        readProject: (project, resource, offset, limit, signal) => readResource(resources, resource, offset, limit, { projectId: project }, signal) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })

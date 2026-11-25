@@ -21,6 +21,7 @@ import { composeSurfacePrompt, SKILL_PREFIX, type PromptVersion, type Prompts } 
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
 import { leadReportRelay } from './notices.ts'
 import { leadTools } from './tools/lead.ts'
+import { readTool } from './tools/tool.ts'
 import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
 import { memoryTools } from './tools/memory.ts'
@@ -52,6 +53,8 @@ export interface SessionsHost {
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
+  /** One page of a project-scoped resource, read for that project's Lead (docs/015 D5/D6). */
+  readProject?(project: string, resource: string, offset: number, limit: number | undefined, signal: AbortSignal): Promise<unknown>
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
   /** A capture logger scoped to this part, so its warnings reach the panel's ring; when absent, only the Host logger sees them. */
@@ -543,10 +546,13 @@ export class Sessions {
       note: (ticketId: string, text: string) => engine.note(ticketId, text),
       requestStatus: (ticketId: string) => engine.requestStatus(ticketId),
     }
-    const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
+    const tools = project ? [...leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
       notify: (session, text) => this.notifyWorker(project.id, session, text),
       report: (reportId: string, note?: string) => this.reportUpward(project.id, reportId, note),
-      ...tickets === undefined ? {} : { tickets } }, project)
+      ...tickets === undefined ? {} : { tickets } }, project), readTool('Read one page of a resource of this project that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
+      SURFACES.lead.reads, (resource, offset, limit, signal) => host.readProject === undefined
+        ? Promise.reject(new Error('This installation has no project-scoped read path'))
+        : host.readProject(project.id, resource, offset, limit, signal))]
       : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
