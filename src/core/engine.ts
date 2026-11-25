@@ -1,8 +1,8 @@
 /** The domain Engine: the single entry point of the core, and the role interfaces its callers receive. */
 import { randomBytes } from 'node:crypto'
 import { UserError } from './errors.ts'
-import { isoTime, latestReport, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, ProjectRequestError,
-  projectRequestOpen, threadKey } from './model.ts'
+import { isoTime, latestReport, liveTicket, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_REFUSALS, PROJECT_REQUEST_TITLE_LIMIT,
+  ProjectRequestError, projectRequestOpen, threadKey } from './model.ts'
 import type { Assignment, Decision, Deliverable, Mandate, PolicyEffect, ProjectRequest, ProjectRequestDeliverable, ProjectRequestDisposition,
   ProjectRequestInput, ProjectRequestPlan, ProjectRequestReply, ProjectRequestStatus, Request, ThreadRef, Ticket, Trigger } from './model.ts'
 import { key } from './ids.ts'
@@ -205,22 +205,37 @@ export class Engine {
    * named is unknown, is itself derived, or belongs to another project.
    */
   raiseProjectRequest(input: ProjectRequestInput): ProjectRequest {
-    return this.repo.atomic(() => {
-      const store = this.projectRequestStore()
-      const { title, instruction } = this.projectRequestText(input)
-      // One open request per (ticket, title): a repeated call answers the request it raised before.
-      const open = store.list(input.project).filter(request => request.title === title && projectRequestOpen(request.status))
-      const existing = input.raised_by.ticket
-        ? open.find(request => request.raised_by.ticket === input.raised_by.ticket)
-        : open.find(request => request.raised_by.ticket === undefined && request.raised_by.session === input.raised_by.session)
-      if (existing) return existing
-      const at = this.now()
-      const parent = input.root?.project_request_id ? store.get(input.root.project_request_id) : undefined
-      if (input.root?.project_request_id) {
-        if (!parent) throw new ProjectRequestError('unknownRootProjectRequest')
-        if (parent.root?.project_request_id) throw new ProjectRequestError('notRootProjectRequest')
-        if (parent.project !== input.project) throw new ProjectRequestError('foreignProjectRequest')
+    const store = this.projectRequestStore()
+    const { title, instruction } = this.projectRequestText(input)
+    // One open request per (ticket, title): a repeated call answers the request it raised before.
+    const open = store.list(input.project).filter(request => request.title === title && projectRequestOpen(request.status))
+    const existing = input.raised_by.ticket
+      ? open.find(request => request.raised_by.ticket === input.raised_by.ticket)
+      : open.find(request => request.raised_by.ticket === undefined && request.raised_by.session === input.raised_by.session)
+    if (existing) return existing
+    const at = this.now()
+    // Derivation is bounded and every accepted request must have a reporting path (issue #33): two levels below a
+    // root at most, never below a request that began without a Channel, and never from a worker Ticket that has no
+    // root ancestry to inherit. A refusal is recorded on the request it tried to derive from, so the Lead sees why.
+    const parentId = input.root?.project_request_id
+    if (parentId !== undefined) {
+      const parent = store.get(parentId)
+      if (!parent) throw new ProjectRequestError('unknownRootProjectRequest')
+      if (parent.root?.project_request_id) {
+        this.refuseDerivation(store, parent, input, at, 'derivationTooDeep')
+        throw new ProjectRequestError('derivationTooDeep')
       }
+      if (parent.project !== input.project) throw new ProjectRequestError('foreignProjectRequest')
+      if (!parent.root) {
+        this.refuseDerivation(store, parent, input, at, 'unreachableRoot')
+        throw new ProjectRequestError('unreachableRoot')
+      }
+    } else if (input.root === undefined && input.raised_by.ticket !== undefined && input.raised_by.automation === undefined) {
+      // A worker raising from a Ticket that began without a user Channel has nowhere to report; its Lead can escalate.
+      throw new ProjectRequestError('unreachableRoot')
+    }
+    return this.repo.atomic(() => {
+      const parent = parentId === undefined ? undefined : store.get(parentId)
       const request: ProjectRequest = {
         id: `prq-${randomBytes(4).toString('hex')}`,
         project: input.project,
@@ -654,6 +669,13 @@ export class Engine {
     if (!request) throw new ProjectRequestError('unknownProjectRequest')
     if (request.kind === 'escalation') throw new ProjectRequestError('escalationNotLeadDecision')
     return request
+  }
+  /** Records a refused derivation on the request it tried to derive from, durable and visible to its Lead. */
+  private refuseDerivation(store: ProjectRequestRepository, parent: ProjectRequest, input: ProjectRequestInput, at: string,
+    code: 'derivationTooDeep' | 'unreachableRoot'): void {
+    const text = `Refused a request derived from ${parent.id}: ${PROJECT_REQUEST_REFUSALS[code]}. `
+      + 'Report the decision to the Lead instead, which can escalate it to the Orchestrator.'
+    store.save({ ...parent, replies: [...parent.replies, { at, by: input.raised_by.session, text }], updated_at: at })
   }
   /** Trimmed text, refusing empty and over-long project-request titles and instructions. */
   private projectRequestText(input: Pick<ProjectRequestInput, 'title' | 'instruction'>): { title: string; instruction: string } {

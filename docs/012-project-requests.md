@@ -279,3 +279,14 @@ person, and only a later `clean` verdict (or manual close) ends it. An answer Ti
 - The reviewer cannot edit the repository: the preset carries no write tool and the Ticket carries no assignment.
 - A blocked verdict is visible on the Ticket (`review` returned by `ticketSummary`) and in the panel.
 - Tests: `tests/core-engine.spec.ts` (review gate) and `tests/surface.spec.ts` (the reviewer preset and the Lead tool set).
+
+### D15. Bounded derivation and a reportable root
+
+A project request may derive only one level: a request raised from a Ticket that itself belongs to an accepted project
+request is refused with `derivationTooDeep`, and every refused derivation is recorded as a reply on the parent (`by` = the
+session that raised it), so the Lead sees the decision instead of a silent drop. A derivation with no Channel to report
+through is refused with `unreachableRoot` and recorded the same way: a Ticket's `request_create` inherits the parent from
+the Ticket's mandate basis (`lead` → `project_request_id`, `escalation` → `request`), copies the parent's root
+trigger/thread/request id so the derived request keeps a reportable path, and a rootless parent makes the Engine refuse and
+record `unreachableRoot`. The worker tool never fabricates a synthetic Trigger for an upward request. Tests:
+`tests/project-requests.spec.ts` and `tests/leads.spec.ts`.

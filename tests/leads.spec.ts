@@ -115,6 +115,28 @@ const feishu = (id: string, text: string, overrides: Record<string, unknown> = {
 const parentOf = (host: Awaited<ReturnType<typeof startRuntime>>, sessionId: string): string | undefined =>
   (host.agents.get(sessionId) as unknown as { session: { header: { parentSession?: string } } } | undefined)?.session.header.parentSession
 
+describe('bounded project-request derivation (issue #33)', () => {
+  it('derives a follow-up from the project request that produced its Ticket', async () => {
+    const host = await startRuntime()
+    try {
+      const { ticket } = await host.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
+      const root = await host.runTool(`worker-${ticket.id}`, 'request_create',
+        { title: 'Decide the status page', instruction: 'The page needs a decision.' }) as { id: string }
+      const accepted = await host.runTool('lead-default', 'lead_request_decide',
+        { id: root.id, action: 'accept', reply: 'Build it.', deliverables: [{ title: 'Status page' }] }) as { request_id?: string }
+      const created = host.runtime.store.requests.get(accepted.request_id!)!
+      const first = created.ticketIds[0]!
+      await host.assign(first)
+      // The follow-up derives from the accepted project request instead of starting a channel-less chain.
+      const child = await host.runTool(`worker-${first}`, 'request_create',
+        { title: 'Decide the page name', instruction: 'The name needs a decision.' }) as { id: string }
+      const derived = host.runtime.store.projectRequests.get(child.id)!
+      expect(derived.root).toMatchObject({ project_request_id: root.id, trigger_id: ticket.origin.triggerId })
+      expect(host.runtime.store.projectRequests.get(root.id)!.derived).toContain(child.id)
+    } finally { await host.stop() }
+  })
+})
+
 describe('dispatch through the project Lead (issue #12)', () => {
   it('dispatches an Assignment to its Lead, starts it only with lead_assign, and carries the report back through the Lead',
     async () => {

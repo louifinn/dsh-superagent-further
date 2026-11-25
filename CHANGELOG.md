@@ -43,6 +43,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A project request can no longer derive an unreportable chain (issue #33): a derivation below a Ticket that
+  already belongs to an accepted project request is refused as `derivationTooDeep`, and a derivation without a Channel to
+  report through is refused as `unreachableRoot`. Both refusals are recorded as replies on the parent request; a Ticket's
+  `request_create` inherits the parent from its mandate basis and copies the root's reportable path instead of
+  fabricating a synthetic Trigger.
 - A worker's report now reaches the Orchestrator only through its project Lead: `orchestrator_report` writes a durable
   `lead_message` from `executor` to `lead`, the Lead validates it and forwards it with the new `lead_report` tool, and the
   main Session no longer receives `worker_report` or `worker_attention` relays directly (a first slice of #12).

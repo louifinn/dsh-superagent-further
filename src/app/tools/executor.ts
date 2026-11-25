@@ -101,19 +101,27 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
         if (!current.project) throw new Error('This ticket belongs to no registered project, so it has no project Lead to raise a request with')
-        const parent = args.parent === undefined ? undefined : host.store.projectRequests.get(args.parent)
-        if (args.parent !== undefined && !parent) throw new Error(`Unknown parent project request ${args.parent}`)
+        // A Ticket created by a Lead-accepted project request inherits that request as its parent (issue #33): its
+        // worker's follow-up derives from the request that produced the Ticket instead of silently starting a new
+        // rootless chain. Escalations name their project request the same way.
+        const basis = current.mandate.basis
+        const inherited = basis.via === 'lead' ? basis.project_request_id : basis.via === 'escalation' ? basis.request : undefined
+        const requested = args.parent ?? inherited
+        const parent = requested === undefined ? undefined : host.store.projectRequests.get(requested)
+        if (requested !== undefined && !parent) throw new Error(`Unknown parent project request ${requested}`)
         if (parent && parent.project !== current.project) throw new Error(`Project request ${parent.id} belongs to project ${parent.project}, not ${current.project}`)
         const trigger = host.store.triggers.get(current.origin.triggerId)
         const thread = trigger?.threads[0]
         let root: ProjectRequestRoot | undefined
-        if (parent) {
-          // A derived request reports through its parent's root, or through this ticket's own origin when the parent is a root.
-          const triggerId = parent.root?.trigger_id ?? current.origin.triggerId
-          const key = parent.root?.thread_key ?? (thread ? threadKey(thread) : undefined)
-          if (key === undefined) throw new Error('The parent project request has no source thread to report on')
-          const requestId = parent.root?.request_id ?? current.requestId
-          root = { project_request_id: parent.id, trigger_id: triggerId, thread_key: key, ...(requestId === undefined ? {} : { request_id: requestId }) }
+        if (parent && parent.root) {
+          // A derived request reports through its parent's root.
+          const requestId = parent.root.request_id ?? current.requestId
+          root = { project_request_id: parent.id, trigger_id: parent.root.trigger_id, thread_key: parent.root.thread_key,
+            ...(requestId === undefined ? {} : { request_id: requestId }) }
+        } else if (parent) {
+          // A parent without a Channel refuses the derivation in the Engine with an explicit, recorded reason; passing
+          // the parent lets that refusal land on it and name it.
+          root = { project_request_id: parent.id, trigger_id: current.origin.triggerId, thread_key: thread ? threadKey(thread) : '' }
         } else if (thread) {
           root = { trigger_id: current.origin.triggerId, thread_key: threadKey(thread), ...(current.requestId === undefined ? {} : { request_id: current.requestId }) }
         }

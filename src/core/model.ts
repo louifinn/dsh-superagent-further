@@ -450,11 +450,11 @@ export interface ProjectRequestReply { by: string; text: string }
 export interface ProjectRequestDisposition extends ProjectRequestReply { action: ProjectRequestDecision['action']; notes?: string }
 /** Why the Engine refused a project-request command. */
 export type ProjectRequestRefusal = 'unknownProjectRequest' | 'settledProjectRequest' | 'emptyText' | 'tooLong' | 'notAccepted'
-  | 'unknownRootProjectRequest' | 'notRootProjectRequest' | 'foreignProjectRequest' | 'noProjectRequestStore'
+  | 'unknownRootProjectRequest' | 'notRootProjectRequest' | 'derivationTooDeep' | 'unreachableRoot' | 'foreignProjectRequest' | 'noProjectRequestStore'
   | 'notArchitectureProjectRequest' | 'notAcceptedForApproval' | 'notAwaitingApproval' | 'designNotEnded'
   | 'missingApprovalTrigger' | 'approvalRootRequired'
   | 'notEscalationProjectRequest' | 'escalationNotLeadDecision'
-const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
+export const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   unknownProjectRequest: 'This project request does not exist',
   settledProjectRequest: 'This project request has already been decided or closed',
   emptyText: 'A project request reply or summary needs text',
@@ -462,6 +462,8 @@ const PROJECT_REQUEST_REFUSALS: Record<ProjectRequestRefusal, string> = {
   notAccepted: 'Only an accepted project request can be completed',
   unknownRootProjectRequest: 'The root project request this request derives from does not exist',
   notRootProjectRequest: 'A derived project request must name a root project request',
+  derivationTooDeep: 'A project request may derive only one level below its root request',
+  unreachableRoot: 'No Channel can report the outcome of this project request',
   foreignProjectRequest: 'A project request must stay in the project of the root request it derives from',
   noProjectRequestStore: 'This repository does not store project requests',
   notArchitectureProjectRequest: 'Only an architecture project request follows the design approval flow',

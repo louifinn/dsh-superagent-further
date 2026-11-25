@@ -2304,7 +2304,8 @@ it('raises attention once for a running Assignment whose worker Session stays id
 it('escalates a project request its Lead leaves unanswered, once', async () => {
   const { ticket } = await acceptedTicket()
   const raised = runtime.engine.raiseProjectRequest({ project: 'default', title: 'Needs a decision',
-    instruction: 'Pick one of the two options.', raised_by: { session: `worker-${ticket.id}`, ticket: ticket.id } })
+    instruction: 'Pick one of the two options.', raised_by: { session: `worker-${ticket.id}`, ticket: ticket.id },
+    root: { trigger_id: 'trigger-1', thread_key: 'feishu:oc_1' } })
   const old = new Date(Date.now() - 7 * 60 * 60_000).toISOString()
   runtime.store.projectRequests.save({ ...runtime.store.projectRequests.get(raised.id)!, created_at: old, updated_at: old })
   await runtime.timeoutRequests()

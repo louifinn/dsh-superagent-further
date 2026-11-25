@@ -37,6 +37,7 @@ const request = (overrides: Partial<ProjectRequestInput> = {}): ProjectRequestIn
   title: 'Add a project status page',
   instruction: 'Build a page that lists each project\'s open work.',
   raised_by: { session: 'lead-orchestrator', ticket: 'ticket-1', assignment: 'assignment-1' },
+  root: { trigger_id: 'trigger-1', thread_key: 'feishu:oc_1' },
   ...overrides,
 })
 
@@ -60,7 +61,7 @@ it('records a project request through pending, needs-info, accepted and complete
     created_at: '2026-11-10T09:00:00.000Z', updated_at: '2026-11-10T09:00:00.000Z',
   })
   expect(raised.raised_by).toEqual({ session: 'lead-orchestrator', ticket: 'ticket-1', assignment: 'assignment-1' })
-  expect(raised.root).toBeUndefined()
+  expect(raised.root).toEqual({ trigger_id: 'trigger-1', thread_key: 'feishu:oc_1' })
   refusal(() => engine.replyProjectRequest(raised.id, { by: 'lead-orchestrator', text: '  ' }), 'emptyText')
   setClock('2026-11-10T09:01:00.000Z')
   const replied = engine.replyProjectRequest(raised.id, { by: 'lead-orchestrator', text: 'Reading the ticket now' })
@@ -130,11 +131,28 @@ it('links a derived request from its root and keeps it in the same project', () 
   expect(derived.root).toEqual({ project_request_id: root.id, trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' })
   expect(engine.listProjectRequests().find(item => item.id === root.id)?.derived).toEqual([derived.id])
   refusal(() => engine.raiseProjectRequest(request({ title: 'Nested', raised_by: { session: 'lead-orchestrator' },
-    root: { project_request_id: derived.id, trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' } })), 'notRootProjectRequest')
+    root: { project_request_id: derived.id, trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' } })), 'derivationTooDeep')
+  // The refusal is recorded on the request it tried to derive from, so its Lead sees why.
+  expect(store.projectRequests.get(derived.id)!.replies.at(-1)).toMatchObject({ by: 'lead-orchestrator' })
+  expect(store.projectRequests.get(derived.id)!.replies.at(-1)!.text).toContain('may derive only one level')
   refusal(() => engine.raiseProjectRequest(request({ title: 'Orphan', raised_by: { session: 'lead-orchestrator' },
     root: { project_request_id: 'prq-missing', trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' } })), 'unknownRootProjectRequest')
   refusal(() => engine.raiseProjectRequest(request({ project: 'superagent', title: 'Elsewhere', raised_by: { session: 'lead-orchestrator' },
     root: { project_request_id: root.id, trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' } })), 'foreignProjectRequest')
+  store.close()
+})
+
+it('refuses a derived request that has no Channel to report through, recording why', () => {
+  const { engine, store } = open()
+  // A root raised by an automation delivery may be rootless; a request derived from it would have no Channel.
+  const rootless = engine.raiseProjectRequest(request({ title: 'Automation follow-up', root: undefined, raised_by: { session: 'lead-orchestrator', automation: 'auto-1' } }))
+  expect(rootless.root).toBeUndefined()
+  refusal(() => engine.raiseProjectRequest(request({ title: 'Derived from a rootless request', raised_by: { session: 'lead-orchestrator' },
+    root: { project_request_id: rootless.id, trigger_id: 'trigger-9', thread_key: 'feishu:oc_1' } })), 'unreachableRoot')
+  expect(store.projectRequests.get(rootless.id)!.replies.at(-1)!.text).toContain('No Channel can report the outcome')
+  // A worker whose Ticket began without a user Channel cannot raise a project request at all.
+  refusal(() => engine.raiseProjectRequest(request({ title: 'Worker without a Channel', root: undefined,
+    raised_by: { session: 'worker-ticket-1', ticket: 'ticket-1' } })), 'unreachableRoot')
   store.close()
 })
 
@@ -312,6 +330,7 @@ it('creates the work when the Lead accepts a work request it raised itself, with
   const { engine, store } = open()
   const raised = engine.raiseProjectRequest(request({
     title: 'Review the project for defects', instruction: 'Inspect the clone and raise work for what breaks.',
+    root: undefined,
     raised_by: { session: 'lead-orchestrator', automation: 'auto-1' },
   }))
   expect(raised.raised_by).toEqual({ session: 'lead-orchestrator', automation: 'auto-1' })
