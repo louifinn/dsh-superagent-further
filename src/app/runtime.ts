@@ -11,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import { join } from 'node:path'
-import { Engine, key, projectRequestOpen, reasonText, runningAssignment, threadKey,
+import { Engine, key, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT, projectRequestOpen, reasonText, runningAssignment, threadKey,
   type DomainEvent, type EngineForSettings, type ProjectRequest, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
@@ -74,6 +74,10 @@ const now = (): string => new Date().toISOString()
 const WATCHDOG_MS = 60_000
 /** How long a worker Session may stay idle on a running Assignment before the watchdog raises the Ticket's attention. */
 const STALLED_MS = 10 * 60_000
+/** A project request its Lead leaves unanswered for this long escalates once to the Orchestrator (issue #31). */
+const REQUEST_TIMEOUT_MS = 6 * 60 * 60_000
+/** An escalation the Orchestrator leaves undecided for this long alerts the person on its root Channel once (issue #31). */
+const ESCALATION_TIMEOUT_MS = 4 * 60 * 60_000
 /** How many recent file-delivery failures Overview keeps, newest last, until the ring drops them. */
 const DELIVERY_FAILURES = 20
 /** How long the drain waits for in-flight passes, effects, agent turns and diagnosis before failing that phase and continuing. */
@@ -692,6 +696,10 @@ export class Runtime implements SourceHost, RuntimeHandle {
     const open = this.store.tickets.open()
     const ids = new Set(open.map(ticket => ticket.id))
     for (const ticketId of [...this.stalled.keys()]) if (!ids.has(ticketId)) this.stalled.delete(ticketId)
+    // Requests are timed out on the same pass: a Lead that never answers must not leave the person waiting forever. This
+    // runs even while the Runtime is paused: a paused Runtime dispatches nothing, so an unanswered request would otherwise
+    // wait forever.
+    await this.timeoutRequests(at)
     // A paused Runtime dispatches nothing, so a worker idle now is not yet a stall a Lead could act on.
     if (this.paused()) return
     for (const ticket of open) {
@@ -730,6 +738,49 @@ export class Runtime implements SourceHost, RuntimeHandle {
         this.log.warn('dsh-superagent-further watchdog could not raise attention for Ticket %s: %s', ticket.id, String(error))
       }
     }
+  }
+  /**
+   * One pass of the request timeouts (issue #31). A project request its Lead has not answered within `REQUEST_TIMEOUT_MS`
+   * — since it was raised or since its latest reply — becomes one `escalation` project request for the Orchestrator, which
+   * keeps the original request and its reminders. An escalation the Orchestrator leaves undecided for `ESCALATION_TIMEOUT_MS`
+   * alerts the person once on the Channel of the escalation's root Thread. Escalation only moves the unanswered item one
+   * level up; it never decides for the receiving role, and repeated passes do not repeat either effect.
+   */
+  async timeoutRequests(at = new Date()): Promise<void> {
+    if (this.closing()) return
+    for (const request of this.store.projectRequests.list()) {
+      if (!projectRequestOpen(request.status)) continue
+      if (request.kind === 'escalation') {
+        if (at.getTime() - Date.parse(request.created_at) >= ESCALATION_TIMEOUT_MS) this.alertOverdueEscalation(request)
+        continue
+      }
+      const since = [request.created_at, ...request.replies.map(reply => reply.at)].sort().at(-1)!
+      if (at.getTime() - Date.parse(since) < REQUEST_TIMEOUT_MS) continue
+      try {
+        const title = `Overdue: ${request.title}`.slice(0, PROJECT_REQUEST_TITLE_LIMIT)
+        const escalation = this.engine.escalateProjectRequest({
+          project: request.project,
+          title,
+          instruction: `Project request ${request.id} "${request.title}" has waited since ${since} without a Lead answer.\n\n${request.instruction}`
+            .slice(0, PROJECT_REQUEST_INSTRUCTION_LIMIT),
+          raised_by: { session: this.store.get(KV.lead.sessions(request.project)) ?? leadSessionId(request.project) },
+          ...(request.root ? { root: request.root } : {}),
+        })
+        this.logs.record('info', 'lead', `request.escalated source=${request.id} escalation=${escalation.id}`)
+      } catch (error) {
+        this.log.warn('dsh-superagent-further could not escalate overdue project request %s: %s', request.id, String(error))
+      }
+    }
+  }
+  /** Send the person one durable notice per overdue escalation, on the Channel of its root Thread. */
+  private alertOverdueEscalation(request: ProjectRequest): void {
+    const trigger = request.root === undefined ? undefined : this.store.triggers.get(request.root.trigger_id)
+    const channel = trigger?.channel
+    if (!channel) return
+    const id = key('escalation-timeout', request.id)
+    if (this.store.receipts.get(id)) return
+    this.outbox.send({ id, channel, kind: 'notice',
+      text: `Project request ${request.id} "${request.title}" (project ${request.project}) has waited more than ${ESCALATION_TIMEOUT_MS / 3_600_000} hours for an Orchestrator decision. Decide it with orchestrator_escalation_decide, or answer that it needs more information.` })
   }
   /** Drop the attention the watchdog raised for a Ticket, while it is still the current one; nothing else is removed. */
   private clearStalled(ticketId: string, tracked: { attentionId?: string }): void {

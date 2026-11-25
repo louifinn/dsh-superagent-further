@@ -6,6 +6,15 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Added
+
+- Project requests and escalations no longer wait forever (a first slice of issue #31): a project request
+  a Lead leaves unanswered for six hours, counted from the request or its last reply, is escalated once to
+  the Orchestrator as an `Overdue: …` escalation request, and an escalation that waits four hours for an
+  Orchestrator decision sends one notice on the root request's Channel asking a person to decide it. Both
+  passes are idempotent. The two windows are safe code constants for now; operator-configurable windows and
+  a timeout for a worker's own attention question remain open.
+
 ### Changed
 
 - A person's Ticket instruction (attach, stop, retry, note, status request) now reaches the Worker only

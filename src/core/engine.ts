@@ -351,6 +351,7 @@ export class Engine {
         title,
         instruction,
         raised_by: { ...input.raised_by },
+        ...(input.root ? { root: { ...input.root } } : {}),
         status: 'pending',
         replies: [],
         tickets: [],

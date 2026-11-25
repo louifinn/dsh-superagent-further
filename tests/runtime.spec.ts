@@ -2208,6 +2208,42 @@ it('raises attention once for a running Assignment whose worker Session stays id
   expect(runtime.store.tickets.get(ticket.id)!.attention).toBeUndefined()
 })
 
+it('escalates a project request its Lead leaves unanswered, once', async () => {
+  const { ticket } = await acceptedTicket()
+  const raised = runtime.engine.raiseProjectRequest({ project: 'default', title: 'Needs a decision',
+    instruction: 'Pick one of the two options.', raised_by: { session: `worker-${ticket.id}`, ticket: ticket.id } })
+  const old = new Date(Date.now() - 7 * 60 * 60_000).toISOString()
+  runtime.store.projectRequests.save({ ...runtime.store.projectRequests.get(raised.id)!, created_at: old, updated_at: old })
+  await runtime.timeoutRequests()
+  const escalations = runtime.store.projectRequests.list('default').filter(request => request.kind === 'escalation')
+  expect(escalations).toHaveLength(1)
+  expect(escalations[0]).toMatchObject({ title: 'Overdue: Needs a decision', status: 'pending' })
+  expect(escalations[0]!.instruction).toContain(`Project request ${raised.id}`)
+  // The original request keeps its own record and status; escalation moves the question, not the answer.
+  expect(runtime.store.projectRequests.get(raised.id)).toMatchObject({ status: 'pending' })
+  // A second pass at the same time adds no second escalation.
+  await runtime.timeoutRequests()
+  expect(runtime.store.projectRequests.list('default').filter(request => request.kind === 'escalation')).toHaveLength(1)
+})
+
+it('alerts the person once when an escalation waits too long for an Orchestrator decision', async () => {
+  const trigger = feishu('9', '@bot 改一下', { root_id: undefined })
+  await receive(trigger)
+  const escalation = runtime.engine.escalateProjectRequest({ project: 'default', title: 'Cross-project need',
+    instruction: 'Do this in another project.', raised_by: { session: 'lead-default' },
+    root: { trigger_id: trigger.id, thread_key: trigger.threads[0]!.id } })
+  const old = new Date(Date.now() - 5 * 60 * 60_000).toISOString()
+  runtime.store.projectRequests.save({ ...runtime.store.projectRequests.get(escalation.id)!, created_at: old, updated_at: old })
+  await runtime.timeoutRequests()
+  const id = key('escalation-timeout', escalation.id)
+  expect(runtime.store.receipts.get(id)).toMatchObject({ kind: 'notice', channel: trigger.channel })
+  expect(runtime.store.receipts.get(id)!.text).toContain('has waited more than 4 hours')
+  // A later pass does not alert again.
+  const status = runtime.store.receipts.get(id)!.status
+  await runtime.timeoutRequests()
+  expect(runtime.store.receipts.get(id)!.status).toBe(status)
+})
+
 it('creates an Executor Session under the bundle\'s worker preset, and the main Session under its router preset', async () => {
   const { sessionId } = await acceptedTicket()
   const created = controller.create.mock.calls.map(([options]) => options as { sessionId: string; agentPreset: string })

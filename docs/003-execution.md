@@ -142,6 +142,8 @@ An architecture request follows the same raise and accept path, but its accept c
 
 A request the Lead leaves unanswered after two reminders stays open in the store and is marked as needing attention for the Orchestrator and the panel; a later answer follows the ordinary path.
 
+An unanswered request does not wait forever. When a Lead has not answered a project request for six hours, counted from the request or its last reply, the Runtime escalates it once to the Orchestrator as an `escalation` request titled `Overdue: …` and keeps the original request pending. When an escalation has waited four hours for an Orchestrator decision, the host sends one notice on the root request's Channel asking a person to decide it. Both passes are idempotent, so the same overdue request is escalated and alerted once. The two windows are safe code constants for now; making them operator-configurable and timing out a worker's own attention question are follow-ups tracked by issue #31.
+
 Work that belongs outside the project is escalated, never widened: `lead_request_escalate` records a pending escalation, the Orchestrator lists it with `orchestrator_escalations` and answers it with `orchestrator_escalation_decide` and its mandatory reply, and an accept creates one installation-level Request under an `escalation` Mandate. An installation automation delivery can create such a rootless installation Request directly from the main Session with `orchestrator_request_create`, recording the automation id (`docs/012-project-requests.md` D12, D13).
 
 ### Follow-ups and context Threads
