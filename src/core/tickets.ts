@@ -23,7 +23,7 @@ const STATUS_REQUEST = 'Report the current ticket status with orchestrator_repor
 /**
  * Manages each ticket's lifecycle: creates the ticket for an accept decision with its Mandate, Subscriptions, and first
  * Assignment, binds and attaches Threads, adds Inputs, resumes, retries, restarts, and ends tickets, and drops Subscriptions.
- * Coordinates with Replies for the acknowledgement an accept carries and with Executor to start, deliver to, and stop assignments.
+ * Coordinates with Replies for the acknowledgement an accept carries and with Executor to dispatch, deliver to, and stop assignments.
  * Intake, Evals, Assignments, and Engine delegate ticket and subscription mutations here.
  */
 export class Tickets extends EnginePart {
@@ -64,7 +64,7 @@ export class Tickets extends EnginePart {
       this.repo.tickets.save(ticket)
       for (const triggerId of triggerIds) for (const ref of this.repo.triggers.get(triggerId)?.threads ?? []) this.subscribe(ticket.id, ref)
       if (outcome.acknowledgement && primary && index === 0) this.replies.acknowledgeAccepted(ticket.id, primary, outcome.acknowledgement)
-      if (assignment) this.options.executor.start(this.require(ticket.id), assignment)
+      if (assignment) this.options.executor.dispatch(this.require(ticket.id), assignment)
       this.emit('ticket.created', { ticketId: ticket.id, decisionId, strength: mandate.strength })
     })
     this.dispatchRequest(request.id)
@@ -90,7 +90,7 @@ export class Tickets extends EnginePart {
       ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
       const assignment = waits.length ? undefined : this.newAssignment(ticket)
       this.repo.tickets.save(ticket)
-      if (assignment) this.options.executor.start(this.require(ticket.id), assignment)
+      if (assignment) this.options.executor.dispatch(this.require(ticket.id), assignment)
       this.emit('ticket.created', { ticketId: ticket.id, decisionId, strength: mandate.strength })
     })
     this.dispatchRequest(request.id)
@@ -111,7 +111,7 @@ export class Tickets extends EnginePart {
       if (!ticket.after.every(waited => this.repo.tickets.get(waited)?.ended)) continue
       const assignment = this.newAssignment(ticket)
       this.repo.tickets.save(ticket)
-      this.options.executor.start(this.require(ticket.id), assignment)
+      this.options.executor.dispatch(this.require(ticket.id), assignment)
     }
     if (request.ended || tickets.some(ticket => !ticket.ended)) return
     const outcomes = tickets.map(ticket => ticket.ended!.outcome)
@@ -263,7 +263,7 @@ export class Tickets extends EnginePart {
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
     this.options.executor.stop(ticket, latest, 'retried', 'retry')
-    this.options.executor.start(ticket, assignment)
+    this.options.executor.dispatch(ticket, assignment)
     return ticket
   }
   /**
@@ -316,8 +316,8 @@ export class Tickets extends EnginePart {
     return true
   }
   /**
-   * Add an Input once (idempotently) and ask the Executor to deliver it, or to launch again a pending Assignment whose launch
-   * failed once no person is waited for: a Policy change alone does not launch it again.
+   * Add an Input once (idempotently) and ask the Executor to deliver it, or to ask the Lead to start a pending Assignment
+   * whose launch failed once no person is waited for: a Policy change alone does not dispatch it again.
    */
   addInput(ticket: Ticket, input: TicketInput): void {
     if (ticket.inputs.some(existing => existing.id === input.id)) return
@@ -329,7 +329,7 @@ export class Tickets extends EnginePart {
     if (!liveTicket(ticket) || held) return
     const running = runningAssignment(ticket), latest = latestAssignment(ticket)
     if (running) this.options.executor.deliver(ticket, running)
-    else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.options.executor.start(ticket, latest)
+    else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.options.executor.dispatch(ticket, latest)
   }
   /**
    * Resume an ended ticket under its unchanged Mandate when a person's message on one of its Threads waits for it: no Eval
@@ -353,7 +353,7 @@ export class Tickets extends EnginePart {
     const resumed: TicketInput = { id: key('input', ticket.id, 'resumed', first.triggerId), kind: 'resumed', triggerId: first.triggerId, at }
     ticket.inputs.push(resumed); ticket.undelivered.unshift(resumed.id)
     this.repo.tickets.save(ticket)
-    this.options.executor.start(ticket, assignment)
+    this.options.executor.dispatch(ticket, assignment)
     this.emit('ticket.resumed', { ticketId, triggerId: first.triggerId })
   }
   /** The Triggers of a ticket's trigger Inputs, or of those of them whose Input ids are `ids`. */
@@ -402,7 +402,7 @@ export class Tickets extends EnginePart {
     this.repo.tickets.save(ticket)
     this.letGo(ticket.id, waiting, left)
   }
-  /** Replace a ticket's running Assignment with a new one that receives `note` first, and queue it for launch. */
+  /** Replace a ticket's running Assignment with a new one that receives `note` first, and queue it for dispatch through its Lead. */
   restart(ticket: Ticket, running: Assignment, reason: string, note: string): void {
     this.endAssignment(ticket, running, reason)
     this.requeueUntaken(ticket, running)
@@ -411,7 +411,7 @@ export class Tickets extends EnginePart {
     const input: TicketInput = { id: key('input', ticket.id, 'restart', assignment.id), kind: 'text', text: note, at }
     ticket.inputs.push(input); ticket.undelivered.push(input.id); ticket.updatedAt = at
     this.repo.tickets.save(ticket)
-    this.options.executor.start(ticket, assignment)
+    this.options.executor.dispatch(ticket, assignment)
   }
   /**
    * Put back, ahead of what waits, the Trigger Inputs delivered to `replaced` that no step of its worker took: a cancel may

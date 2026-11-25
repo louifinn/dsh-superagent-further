@@ -25,7 +25,7 @@ function harness(overrides: Partial<Policy> = {}) {
   const outbox: OutboundMessage[] = []
   const requests: Candidate[] = []
   const assessor: Assessor = { request: candidate => { requests.push(candidate) } }
-  const executor: Executor = { start: () => {}, deliver: () => {}, stop: () => {} }
+  const executor: Executor = { dispatch: () => {}, deliver: () => {}, stop: () => {} }
   let version = 'v1'
   const policy: Policy = {
     get version() { return version }, paused: false, evalTimeoutMs: 60_000,
@@ -144,7 +144,7 @@ const quiet: Policy = {
 }
 const silent: Outbox = { send: () => {}, status: () => undefined, withdraw: () => {} }
 const idle: Assessor = { request: () => {} }
-const noExecutor: Executor = { start: () => {}, deliver: () => {}, stop: () => {} }
+const noExecutor: Executor = { dispatch: () => {}, deliver: () => {}, stop: () => {} }
 
 let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'orchestrator-engine-')) })

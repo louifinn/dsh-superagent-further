@@ -38,6 +38,7 @@ const TEXT = {
   'health.runtime': ['dsh-superagent-further', 'dsh-superagent-further'],
   'health.models': ['模型服务', 'Model service'],
   'health.assessment': ['发给主 Session 的评估', 'Evals sent to the main Session'],
+  'health.dispatch': ['派工转交项目 Lead', 'Assignment dispatch through project Leads'],
   'health.launch': ['派工启动', 'Assignment launches'],
   'health.delivery': ['输入送达', 'Input delivery to Assignments'],
   'health.relay': ['转达给主 Session 的消息', 'Relays to the main Session'],

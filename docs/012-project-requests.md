@@ -7,7 +7,9 @@ Parts E–G record the decision summaries.
 
 Update (2026-11-19, information discipline): the operator adopted the information-discipline program (016 and ADR 0008).
 D3's mandatory reply stands. D4's "passive durable parent" is historical: the Lead is now the mandatory carrier, worker
-reports reach it first, and it passes them up to the Orchestrator. D6 and D13 gain the notification duty: a completed
+reports reach it first, and it passes them up to the Orchestrator; the dispatch direction matches it (issue #12) — an
+Assignment is written as a durable `assignment` `lead_message` and starts only when its Lead grants it with `lead_assign`,
+so no Orchestrator-side code starts an Executor. D6 and D13 gain the notification duty: a completed
 root request, an accepted escalation and a worker request to inform a person must have a person-notification path, or a
 recorded decision that no person channel exists and why.
 

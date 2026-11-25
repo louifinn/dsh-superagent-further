@@ -143,7 +143,7 @@ function engine() {
   let clock = 0
   const engine = new Engine({ repo, scope: { scope: () => ({ listened: true, observed: false }) }, policy: () => policy,
     assessor: { request: vi.fn(), release: vi.fn() } as Assessor,
-    executor: { start: vi.fn(), deliver: vi.fn(), stop: vi.fn() } as Executor,
+    executor: { dispatch: vi.fn(), deliver: vi.fn(), stop: vi.fn() } as Executor,
     outbox: { send: vi.fn(), status: () => undefined, withdraw: vi.fn() },
     now: () => new Date(Date.UTC(2026, 10, 1, 0, 0, clock++)).toISOString() })
   return { engine, repo }

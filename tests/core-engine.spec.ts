@@ -23,7 +23,7 @@ function harness(policyOverrides: Partial<Policy> = {}, { emit, prepareTicket }:
   /** Inputs the Executor handed to a running assignment, as [ticket id, input id]. */
   const delivered: [string, string][] = []
   const executor: Executor = {
-    start: vi.fn((ticket, assignment) => { launches.push([ticket, assignment]) }), deliver: vi.fn(ticket => { deliveries.add(ticket.id) }), stop: vi.fn(),
+    dispatch: vi.fn((ticket, assignment) => { launches.push([ticket, assignment]) }), deliver: vi.fn(ticket => { deliveries.add(ticket.id) }), stop: vi.fn(),
   }
   let version = 'v1', paused = false
   const policy: Policy = {
@@ -124,7 +124,7 @@ describe('eval', () => {
     expect(ticket.assignments).toEqual([expect.objectContaining({ state: 'running', startedAt: expect.any(String) })])
     expect(h.repo.threads.get('chat:t1')?.subscriptions).toEqual([ticket.id])
     expect(h.outbox).toEqual([{ id: key('ack', '1'), channel: trigger('1').channel, text: 'ok', kind: 'acknowledgement', ticketId: ticket.id }])
-    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(h.executor.dispatch).toHaveBeenCalledOnce()
   })
   it('refuses to decide an eval that a later eval replaced, and decides the later one', async () => {
     const h = harness()
@@ -214,7 +214,7 @@ describe('subscription fan-out', () => {
     const ticket = h.repo.tickets.get(decision.ticketId!)!
     expect(ticket.undelivered).toHaveLength(1)
     expect(h.executor.deliver).not.toHaveBeenCalled()
-    expect(h.executor.start).toHaveBeenCalledTimes(2)
+    expect(h.executor.dispatch).toHaveBeenCalledTimes(2)
     h.engine.assignmentStarted(ticket.id, ticket.assignments[0]!.id); h.settle()
     expect(h.delivered).toEqual([[ticket.id, ticket.undelivered[0]!]])
   })
@@ -225,7 +225,7 @@ describe('subscription fan-out', () => {
     h.engine.receive(trigger('2', { human: false })); h.pump()
     // The Executor reads its threads again when it resumes, so bots and CI neither wake nor queue on an ended ticket.
     expect(h.repo.tickets.get(decision.ticketId!)).toMatchObject({ ended: expect.anything(), undelivered: [] })
-    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(h.executor.dispatch).toHaveBeenCalledOnce()
   })
   it('resumes once however often it pumps, with the resume note ahead of the message, and drops what waited when the policy no longer holds the mandate', async () => {
     const h = harness()
@@ -317,7 +317,7 @@ describe('resume and stop', () => {
     expect(ticket.assignments).toHaveLength(2)
     expect(ticket.mandate.policyVersion).toBe('v1')
     expect(ticket.inputs.map(input => input.kind)).toEqual(['trigger', 'resumed'])
-    expect(h.executor.start).toHaveBeenCalledTimes(2)
+    expect(h.executor.dispatch).toHaveBeenCalledTimes(2)
     // The message still reaches Eval as a follow-up, but no reopen Decision is needed or possible.
     expect(h.repo.decisions.byThread('chat:t1').filter(decision => decision.kind !== 'ignore')).toHaveLength(decisions)
   })
@@ -346,7 +346,7 @@ describe('resume and stop', () => {
     expect(h.executor.stop).toHaveBeenCalledOnce()
     h.engine.receive(trigger('2')); h.pump()
     expect(h.repo.tickets.get(ticketId)).toMatchObject({ ended: expect.objectContaining({ by: 'human' }) })
-    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(h.executor.dispatch).toHaveBeenCalledOnce()
   })
   it('keeps a ticket ended when its mandate no longer passes the current policy', async () => {
     const h = harness()
@@ -718,7 +718,7 @@ describe('interrupted assignments', () => {
     const waiting = accepted(h, '2', 't2').ticketId!
     h.engine.report(waiting, { state: 'waiting', summary: 'done for now' })
     h.engine.receive(trigger('3', { threads: [{ source: 'chat', id: 't2' }] }))
-    vi.mocked(h.executor.start).mockClear(); vi.mocked(h.executor.deliver).mockClear()
+    vi.mocked(h.executor.dispatch).mockClear(); vi.mocked(h.executor.deliver).mockClear()
     // The Executor reports each Assignment that was running; a fact about one that no longer runs is dropped.
     for (const id of [interrupted, waiting]) h.engine.assignmentInterrupted(id, runningAssignment(h.repo.tickets.get(id)!)!.id)
     h.engine.assignmentInterrupted(interrupted, first.id)
@@ -727,7 +727,7 @@ describe('interrupted assignments', () => {
       expect.objectContaining({ state: 'pending' })])
     expect(ticket.inputs).toEqual([expect.objectContaining({ kind: 'text', text: expect.stringContaining('The host restarted') })])
     expect(ticket.undelivered).toEqual([ticket.inputs[0]!.id])
-    expect(h.executor.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: interrupted }), ticket.assignments[1])
+    expect(h.executor.dispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: interrupted }), ticket.assignments[1])
     // A worker that waits keeps its Session and gets what waits for it.
     expect(h.repo.tickets.get(waiting)!.assignments).toHaveLength(1)
     expect(h.executor.deliver).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: waiting }), expect.objectContaining({ state: 'running' }))
@@ -1026,11 +1026,11 @@ describe('automatic input', () => {
     h.engine.receive(trigger('1')); h.pump()
     const ticketId = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'requested' }).ticketId!
     h.engine.report(ticketId, { state: 'failed', summary: 'The prepare command failed' })
-    vi.mocked(h.executor.start).mockClear()
+    vi.mocked(h.executor.dispatch).mockClear()
     h.setVersion('v2'); h.engine.policyChanged('v1', 'v2')
-    expect(h.executor.start).not.toHaveBeenCalled()
+    expect(h.executor.dispatch).not.toHaveBeenCalled()
     h.tick(1); h.engine.receive(trigger('2', { actor: guest }))
-    expect(h.executor.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ state: 'pending' }))
+    expect(h.executor.dispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ state: 'pending' }))
   })
 })
 describe('replies', () => {
@@ -1172,7 +1172,7 @@ describe('ticket commands', () => {
     const retried = h.engine.retryTicket(ticketId)
     expect(retried.assignments).toEqual([expect.objectContaining({ state: 'ended', endedReason: 'retried' }), expect.objectContaining({ state: 'pending' })])
     expect(h.executor.stop).toHaveBeenCalledOnce()
-    expect(h.executor.start).toHaveBeenLastCalledWith(expect.objectContaining({ id: ticketId }), retried.assignments[1])
+    expect(h.executor.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ id: ticketId }), retried.assignments[1])
   })
 })
 describe('failed deliveries', () => {
@@ -1687,10 +1687,10 @@ describe('requests', () => {
     expect(h.repo.tickets.get(firstId!)).toMatchObject({ title: 'App part', project: 'app' })
     expect(h.repo.tickets.get(secondId!)).toMatchObject({ title: 'Lib part', project: 'lib', after: [firstId] })
     expect(h.repo.tickets.get(secondId!)!.assignments).toHaveLength(0)
-    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(h.executor.dispatch).toHaveBeenCalledOnce()
     h.engine.report(firstId!, { state: 'ready', summary: 'done' })
     expect(h.repo.tickets.get(secondId!)!.assignments).toHaveLength(1)
-    expect(h.executor.start).toHaveBeenCalledTimes(2)
+    expect(h.executor.dispatch).toHaveBeenCalledTimes(2)
     h.settle()
     h.engine.report(secondId!, { state: 'ready', summary: 'done' })
     expect(h.repo.requests.get(request.id)!.ended).toMatchObject({ by: 'executor', outcome: 'done' })

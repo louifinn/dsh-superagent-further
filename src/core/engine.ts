@@ -618,7 +618,7 @@ export class Engine {
     ticket.assignments.push(assignment)
     this.repo.tickets.save(ticket)
     const stored = this.repo.tickets.get(ticket.id)
-    if (stored) this.options.executor.start(stored, assignment)
+    if (stored) this.options.executor.dispatch(stored, assignment)
     this.options.emit?.({ type: 'ticket.created', at, data: { ticketId: ticket.id, decisionId, strength: mandate.strength } })
     return ticket.id
   }

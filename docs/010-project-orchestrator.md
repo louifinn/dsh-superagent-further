@@ -16,8 +16,9 @@ automation delivery can become an installation Request from the main Session (D1
 
 Update (2026-11-19, information discipline): the operator adopted the information-discipline program (016 and ADR 0008). This document's target model stands, with these normative additions: the Lead is the mandatory carrier — the Orchestrator hands each assignment to the Lead and receives every report and every terminal ending back through it; the Orchestrator does not start an Executor or receive a worker report directly; a person's direct word is a Directive that the Lead propagates up to the Orchestrator and down to its other Executors, without reversing the Executor the person addressed; an escalation and a needs-attention request are pushed to the Orchestrator rather than only listed for it; and every ending reaches the Lead, not only a merged pull request. The "Communication rules" and "Endings reach the Lead" sections are read with these additions; where an implementation status below describes the opposite, it is history. (Implementation status, 2026-11-25: the
 report direction is in place — a worker report becomes a durable Lead message and the Orchestrator receives only the
-Lead's `lead_report`, carrying the original text; the dispatch direction in step 2 still starts the Executor directly and
-is tracked in issue #12.)
+Lead's `lead_report`, carrying the original text; the dispatch direction is in place too — an Assignment is dispatched
+as a durable `assignment` message and starts only when its Lead grants it with `lead_assign`, whose Executor-side
+`assignForLead` revalidates the pending Assignment and the unacknowledged dispatch (issue #12).)
 
 ## Why
 
@@ -119,9 +120,11 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
    its first Assignment (today's path, unchanged).
 2. A dispatch effect writes a `lead_message` record (`kind: assignment`, the Ticket id, project,
    the assignment's brief) and prompts the Lead Session with a stable request id.
-3. The Lead reads the Ticket through its project-scoped tools, decides how to execute it and starts
-   one worker subagent (`startActivation`, `agentPreset: dsh-superagent-further-worker`, `cwd` = the Ticket's
-   checkout, `parent` = the Lead agent, reserved id `worker-<ticketId>`).
+3. The Lead starts that Assignment with its `lead_assign` tool, the one entry into the Executor's launch:
+   `assignForLead` validates the live Ticket, the latest pending Assignment and the unacknowledged
+   dispatch, acknowledges the message and starts one worker subagent through the existing launch path
+   (`startActivation`, `agentPreset: dsh-superagent-further-worker`, `cwd` = the Ticket's checkout,
+   `parent` = the Lead agent, reserved id `worker-<ticketId>`). The launch itself is private to that path.
 4. The worker reports through the existing `orchestrator_report` tool; the Lead validates it, asks a
    person when the Ticket stage is `person`, and writes a `lead_message` (`kind: report`) back to
    the Orchestrator, which keeps the domain: replies, finish notes, the Ticket's end. The Report can
@@ -186,6 +189,31 @@ not also noticed on its own Channel: the Request's single result notice says it 
 change visible to the people who did the work without waking a worker on its own: a worker Session only runs when its
 Lead sends it something.
 
+## Dispatch reaches the Lead
+
+The other direction runs on the same durable channel. `Tickets` no longer starts an Executor: the
+`Executor.dispatch` port queues a `dispatch` effect for the Assignment, and `DshExecutor.dispatchQueued`
+re-reads the Ticket and calls `LeadDispatch.assignmentPending`. That writes one `lead_message`
+(`kind: assignment`, from the Orchestrator to the project Lead, `requestId: lead-assignment:<assignmentId>`,
+naming the Ticket, the project, the Assignment id and the worker Session `worker-<ticketId>`) and prompts
+the Lead; the row is durable and delivered before any worker exists. The Lead starts the Assignment with
+`lead_assign` (optionally naming the `assignment_id` when several wait), which acknowledges the message
+and calls `DshExecutor.assignForLead`: that validates the Ticket is live, the Assignment is the latest and
+still pending, the Ticket waits for no person and no other Assignment runs, and an unacknowledged dispatch
+message names this Assignment. A missing grant is refused and recorded as `assignment.dispatchRefused`.
+The launch stays private to this path, so no Orchestrator-side code starts a worker. `DshExecutor.resume()`
+no longer starts a pending Assignment after a restart; `LeadDispatch.reconcile` validates the assignment
+messages and backfills a dispatch for every open Ticket whose latest Assignment is still pending and asks
+for no person. A launch failure keeps the launch backoff and then reports upward: `DshExecutor.failed`
+writes the failed report and hands its notice to `LeadDispatch.reportReceived`, so the Executor has no
+relay to the main Session left.
+
+What still does not pass through the Lead is narrower and recorded as follow-ups of #12: an Input
+delivered to a worker that already runs (`deliverInput`), the continuation prompt after a transient
+provider error (`resumeAfter`), and the status-request Input that `lead_ticket_request_status` asks for
+(its delivery is Executor-side, though the request itself is the Lead's). Those are writes to a running
+worker, not starts, and none of them creates a worker.
+
 ## Data model changes
 
 - **Schema 13** adds `lead_message`: `id, projectId, from ('orchestrator'|'lead'|'person'),
@@ -207,7 +235,8 @@ Lead sends it something.
 
 - New preset `dsh-superagent-further-lead` (order 89): the router's shell/job 5-second behaviour, file reads
   and search, skills, compaction, and a delegation group with `tool-subagent` and
-  `tool-subagent-control`; app tools `lead_assign` (start a worker subagent for a Ticket),
+  `tool-subagent-control`; app tools `lead_assign` (grant an Orchestrator-dispatched Assignment and
+  start its worker subagent),
   `lead_status` (its running subagents and pending messages) and `lead_report` (send a
   `lead_message`), registered by `Sessions` when the Lead agent is decorated. It has no tool that
   edits settings, Policy, Sources or another project.
@@ -280,10 +309,11 @@ service starts and messages the reserved child, and both accepts name the projec
 (1308 passed, 5 skipped of 1313); both real entry points still end merged.
 
 A race found while attempting the migration, and fixed ahead of it: a message that arrives while a
-launch is still in flight used to make `Tickets.addInput` call `Executor.start` again, so a second
+launch is still in flight used to make `Tickets.addInput` call `Executor.dispatch` again, so a second
 activation ran for the same Assignment and its child-id collision fell back to a wake send, recording
-the assignment text twice. `DshExecutor.start` now keeps the Assignment's id in a `launching` set while
-its launch is queued or running and ignores a second start; the waiting Input is delivered when
+the assignment text twice. `DshExecutor.dispatch` now keeps the Assignment's id in a `dispatching` set while
+its dispatch is queued or running and ignores a second dispatch (the separate `launching` set still
+de-dupes launches started through `assignForLead`); the waiting Input is delivered when
 `assignmentStarted` queues the ticket's undelivered Inputs for the running Assignment.
 
 **P5 — Request bundle.** One acceptance becomes one Request plus 1..N Tickets, one per delivery unit

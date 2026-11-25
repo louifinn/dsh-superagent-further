@@ -625,6 +625,7 @@ it('gives a worker the other messages of the request its ticket was accepted fro
   const accepted = await h.route({ kind: 'accept', trigger_id: second.id, title: 'Retitle', worktree_name: 'retitle', acknowledgement: '收到。' })
   await h.runtime.idle()
   const ticket = h.runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
+  await h.assign(ticket.id)
   const other = ticket.origin.triggerIds.find(id => id !== ticket.origin.triggerId)!
   expect(ticket.origin.triggerIds).toHaveLength(2)
   const message = h.relays(`worker-${ticket.id}`)[0]!

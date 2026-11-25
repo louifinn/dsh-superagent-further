@@ -4,6 +4,7 @@ import { ticketStage, type ProjectRequest, type ProjectRequestInput, type Projec
 import type { Project } from '../../projects.ts'
 import type { LeadDispatch } from '../lead-dispatch.ts'
 import { projectRequestView } from '../lead-dispatch.ts'
+import { assignmentOfRequest } from '../lead-messages.ts'
 import type { Store } from '../store.ts'
 import { tool, type Tool } from './tool.ts'
 
@@ -23,6 +24,15 @@ export interface LeadApprovalHost {
 /** Bind the Engine-backed approval commands to one Store, as the runtime and the tool tests do before serving a Lead. */
 const approvals = new WeakMap<object, LeadApprovalHost>()
 export function bindLeadApprovals(store: object, host: LeadApprovalHost): void { approvals.set(store, host) }
+
+/** The Executor command a Lead needs to start what the Orchestrator dispatched; the runtime binds it to the Executor. */
+export interface LeadAssignmentHost {
+  /** Acknowledges the dispatch grant and queues the launch; resolves with the worker Session id. */
+  assign(ticketId: string, assignmentId: string): { ticketId: string; assignmentId: string; sessionId: string }
+}
+/** Bind the Executor's `assignForLead` to one Store, as the runtime and the tool tests do before serving a Lead. */
+const assignmentHosts = new WeakMap<object, LeadAssignmentHost>()
+export function bindLeadAssignments(store: object, host: LeadAssignmentHost): void { assignmentHosts.set(store, host) }
 
 /** Host dependencies of the Lead tools: the Store's project records, its optional read-side thread history, the Lead dispatch, and
  * the Lead Session those tools answer for. */
@@ -123,6 +133,40 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
         attention: host.lead.attention(project.id).map(message => ({ request_id: message.requestId.slice('lead-attention:'.length),
           ...message.ticketId === undefined ? {} : { ticket_id: message.ticketId }, at: message.at, body: message.body })),
       }
+    },
+  }), tool({
+    name: 'lead_assign',
+    description: 'Start the Assignment the Orchestrator dispatched for this project, as the Lead who grants its launch. Without '
+      + 'assignment_id it starts the one Assignment waiting for this Lead. The worker Session owns the work: do not do it '
+      + 'yourself, and answer its report or question when it reaches you.',
+    schema: z.object({
+      assignment_id: z.string().trim().min(1).optional()
+        .describe('The assignment id from a dispatch message; omit when exactly one Assignment waits for this Lead.'),
+    }).strict(),
+    execute: async ({ assignment_id }: { assignment_id?: string }) => {
+      const waiting = host.store.leads.list(project.id, 500)
+        .filter(message => message.kind === 'assignment' && message.ackAt === undefined)
+      const selected = assignment_id === undefined ? waiting
+        : waiting.filter(message => assignmentOfRequest(message.requestId) === assignment_id)
+      if (!selected.length) {
+        throw new Error(assignment_id === undefined
+          ? `No Assignment waits to start in project ${project.id}`
+          : `Assignment ${assignment_id} is not waiting for this Lead's dispatch in project ${project.id}`)
+      }
+      if (selected.length > 1) {
+        throw new Error(`More than one Assignment waits to start in project ${project.id}; pass assignment_id: `
+          + selected.map(message => assignmentOfRequest(message.requestId)).join(', '))
+      }
+      const dispatch = selected[0]!
+      const ticketId = dispatch.ticketId
+      if (ticketId === undefined) throw new Error(`The dispatch ${dispatch.requestId} names no Ticket`)
+      const ticket = ticketOf(host, project, ticketId)
+      const assignmentId = assignmentOfRequest(dispatch.requestId)
+      if (assignmentId === undefined) throw new Error(`The dispatch ${dispatch.requestId} names no Assignment`)
+      const executor = assignmentHosts.get(host.store)
+      if (!executor) throw new Error('Lead assignment commands are not bound in this runtime')
+      const granted = executor.assign(ticket.id, assignmentId)
+      return { ticket_id: granted.ticketId, assignment_id: granted.assignmentId, session_id: granted.sessionId, state: 'starting' }
     },
   }), tool({
     name: 'lead_request_create',

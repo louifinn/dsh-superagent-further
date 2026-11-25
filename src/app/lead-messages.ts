@@ -35,6 +35,14 @@ export interface LeadMessage {
   /** When the recipient's answer arrived, if it has. */
   ackAt?: string
 }
+/** The request id of the dispatch message that asks a Lead to start an Assignment; a re-dispatch adds its attempt. */
+export const assignmentRequest = (assignmentId: string, again = 0): string =>
+  `lead-assignment:${assignmentId}${again === 0 ? '' : `:again:${again}`}`
+/** The Assignment id an assignment dispatch message names, or undefined when the request id is not one. */
+export const assignmentOfRequest = (requestId: string): string | undefined => {
+  if (!requestId.startsWith('lead-assignment:')) return undefined
+  return requestId.slice('lead-assignment:'.length).split(':')[0] || undefined
+}
 /** The fields a sender supplies; the Store stamps `id` and `at`. */
 export type LeadMessageInput = Omit<LeadMessage, 'id' | 'at' | 'deliveredAt' | 'ackAt'>
 

@@ -73,8 +73,12 @@ export type ExecutorStopCause = TicketEndCause | 'retry'
  * commands, so each method only queues work, which reports back through the Engine's callbacks.
  */
 export interface Executor {
-  /** Queue a pending assignment for launch; reports back through `Engine.assignmentStarted` or a `failed` report. */
-  start(ticket: Ticket, assignment: Assignment): void
+  /**
+   * Queue a pending Assignment for dispatch through the Ticket's project Lead: a durable effect writes the Lead an
+   * `assignment` message and prompts it, and only the Lead starts the worker (`lead_assign`). No Orchestrator-side path
+   * starts an Executor directly (docs/010). Reports back through `Engine.assignmentStarted` or a `failed` report.
+   */
+  dispatch(ticket: Ticket, assignment: Assignment): void
   /**
    * Queue delivery of the ticket's waiting Inputs to its running assignment; reports back through `Engine.inputsDelivered`
    * or `Engine.deliveryFailed`, and through `Engine.inputsRead` once its worker's Session takes them into a step.
