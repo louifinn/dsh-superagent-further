@@ -10,6 +10,7 @@ import type { AutomationCreateInput, AutomationSummary, AutomationUpdate } from 
 import type { AutomationsView } from './views/automations.ts'
 import type { EscalationDecisionResult } from './escalations.ts'
 import type { LogFilter, LogsView } from './logs.ts'
+import type { AgentErrorRecord, AgentRole } from './agent-errors.ts'
 import type { MemoriesView } from './views/memories.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
@@ -84,6 +85,7 @@ export interface Api {
   'POST memory/pin': { body: { id: string; pinned: boolean }; response: { pinned: boolean } }
   /** The Automations page: tasks at installation or project scope, and the projects a new task can target. */
   'GET logs': { query?: { level?: LogFilter; scope?: string; limit?: number; q?: string }; response: LogsView }
+  'GET agent-errors': { query?: { role?: AgentRole; session?: string; limit?: number }; response: AgentErrorRecord[] }
   'GET automations': { response: AutomationsView }
   'POST automations': { body: AutomationCreateInput; response: AutomationSummary }
   'PUT automations/:id': { body: AutomationUpdate; response: AutomationSummary }

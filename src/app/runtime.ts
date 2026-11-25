@@ -59,6 +59,7 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
+import { AgentErrors, type AgentErrorRecord } from './agent-errors.ts'
 import { Alerts } from './alerts.ts'
 import { Faults } from './faults.ts'
 import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
@@ -124,6 +125,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   readonly alerts: Alerts
   /** Routes model failures and rootless requests to the person (issues #26 and #30). */
   readonly faults: Faults
+  /** Managed Sessions' agent errors as a public ring plus controlled evidence (issue #25). */
+  readonly agentErrors: AgentErrors
   /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
   readonly diagnosis: Diagnosis
   /** The supervisor-owned update pipeline as the panel sees it: read-only status plus a rollback request writer (ADR-0007). */
@@ -242,10 +245,13 @@ export class Runtime implements SourceHost, RuntimeHandle {
         state: { get: value => store.get(value), set: (value, next) => { if (next === undefined) store.delete(value); else store.set(value, next) } } })
       this.faults = new Faults({ alerts: this.alerts, logs: this.logs, recovery: () => store.settings().executor.incidents.alertRecovery,
         state: { get: value => store.get(value), set: (value, next) => { if (next === undefined) store.delete(value); else store.set(value, next) } } })
+      this.agentErrors = new AgentErrors({ stateDir: () => this.machine.stateDir })
       const sessions = this.sessions = new Sessions({ context: ctx, values: host.values, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
         closing: () => this.closing(), environment, onModelRetries: retries => { void this.faults.modelRetries(retries) },
         onWorkerDisposed: sessionId => { void this.workerDisposed(sessionId) },
+        recordAgentError: input => this.agentErrors.record(input),
+        onAgentError: record => { void this.notifyAgentError(record) },
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
@@ -1028,11 +1034,38 @@ export class Runtime implements SourceHost, RuntimeHandle {
       }
     }
   }
+  /** Sends one collected non-worker agent error upwards (issue #25): the Lead's error wakes the Orchestrator, the
+   * reviewer's error reaches its project Lead, and the Orchestrator has no parent, so its error goes to the operator's
+   * alert chat. The message text stays in the named evidence file. */
+  private async notifyAgentError(record: AgentErrorRecord): Promise<void> {
+    const identity = record.code === undefined ? record.name : `${record.name} (${record.code})`
+    const detail = [`Error: ${identity}`, `Session: ${record.sessionId} (${record.role})`]
+    if (record.project !== undefined) detail.push(`Project: ${record.project}`)
+    if (record.ticketId !== undefined) detail.push(`Ticket: ${record.ticketId}`)
+    detail.push(`Evidence: ${record.evidence}`)
+    try {
+      if (record.role === 'lead') {
+        this.sessions.wake(key('lead-agent-error', record.id), [`The Lead Session reported an agent error.`, ...detail,
+          'Decide whether to retry the work, reassign it, or report it to the operator.'].join('\n\n'))
+      } else if (record.role === 'reviewer' && record.project !== undefined) {
+        this.sessions.notify(key('review-agent-error', record.id), { role: record.role, session: record.sessionId, error: identity, evidence: record.evidence },
+          `Reviewer Session ${record.sessionId} of project ${record.project} reported ${identity}. Evidence: ${record.evidence}`)
+      } else if (record.role === 'orchestrator') {
+        await this.alerts.send(`agent-error:${record.id}`, [...detail,
+          'The Orchestrator has no parent. Fix the failure or report it to the operator; the evidence bundle carries the message.'].join('\n\n'))
+      } else if (record.role === 'diagnosis') {
+        this.log.warn('agent.error diagnosis session %s: %s evidence=%s', record.sessionId, identity, record.evidence)
+      }
+    } catch (error) {
+      this.log.warn('agent.error notice failed for %s: %s', record.sessionId, String(error))
+    }
+  }
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
       automations: this.automations,
+      agentErrors: this.agentErrors,
       selfReports: this.selfReports,
       incidents: this.incidents,
       diagnosis: this.diagnosis,

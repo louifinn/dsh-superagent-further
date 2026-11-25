@@ -10,6 +10,7 @@ import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/in
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
+import { agentRole, type AgentErrorInput, type AgentErrorRecord } from './agent-errors.ts'
 import type { RuntimeHostValues } from '../runtime-host.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
@@ -58,6 +59,10 @@ export interface SessionsHost {
   onModelRetries?(retries: readonly BudgetRetryStatus[]): void
   /** Called when the host disposed of a worker Session mid-assignment, so the Runtime can recover the Ticket (issue #23). */
   onWorkerDisposed?(sessionId: string): void
+  /** Collects one Managed Session's agent error (issue #25): a public record with identities, and controlled evidence. */
+  recordAgentError?(input: AgentErrorInput): AgentErrorRecord
+  /** Reports a collected non-worker agent error to its parent level, or to the operator when it has none (issue #25). */
+  onAgentError?(record: AgentErrorRecord): void
 }
 
 /**
@@ -189,6 +194,23 @@ export class Sessions {
       this.retryHealth.clear(agent.id); this.updateModelHealth()
       // A worker Session the host disposed of mid-assignment is a crash from the Ticket's point of view (issue #23).
       if (agent.id.startsWith('worker-')) this.host.onWorkerDisposed?.(agent.id)
+    })
+    // Every managed role's errors are collected, not only a worker's (issue #25). A worker error stays with the Executor,
+    // which owns the Ticket's recovery and logs it; the collector records the other roles so a Lead, Orchestrator or
+    // reviewer failure reaches its parent and the operator instead of ending silently in the host log.
+    ctx.on('agent/error', ({ agent, error, turn, step }) => {
+      const role = agentRole(agent.id, this.host.masterId)
+      if (role === undefined || role === 'worker') return
+      const ticket = role === 'reviewer' ? this.ticketOf(agent) : undefined
+      const project = role === 'lead' ? this.leadProject(agent) : undefined
+      const record = this.host.recordAgentError?.({ role, sessionId: agent.id,
+        ...(ticket === undefined ? {} : { ticketId: ticket.id }), ...(project === undefined ? {} : { project: project.id }),
+        turn, step, error })
+      if (record === undefined) return
+      this.host.log?.warn('agent.error.collected role=%s session=%s ticket=%s project=%s name=%s code=%s turn=%s evidence=%s',
+        record.role, record.sessionId, record.ticketId ?? '', record.project ?? '', record.name, record.code ?? '',
+        record.turn === undefined ? '' : String(record.turn), record.evidence)
+      this.host.onAgentError?.(record)
     })
     ctx.on('session/event', (session, event) => {
       const agent = ctx.agents.get(session.id)

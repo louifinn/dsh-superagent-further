@@ -158,6 +158,8 @@ export interface PanelServer {
   automationBusy?: string
   /** Host log entries the Logs page shows. */
   logs: ApiResponse<'GET logs'>['entries']
+  /** Agent errors the collector recorded; the route filters them by role and session. */
+  agentErrors: ApiResponse<'GET agent-errors'>
 }
 export let server: PanelServer
 
@@ -332,7 +334,7 @@ function initial(): PanelServer {
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], deliveryFailures: [], workers: [], outbox: { pending: 0, failing: 0 }, leads: [], asks: [], escalations: [], automationAttention: { count: 0, items: [] }, selfReports: [], selfReportsBlocked: false, incidents: { count: 0, items: [] }, incidentRecords: [], memories: [], proposals: [],
     updates: emptyUpdates(), updateAttention: { pending: false, failed: false, version: null, phase: null, reason: null },
-    automationService: true, automations: [], logs: [],
+    automationService: true, automations: [], logs: [], agentErrors: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       workspace: { path: '/srv/agent-home', title: 'dsh-superagent-further · agent-home' },
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
@@ -449,7 +451,13 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       && (!needle || `${entry.message} ${entry.scope} ${JSON.stringify(entry.data ?? {})}`.toLowerCase().includes(needle)))
     return { entries: kept.slice(-limit), level: level as 'all' | 'warn' | 'error', scope, q }
   } },
-  'GET automations': { answer: () => {
+  'GET agent-errors': { query: ['role', 'session', 'limit'], answer: ({ query }) => {
+    const role = query.role ?? ''
+    const session = query.session ?? ''
+    const limit = Number(query.limit ?? 100)
+    return server.agentErrors.filter(record => (role === '' || record.role === role)
+      && (session === '' || record.sessionId === session)).slice(-limit)
+  } },  'GET automations': { answer: () => {
     if (!server.automationService) return refuse(503, 'The Host schedule service is not installed')
     return { service: true, items: server.automations, unrecorded: [],
       attention: server.automations.filter(row => row.orphaned || row.last_error !== null).length,

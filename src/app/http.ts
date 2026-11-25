@@ -41,6 +41,7 @@ import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 import type { LogFilter, Logs, LogsView } from './logs.ts'
+import { AGENT_ROLES, type AgentErrorRecord, type AgentErrors } from './agent-errors.ts'
 import type { Updates } from './updates.ts'
 
 export interface HttpHost {
@@ -49,6 +50,8 @@ export interface HttpHost {
   readonly sourceLinks: Pick<TextCache, 'entries'>
   /** Bounded in-memory log of the plugin host's own messages, plus the audit trail of human-triggered actions. */
   readonly logs: Pick<Logs, 'list' | 'record'>
+  /** Managed Sessions' collected agent errors: identities only, with the message in controlled evidence (issue #25). */
+  readonly agentErrors: Pick<AgentErrors, 'list'>
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
@@ -235,6 +238,8 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
   limit: limit(30, 200) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
+const AgentErrorsQuery = z.object({ role: z.enum(AGENT_ROLES).optional(), session: z.string().default(''),
+  limit: z.coerce.number().int().min(1).max(200).default(100) })
 const LogsQuery = z.object({ level: z.enum(['all', 'warn', 'error']).catch('all'), scope: z.string().default(''),
   limit: z.coerce.number().int().min(1).max(2000).default(200), q: z.string().default('') })
 const MemoriesQuery = z.object({ q: z.string().default(''), project: z.string().default(''), sort: z.enum(MEMORY_SORTS).catch('newest'),
@@ -413,6 +418,12 @@ function routes(runtime: HttpHost): Routes {
     'POST prompts/preview': async input => runtime.prompts.preview(await promptBody(input)),
     // Automations share the service the main Session's tools use; the panel is another client of the same code path. A missing
     // Host schedule service is a 503 instead of a broken page, and no route can re-target scope or project.
+    // Every managed role's agent errors (issue #25); the message text lives in the evidence file the route only names.
+    'GET agent-errors': ({ query }): AgentErrorRecord[] => {
+      const parsed = AgentErrorsQuery.parse(query)
+      return runtime.agentErrors.list({ ...(parsed.role === undefined ? {} : { role: parsed.role }),
+        ...(parsed.session === '' ? {} : { sessionId: parsed.session }), limit: parsed.limit })
+    },
     'GET logs': ({ query }): LogsView => {
       const { level, scope, limit, q } = LogsQuery.parse(query)
       return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }

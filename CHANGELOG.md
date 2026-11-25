@@ -8,7 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
-- A persistent model failure now falls back to the parent level's model (issue #24): a Worker whose requests keep
+- Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
+  Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
+  or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
+  keeps only the identity; a reviewer's error reaches its project Lead, a Lead's wakes the Orchestrator, and the
+  Orchestrator's goes to the incident alert chat. The panel route `GET agent-errors` lists the bounded public ring.- A persistent model failure now falls back to the parent level's model (issue #24): a Worker whose requests keep
   exhausting retries switches to its project Lead's current model for its next request, and a Lead whose requests keep
   failing switches to the Orchestrator's; the switch is a recovery step that appends a durable model selection and logs
   the old and new provider/model, without touching the Mandate, Policy or any other setting. A project Lead may now carry
@@ -120,7 +124,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
-- The information-discipline design: `docs/016-information-discipline.md` is normative for how information moves
+- Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
+  Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
+  or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
+  keeps only the identity; a reviewer's error reaches its project Lead, a Lead's wakes the Orchestrator, and the
+  Orchestrator's goes to the incident alert chat. The panel route `GET agent-errors` lists the bounded public ring.- The information-discipline design: `docs/016-information-discipline.md` is normative for how information moves
   between the person, the Orchestrator, the Leads and the Executors (adjacent levels only, one authoritative source and
   direction, same-level via the parent, one-shot Directives, terminal obligations, failure ownership and escalation to
   the person). `docs/adr/0008-information-discipline.md` records the decision; docs 000/001/002/003/004/005/007/009/010/011/012
@@ -520,7 +528,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
-- Merged and closed pull requests are relayed to the affected project Lead, which notifies the Ticket's worker Sessions with
+- Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
+  Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
+  or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
+  keeps only the identity; a reviewer's error reaches its project Lead, a Lead's wakes the Orchestrator, and the
+  Orchestrator's goes to the incident alert chat. The panel route `GET agent-errors` lists the bounded public ring.- Merged and closed pull requests are relayed to the affected project Lead, which notifies the Ticket's worker Sessions with
   the new `lead_notify_worker` tool. The Orchestrator writes one durable Lead message per ended Ticket; a project-less
   installation Ticket has no Lead to notify, and a Lead may only relay to worker or reviewer Sessions of its own project.
 
@@ -646,7 +658,11 @@ glossary are brought up to date with the current suite.
 
 ### Added
 
-- The project layer: registered projects (id, local clone, remote repository), one GitHub Source polling every
+- Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
+  Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
+  or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
+  keeps only the identity; a reviewer's error reaches its project Lead, a Lead's wakes the Orchestrator, and the
+  Orchestrator's goes to the incident alert chat. The panel route `GET agent-errors` lists the bounded public ring.- The project layer: registered projects (id, local clone, remote repository), one GitHub Source polling every
   project's repository with qualified Thread ids, one persistent Lead Session per project, executors that run as the
   Lead's subagent in the project's own worktree, and Requests that group the Tickets of one cross-project delivery.
 - Persistent memory: `memory_write`, `memory_search` and `memory_forget`, deterministic records for ended Tickets
@@ -675,7 +691,11 @@ The first version that runs natively on Windows and is installable into a profil
 
 ### Added
 
-- A native Windows deployment path: absolute paths in the schema, `.cmd` workers, `icacls` owner-only state, a
+- Every managed role's agent errors are collected (issue #25): besides a worker's, the `agent/error` of the
+  Orchestrator, a project Lead, a reviewer and an incident diagnosis Session is recorded with the role, Session, Ticket
+  or project and the error name and code, while the message and stack go to a controlled evidence file and the Host log
+  keeps only the identity; a reviewer's error reaches its project Lead, a Lead's wakes the Orchestrator, and the
+  Orchestrator's goes to the incident alert chat. The panel route `GET agent-errors` lists the bounded public ring.- A native Windows deployment path: absolute paths in the schema, `.cmd` workers, `icacls` owner-only state, a
   `cmd.exe` invocation for batch-file CLIs, `pwsh` as the main Session's shell tool, and a service script written in
   Node (no Python, no `tmux`, no `fcntl`).
 - `POST /orchestrator/api/shutdown`, so a detached Windows host can stop gracefully.
