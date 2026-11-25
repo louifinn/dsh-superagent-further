@@ -259,7 +259,7 @@ it('refuses alone an item that lacks a field its kind needs or breaks a field\'s
     { kind: 'ignore', trigger_id: e, reason: 'chat', ticket_id: null, title: null, note: null },
   ] }) as { results: Record<string, unknown>[] }
   expect(results).toEqual([
-    { trigger_id: a, kind: 'accept', refused: 'accept needs worktree_name' },
+    { trigger_id: a, kind: 'accept', refused: 'accept needs worktree_name for change work; for read-only work such as a review, use deliverable: answer instead' },
     { trigger_id: b, kind: 'accept', refused: expect.stringMatching(/^worktree_name: /) },
     { trigger_id: c, kind: 'accept', refused: expect.stringMatching(new RegExp(`^note: .*${NOTE_WORDS} words`)) },
     { trigger_id: d, kind: 'accept', refused: 'accept needs title' },

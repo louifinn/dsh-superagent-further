@@ -1978,7 +1978,7 @@ it('refuses an acceptance no registered project can own once projects exist, and
   const feishuRoute = await runTool(runtime.masterId, 'orchestrator_route', { decisions: [{ kind: 'accept',
     trigger_id: feishuTrigger.id, title: '修复回归', worktree_name: 'fix-regression', acknowledgement: '收到。' }] }) as
     { results: { refused?: string }[] }
-  expect(feishuRoute.results[0]!.refused).toMatch(/names no project/)
+  expect(feishuRoute.results[0]!.refused).toMatch(/names no repository/)
   // A GitHub request names its repository; one no project owns is refused the same way.
   const githubTrigger = commentTrigger({ id: 71, body: '@agent-bot please fix', user: { login: 'alice' },
     html_url: 'https://github.com/acme/widgets/pull/71#issuecomment-71', created_at: '2026-09-09T00:03:00Z' },
@@ -2077,6 +2077,45 @@ it('splits an accept into one Ticket per project, and starts the second once the
   expect(results[0]!.text).toContain('App part')
   expect(results[0]!.text).toContain('Lib part')
   outbox.mockRestore()
+})
+it('splits a two-project review into answer tickets that complete without a worktree', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [
+    { id: 'app', name: 'App', workspace: join(directory, 'app'), repository: 'acme/app', branch: '' },
+    { id: 'lib', name: 'Lib', workspace: join(directory, 'lib'), repository: 'acme/lib', branch: '' }] } })
+  mkdirSync(join(directory, 'app'), { recursive: true }); mkdirSync(join(directory, 'lib'), { recursive: true })
+  const trigger = feishu('65', '@bot 审查两个项目', { root_id: undefined })
+  await receive(trigger)
+  await route({ kind: 'accept', trigger_id: trigger.id, title: '审查两个项目', deliverable: 'answer',
+    acknowledgement: '收到，开始审查。', deliverables: [{ project: 'app' }, { project: 'lib' }] })
+  await runtime.idle()
+  const request = runtime.store.requests.list().at(-1)!
+  expect(request.ticketIds).toHaveLength(2)
+  const tickets = request.ticketIds.map(id => runtime.store.tickets.get(id)!)
+  expect(tickets.map(ticket => ticket.deliverable)).toEqual(['answer', 'answer'])
+  for (const ticket of tickets) {
+    const childId = `worker-${ticket.id}`
+    await vi.waitFor(() => expect(agents.has(childId)).toBe(true))
+    await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
+    await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'reviewed; no findings' })
+    await runtime.idle()
+  }
+  expect(runtime.store.requests.get(request.id)!.ended).toMatchObject({ outcome: 'done' })
+})
+it('refuses change work without a worktree name and points read-only work at the answer contract', async () => {
+  const trigger = feishu('66', '@bot 审查一下这个仓库', { root_id: undefined })
+  await receive(trigger)
+  const { results } = await runTool(runtime.masterId, 'orchestrator_route', {
+    decisions: [{ kind: 'accept', trigger_id: trigger.id, title: '审查', acknowledgement: '收到。' }] }) as { results: Record<string, unknown>[] }
+  expect(results[0]).toMatchObject({ refused: expect.stringContaining('deliverable: answer') })
+})
+it('refuses an accept whose delivery units leave out the owning project', async () => {
+  const trigger = feishu('67', '@bot 审查两个项目', { root_id: undefined })
+  await receive(trigger)
+  const { results } = await runTool(runtime.masterId, 'orchestrator_route', {
+    decisions: [{ kind: 'accept', trigger_id: trigger.id, title: '审查两个项目', deliverable: 'answer', acknowledgement: '收到。',
+      deliverables: [{ title: 'App part' }] }] }) as { results: Record<string, unknown>[] }
+  expect(results[0]).toMatchObject({ refused: expect.stringContaining('registered project that owns it') })
 })
 it('adopts a Lead-hosted child after a restart instead of starting a new Session', async () => {
   const settings = runtime.store.settings()

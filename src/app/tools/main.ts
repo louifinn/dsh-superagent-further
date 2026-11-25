@@ -115,7 +115,7 @@ function invalid(item: RouteItem): string | undefined {
     const checked = check.safeParse(value)
     if (!checked.success) return `${field}: ${checked.error.issues[0]?.message ?? 'invalid'}`
   }
-  if (item.kind === 'accept' && (item.deliverable ?? 'change') === 'change' && !item.worktree_name) return 'accept needs worktree_name'
+  if (item.kind === 'accept' && (item.deliverable ?? 'change') === 'change' && !item.worktree_name) return 'accept needs worktree_name for change work; for read-only work such as a review, use deliverable: answer instead'
   return undefined
 }
 type Routed = { decision?: DecisionKind; reason: string; ticketId?: string | undefined; triggerIds?: readonly string[] }
@@ -144,7 +144,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
     const named = typeof repository === 'string' ? repository : ''
     if (named && projectByRepository(projects, named)) return undefined
     return named ? `No registered project owns repository ${named}; register it in Execution → Projects`
-      : 'This request names no project; register the project in Execution → Projects and accept it again with project'
+      : 'This Trigger names no repository (for example a Feishu message), so the accept needs project, or one deliverables entry per project for a multi-project request; register the project in Execution → Projects'
   }
   const note = item.note ? { note: item.note } : {}
   // A Trigger an earlier item decided went with that item's Decision, also as a member of its batch.

@@ -39,7 +39,7 @@ export const AssessmentSchema = z.object({
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),
   reason: z.string().min(1).max(500),
 }).strict().refine(value => value.decision !== 'accept' || !directionAllowed(value.direction) || !value.rule_assessments.some(rule => rule.matched)
-  || !requiresPullRequest(value.deliverable) || !!value.worktree_name, { message: 'Accepted change work requires a short English worktree_name', path: ['worktree_name'] })
+  || !requiresPullRequest(value.deliverable) || !!value.worktree_name, { message: 'Accepted change work requires a short English worktree_name; for read-only work such as a review, set deliverable: answer instead', path: ['worktree_name'] })
 
 /** Character limits in the initial thread window: for the trigger itself, its two nearest neighbours, other window messages, and stub previews. */
 const TRIGGER_CHARS = 4000, NEAR_CHARS = 1200, WINDOW_CHARS = 400, STUB_CHARS = 50
@@ -302,9 +302,10 @@ export class MasterAssessor implements Assessor {
       const named = typeof trigger.meta.repository === 'string' ? trigger.meta.repository : ''
       const project = outcome.project ? projectOf(projects, outcome.project) : projectByRepository(projects, named)
       if (!project) {
+        const registered = projects.length ? projects.map(item => item.id).join(', ') : 'none are registered yet'
         outcome = { kind: 'ignore', audit: outcome.audit, reason: named
-          ? `No registered project owns repository ${named}; register it in Execution → Projects, and choose it in the assessment`
-          : 'This request names no project; register the project in Execution → Projects, and choose it in the assessment' }
+          ? `No registered project owns repository ${named}; registered projects: ${registered}. Register it in Execution → Projects, then choose it in the assessment`
+          : `This Trigger names no repository, so the accept must name the project that owns the work; registered projects: ${registered}. Set project in the assessment, or one deliverables entry per project for a multi-project request` }
       }
     }
     const decision = this.host.engine.decide(triggerId, { ...outcome, evalId: candidate.evalId })

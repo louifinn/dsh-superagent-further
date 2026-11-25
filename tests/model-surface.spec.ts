@@ -64,7 +64,10 @@ interface Skill { name: string; description: string; content: string }
 // outlet would let the budget drop back.
 // It rose from 70,500 with orchestrator_incident, which adds the list/get/diagnose/dismiss/route schema and description
 // for the read-only diagnosis contract (ADR-0005); deleting that tool would let the budget drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 73_000, worker: 44_800 }
+// It rose from 73,000 with the delivery-contract templates in the dispatch and admission sections (#35), about 1,100
+// characters that name the review/answer shape and multi-project units so an accept is not silently misfiled; deleting
+// the templates would let the budget drop back.
+const BUDGET: Record<Role, number> = { orchestrator: 74_500, worker: 44_800 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'

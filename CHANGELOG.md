@@ -28,6 +28,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A review or a change that spans registered projects no longer fails as a vague refusal or a silent
+  downgrade: the admission and dispatch prompts name the delivery-contract shapes (a review is one
+  `answer` request with one unit per project and no `worktree_name`; a change keeps one worktree name
+  with `after` edges), and a missing project unit or a change without a name is refused with the field
+  to correct and the answer alternative instead of being re-judged (issue #35).
 - An ending is one fact with one notification. A Ticket delivered by a Request no longer sends its own
   pull-request notice in addition to the Request's result notice, and a Request that started a project
   request leaves the single aggregate report to the project request (issue #17).
