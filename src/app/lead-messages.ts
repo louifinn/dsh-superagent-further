@@ -13,8 +13,8 @@ import { z } from 'zod'
 
 /** Who a record is from or to: the Orchestrator, a project's Lead, its Executor, or a person. */
 export type LeadParty = 'orchestrator' | 'lead' | 'executor' | 'person'
-/** What a record carries: work to start or continue, a settled report, a question, or a notice. */
-export type LeadMessageKind = 'assignment' | 'report' | 'question' | 'notice' | 'instruction'
+/** What a record carries: work to start, a fact to release, a settled report, a question, or a notice. */
+export type LeadMessageKind = 'assignment' | 'fact' | 'report' | 'question' | 'notice' | 'instruction'
 /** A durable message between the Orchestrator and a project's Lead. */
 export interface LeadMessage {
   id: string
@@ -43,10 +43,20 @@ export const assignmentOfRequest = (requestId: string): string | undefined => {
   if (!requestId.startsWith('lead-assignment:')) return undefined
   return requestId.slice('lead-assignment:'.length).split(':')[0] || undefined
 }
+/** The request id of the message that asks a Lead to release a Ticket's waiting Input to its running worker (issue #41). */
+export const factRequest = (assignmentId: string, inputId: string): string => `lead-fact:${assignmentId}:${inputId}`
+/** The Assignment and Input ids a fact grant message names, or undefined when the request id is not one. */
+export const factOfRequest = (requestId: string): { assignmentId: string; inputId: string } | undefined => {
+  if (!requestId.startsWith('lead-fact:')) return undefined
+  const rest = requestId.slice('lead-fact:'.length)
+  const cut = rest.indexOf(':')
+  if (cut <= 0 || cut === rest.length - 1) return undefined
+  return { assignmentId: rest.slice(0, cut), inputId: rest.slice(cut + 1) }
+}
 /** The fields a sender supplies; the Store stamps `id` and `at`. */
 export type LeadMessageInput = Omit<LeadMessage, 'id' | 'at' | 'deliveredAt' | 'ackAt'>
 
-const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'report', 'question', 'notice', 'instruction']),
+const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'fact', 'report', 'question', 'notice', 'instruction']),
   from: z.enum(['orchestrator', 'lead', 'executor', 'person']), to: z.enum(['orchestrator', 'lead', 'executor', 'person']), requestId: z.string(),
   ticketId: z.string().optional(), body: z.string(), at: z.string(), deliveredAt: z.string().optional(), ackAt: z.string().optional() }).strict()
 

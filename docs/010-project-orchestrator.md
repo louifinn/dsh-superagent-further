@@ -208,11 +208,19 @@ for no person. A launch failure keeps the launch backoff and then reports upward
 writes the failed report and hands its notice to `LeadDispatch.reportReceived`, so the Executor has no
 relay to the main Session left.
 
-What still does not pass through the Lead is narrower and recorded as follow-ups of #12: an Input
-delivered to a worker that already runs (`deliverInput`), the continuation prompt after a transient
-provider error (`resumeAfter`), and the status-request Input that `lead_ticket_request_status` asks for
-(its delivery is Executor-side, though the request itself is the Lead's). Those are writes to a running
-worker, not starts, and none of them creates a worker.
+Inputs take the same road (issue #41). When an Input must reach a worker that already runs, `deliverQueued`
+finds no `lead-fact:<assignmentId>:<inputId>` grant and calls `LeadDispatch.factPending`, which writes a
+durable `kind: fact` message for the project Lead and prompts it; the Lead releases the Input with
+`lead_fact` (optionally naming `input_id` when several wait), which acknowledges the message and calls
+`DshExecutor.deliverForLead`. That validates the Ticket, the running Assignment and the waiting Input, then
+queues the ordinary `delivery` effect; delivering without a grant is refused and recorded as
+`delivery.dispatchRefused`. `LeadDispatch.reconcileFacts` re-asks on restart for a fact the Lead has not
+acknowledged while its Assignment still runs and the Input still waits. The status-request Input that
+`lead_ticket_request_status` asks for travels the same path.
+
+What still does not pass through the Lead is the continuation prompt after a transient provider error
+(`resumeAfter`), recorded as a follow-up of #12; it is a write to a running worker, not a start, and it
+does not create a worker.
 
 ## Data model changes
 

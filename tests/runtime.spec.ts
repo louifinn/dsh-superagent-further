@@ -35,6 +35,8 @@ import { IM_WORDS } from '../src/infra/text.ts'
 import { observePull, pullOf } from '../src/sources/github-pull.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
+import { leadSessionId } from '../src/app/sessions.ts'
+import { factOfRequest } from '../src/app/lead-messages.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { preview, readable } from '../src/app/views/text.ts'
 import { decisionList, search, threadDetail, threadList } from '../src/app/views/threads.ts'
@@ -71,8 +73,9 @@ let subagents: { startActivation: ReturnType<typeof vi.fn>; sendMessage: ReturnT
   waitForChildren: ReturnType<typeof vi.fn>; listChildren: ReturnType<typeof vi.fn>; drainChildren: ReturnType<typeof vi.fn>; drainDescendants: ReturnType<typeof vi.fn> }
 /** Relays the newest worker report through its project Lead, as production does (worker → Lead → Orchestrator, #12). */
 const reportUpward = async (project = 'default'): Promise<void> => {
-  const lead = await runtime.sessions.ensureLead(project, join(directory, project), project)
   const message = runtime.store.leads.list(project, 50).find(item => item.requestId.startsWith('executor-report:'))
+  if (!message) throw new Error('no worker report reached the Lead')
+  const lead = await runtime.sessions.ensureLead(project, join(directory, project), project)
   if (!message) throw new Error('no worker report reached the Lead')
   await runTool(lead.id, 'lead_report', { report_id: message.requestId.slice('executor-report:'.length) })
 }
@@ -84,6 +87,32 @@ const runTool = async (sessionId: string, name: string, args: unknown) => {
   await runtime.idle()
   return output as Record<string, unknown>
 }
+/** Grants every fact a project Lead holds, so a test that drives delivery through the runtime never hand-grants each one. */
+async function grantFacts(): Promise<void> {
+  for (let round = 0; round < 10; round += 1) {
+    let granted = false
+    for (const project of runtime.store.settings().executor.projects) {
+      const session = leadSessionId(project.id)
+      if (!tools.get(session)) continue
+      for (const message of runtime.store.leads.list(project.id, 1000)) {
+        if (message.kind !== 'fact' || message.ackAt !== undefined) continue
+        const grant = factOfRequest(message.requestId)
+      if (!grant) continue
+      try { await runTool(session, 'lead_fact', { ticket_id: message.ticketId, input_id: grant.inputId }); granted = true } catch { /* The Input may already be delivered. */ }
+      }
+    }
+    if (!granted) return
+  }
+}
+/** Keeps granting pending facts whenever `rt` goes idle, including a runtime a restart test swapped in. */
+function connectFacts(rt: Runtime): void {
+  const originalIdle = rt.idle.bind(rt)
+  const originalPump = rt.pump.bind(rt)
+  let granted = false
+  rt.idle = async () => { await originalIdle(); if (granted) return; granted = true; try { await grantFacts(); await originalIdle() } finally { granted = false } }
+  rt.pump = async () => { await originalPump(); if (granted) return; granted = true; try { await grantFacts(); await originalIdle() } finally { granted = false } }
+}
+
 function subscribe(ticketId: string, ref: { source: string; id: string }): void {
   const key = threadKey(ref)
   const thread = runtime.store.threads.get(key) ?? { key, ref, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {} }
@@ -179,6 +208,7 @@ async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}, 
   const ctx = new Context()
   for (const [name, service] of Object.entries(schedule === undefined ? services : { ...services, schedule })) ctx.reflect.provide(name, service)
   runtime = startTestRuntime(ctx, testMachine({ stateDir: directory, ...machine }), restarts, options)
+  connectFacts(runtime)
   return runtime
 }
 let deliveries: ReturnType<typeof vi.fn<(request: { sessionId: string; mode: 'queue' | 'steer'; id: string; text: string }) => void>>
@@ -344,6 +374,9 @@ beforeEach(async () => {
   await runtime.ready
   // Source kinds are normally registered by plugins that are not loaded in unit tests.
   runtime.sources.register(feishuKind); runtime.sources.register(githubKind)
+  // Delivery flows through the Lead as a fact grant; grant every pending fact whenever the runtime goes idle.
+  connectFacts(runtime)
+
   runtime.store.saveSettings({ ...runtime.store.settings(), policy: { ...runtime.store.settings().policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } }, eval: { ...runtime.store.settings().eval, mode: 'auto' }, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT() } }, feishu: { enabled: true, config: { cli: BOT(), chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
   deliveries.mockClear()
 })

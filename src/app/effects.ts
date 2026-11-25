@@ -15,6 +15,8 @@ export interface EffectPayloads {
   launch: { ticketId: string; assignmentId: string }
   /** Ask the Ticket's project Lead to start a pending Assignment; the key is the Assignment ID. */
   dispatch: { ticketId: string; assignmentId: string }
+  /** Ask the Ticket's project Lead to release a waiting Input to its running Assignment (issue #41). */
+  fact: { ticketId: string; assignmentId: string; inputId: string }
   /** Hand a ticket's waiting Inputs to its running Assignment; the key is the Ticket ID. */
   delivery: { ticketId: string }
   /** Steer a report or a candidate into the main Session; the key is the request ID. */

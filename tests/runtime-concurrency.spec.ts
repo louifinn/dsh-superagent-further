@@ -673,11 +673,16 @@ describe('what a worker read', () => {
   }
   it('sends to Eval a message that woke a ticket and that a retry delivered after a progress report, at a dropped report', async () => {
     const { one, thanks, ticket } = await completed()
+    h.setAutoFacts(false)
     const pass = failing(one.sessionId, '谢谢')
     h.runtime.receive(thanks); await h.runtime.idle()
-    // The message woke the Ticket; its Lead starts the new Assignment, whose launch attempts the delivery.
+    // The message woke the Ticket; its Lead starts the new Assignment, which asks for the fact grant the message needs.
     await h.assign(one.ticket.id)
-    expect(ticket().delivery).toBeDefined()
+    await h.runtime.pump()
+    await vi.waitFor(() => expect(h.runtime.store.leads.list('default', 5000).some(item => item.kind === 'fact')).toBe(true))
+    for (let round = 0; round < 3; round++) { await h.runtime.pump(); await h.grantFacts() }
+    await h.runtime.idle()
+    await vi.waitFor(() => expect(ticket().delivery).toBeDefined())
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'progress', summary: 'Looking' })
     pass()
     // The retry steers the message in while the worker writes that nothing is left, and no step takes it before.
@@ -747,11 +752,39 @@ describe('what a worker read', () => {
     await h.runtime.idle(); await later()
     expect(sent()).toBe(2)
   })
+  it('hands a person\'s message to its worker only after the project Lead releases the fact', async () => {
+    const { one, thanks } = await completed()
+    h.setAutoFacts(false)
+    h.runtime.receive(thanks); await h.runtime.idle()
+    await h.assign(one.ticket.id)
+    await h.runtime.pump()
+    const facts = () => h.runtime.store.leads.list('default', 5000).filter(item => item.kind === 'fact')
+    const delivered = () => h.deliveries.mock.calls.filter(([call]) => call.sessionId === one.sessionId).length
+    await vi.waitFor(() => expect(facts().length).toBeGreaterThan(0))
+    expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).not.toHaveLength(0)
+    const before = delivered()
+    for (let round = 0; round < 3; round++) { await h.runtime.pump(); await h.grantFacts() }
+    await h.runtime.idle()
+    await vi.waitFor(() => expect(delivered()).toBeGreaterThan(before))
+    const deliveredNow = delivered()
+    const approved = facts().filter(item => item.ackAt !== undefined).length
+    expect(approved).toBeGreaterThan(0)
+    // Granting again delivers nothing twice.
+    await h.grantFacts(); await h.runtime.pump()
+    expect(delivered()).toBe(deliveredNow)
+    expect(facts().filter(item => item.ackAt !== undefined).length).toBe(approved)
+  })
   it('counts a message that woke a ticket as read by a later dropped report once a step of its worker took it', async () => {
     const { one, thanks } = await completed()
+    h.setAutoFacts(false)
     // The resumed Assignment's message wakes the worker; its next step takes the note that it resumed and the message.
     h.runtime.receive(thanks); await h.runtime.idle()
     await h.assign(one.ticket.id)
+    await h.runtime.pump()
+    await vi.waitFor(() => expect(h.runtime.store.leads.list('default', 5000).some(item => item.kind === 'fact')).toBe(true))
+    for (let round = 0; round < 3; round++) { await h.runtime.pump(); await h.grantFacts() }
+    await h.runtime.idle()
+    await vi.waitFor(() => expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toEqual([]))
     h.step(one.sessionId)
     await later()
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })

@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { latestAssignment } from '../src/core/index.ts'
+import { factOfRequest } from '../src/app/lead-messages.ts'
 import { promptParts } from '../src/app/prompts.ts'
 import { RESOURCES } from '../src/app/resources.ts'
 import { TICKET_STATES } from '../src/app/cards.ts'
@@ -240,6 +241,18 @@ async function drive(host: Host) {
     await run('lead-default', 'lead_assign', { assignment_id: assignment.id })
     await runtime.idle()
   }
+  const grantFacts = async () => {
+    for (let round = 0; round < 5; round += 1) {
+      let granted = false
+      for (const message of runtime.store.leads.list('default', 50).filter(item => item.kind === 'fact' && item.ackAt === undefined)) {
+        const grant = factOfRequest(message.requestId)
+    if (!grant) continue
+    try { await run('lead-default', 'lead_fact', { ticket_id: message.ticketId, input_id: grant.inputId }); granted = true } catch { /* The Input may already be delivered. */ }
+      }
+      await runtime.pump(); await runtime.idle()
+      if (!granted) return
+    }
+  }
   await assign(a)
   const answer = { trigger_id: request.id, purpose: 'answer', text: '是配置。' }
   const refusal = await run(master, 'orchestrator_reply', answer).then(() => '', (error: Error) => error.message)
@@ -274,6 +287,7 @@ async function drive(host: Host) {
     text: 'Noted for the worker.' })
   await runtime.pump()
   await runtime.idle()
+  await grantFacts()
   await run(workerA, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
   // Reports travel through the Lead (worker → Lead → Orchestrator, #12): the Orchestrator's input is the Lead's relay.
   for (const message of runtime.store.leads.list('default', 50).filter(item => item.requestId.startsWith('executor-report:'))) {
@@ -299,12 +313,15 @@ async function drive(host: Host) {
   runtime.engine.requestStatus(b)
   // Resume runs once the status request reached the worker (whose Assignment is then busy rather than settled), so it gets the recovery note.
   await runtime.idle()
+  await grantFacts()
   expect(runtime.store.tickets.get(b)!.undelivered).toEqual([])
   runtime.executor.resume()
   await runtime.pump()
   await runtime.idle()
-  // The restart hands the replacement Assignment to the Lead; its grant starts it with the recovery note.
+  // The restart hands the replacement Assignment to the Lead; its grant starts it with the recovery note,
+  // and the note itself reaches the worker through a second Lead fact grant.
   await assign(b)
+  await grantFacts()
   return { a, b, workerA, workerB, refusal }
 }
 

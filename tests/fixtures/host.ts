@@ -18,6 +18,7 @@ import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Ticket, Trigger } from '../../src/core/index.ts'
 import { leadSessionId } from '../../src/app/sessions.ts'
+import { factOfRequest } from '../../src/app/lead-messages.ts'
 import type { Machine } from '../../src/deployment.ts'
 import type { JobEvent, JobView } from '../../src/executor/background.ts'
 import { buildRuntimeHost } from '../../src/supervisor/host.ts'
@@ -462,7 +463,45 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
+  /**
+   * Grants every fact a project Lead is holding, so a suite that drives delivery through `pump` does not have to hand
+   * every grant. A test that exercises the refusal calls `lead_fact` itself instead.
+   */
+  /** Hands every fact a Lead is holding to its Assignment; returns whether it granted any. */
+  async function grantFacts(): Promise<boolean> {
+    let granted = false
+    for (const project of runtime.store.settings().executor.projects) {
+      const session = leadSessionId(project.id)
+      // A delivery effect records its fact before it finishes ensuring the Lead Session; wait for that Session's tools.
+      for (let attempt = 0; attempt < 20 && !tools.get(session); attempt++) await new Promise(resolve => setTimeout(resolve, 5))
+      for (const message of runtime.store.leads.list(project.id, 1000)) {
+        if (message.kind !== 'fact' || message.ackAt !== undefined) continue
+        const grant = factOfRequest(message.requestId)
+        if (!grant) continue
+        try { await runTool(session, 'lead_fact', { ticket_id: message.ticketId, input_id: grant.inputId }); granted = true } catch { /* already delivered or refused; the refusal is a path a test may assert */ }
+      }
+    }
+    return granted
+  }
+  const pump = runtime.pump.bind(runtime)
+  const idle = runtime.idle.bind(runtime)
+  let granting = false
+  let autoFacts = true
+  /** Hands the Leads their facts before pumping or idling, so a delivery can reach its worker as before. */
+  async function hand(): Promise<void> {
+    if (granting || !autoFacts) return
+    granting = true
+    try { await grantFacts() } finally { granting = false }
+  }
+  /** Turns the fixture's automatic fact grants off or on; a test that drives lead_fact itself turns them off. */
+  const setAutoFacts = (on: boolean) => { autoFacts = on }
+  runtime.pump = async () => { await pump(); if (granting) return; await hand(); await pump() }
+  runtime.idle = async () => { await idle(); if (granting) return; await hand(); await idle() }
+  // A delivery effect records its fact asynchronously; a test that waits on a hold polls without pumping, so a short
+  // interval hands those facts too. It is cleared before the Runtime stops.
+  const factTimer = setInterval(() => { if (granting || !autoFacts) return; void hand().catch(() => {}) }, 5)
   async function stop() {
+    clearInterval(factTimer)
     await runtime.stop(); vi.restoreAllMocks()
     if (options.keep) return
     rmSync(directory, { recursive: true, force: true })
@@ -472,7 +511,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, assign, mergeWithPull, api, controller, subprocess, hooks, resolveDefault, stop,
+  return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, assign, mergeWithPull, grantFacts, setAutoFacts, api, controller, subprocess, hooks, resolveDefault, stop,
     jobs, subagents, step, claim, permissionPresets }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

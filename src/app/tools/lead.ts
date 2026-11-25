@@ -4,7 +4,7 @@ import { ticketStage, type ProjectRequest, type ProjectRequestInput, type Projec
 import type { Project } from '../../projects.ts'
 import type { LeadDispatch } from '../lead-dispatch.ts'
 import { projectRequestView } from '../lead-dispatch.ts'
-import { assignmentOfRequest } from '../lead-messages.ts'
+import { assignmentOfRequest, factOfRequest } from '../lead-messages.ts'
 import type { Store } from '../store.ts'
 import { tool, type Tool } from './tool.ts'
 
@@ -33,6 +33,15 @@ export interface LeadAssignmentHost {
 /** Bind the Executor's `assignForLead` to one Store, as the runtime and the tool tests do before serving a Lead. */
 const assignmentHosts = new WeakMap<object, LeadAssignmentHost>()
 export function bindLeadAssignments(store: object, host: LeadAssignmentHost): void { assignmentHosts.set(store, host) }
+
+/** The Executor command a Lead needs to release a waiting Input to its project's running worker (issue #41). */
+export interface LeadFactHost {
+  /** Acknowledges the fact grant and queues the delivery of that Input; the runtime binds it to the Executor. */
+  deliver(ticketId: string, assignmentId: string, inputId: string): { ticketId: string; assignmentId: string }
+}
+/** Bind the Executor's `deliverForLead` to one Store, as the runtime and the tool tests do before serving a Lead. */
+const factHosts = new WeakMap<object, LeadFactHost>()
+export function bindLeadFacts(store: object, host: LeadFactHost): void { factHosts.set(store, host) }
 
 /** Host dependencies of the Lead tools: the Store's project records, its optional read-side thread history, the Lead dispatch, and
  * the Lead Session those tools answer for. */
@@ -167,6 +176,35 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       if (!executor) throw new Error('Lead assignment commands are not bound in this runtime')
       const granted = executor.assign(ticket.id, assignmentId)
       return { ticket_id: granted.ticketId, assignment_id: granted.assignmentId, session_id: granted.sessionId, state: 'starting' }
+    },
+  }), tool({
+    name: 'lead_fact',
+    description: 'Release a waiting Input to a worker Session that already runs for this project. The Orchestrator hands the ' +
+      'Input to the Lead first (issue #41); the worker only receives what the Lead grants here. Pass the ticket_id named by ' +
+      'the fact message; omit input_id when exactly one Input waits for that Ticket.',
+    schema: z.object({
+      ticket_id: z.string().trim().min(1).describe('The Ticket whose running worker waits for the Input.'),
+      input_id: z.string().trim().min(1).optional().describe('The Input named by the fact message; omit when only one waits.'),
+    }).strict(),
+    execute: async ({ ticket_id, input_id }: { ticket_id: string; input_id?: string }) => {
+      const waiting = host.store.leads.list(project.id, 500)
+        .filter(message => message.kind === 'fact' && message.ackAt === undefined && message.ticketId === ticket_id)
+      const selected = input_id === undefined ? waiting
+        : waiting.filter(message => factOfRequest(message.requestId)?.inputId === input_id)
+      if (!selected.length) {
+        throw new Error(`No Input waits for Ticket ${ticket_id} in project ${project.id}`)
+      }
+      if (selected.length > 1) {
+        throw new Error(`More than one Input waits for Ticket ${ticket_id}; pass input_id: `
+          + selected.map(message => factOfRequest(message.requestId)?.inputId).join(', '))
+      }
+      const grant = selected[0]!
+      const parsed = factOfRequest(grant.requestId)
+      if (!parsed) throw new Error(`The fact message ${grant.requestId} names no Input`)
+      const executor = factHosts.get(host.store)
+      if (!executor) throw new Error('Lead fact commands are not bound in this runtime')
+      const released = executor.deliver(ticket_id, parsed.assignmentId, parsed.inputId)
+      return { ticket_id: released.ticketId, assignment_id: released.assignmentId, input_id: parsed.inputId, state: 'delivering' }
     },
   }), tool({
     name: 'lead_request_create',

@@ -54,7 +54,7 @@ import { registerWorkspace, resumeWorkspaceMaster, retireMaster, type WorkspaceR
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
-import { bindLeadApprovals, bindLeadAssignments } from './tools/lead.ts'
+import { bindLeadApprovals, bindLeadAssignments, bindLeadFacts } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
@@ -473,6 +473,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       })
       // The Lead starts what the Orchestrator dispatched through this bind only; nothing on the Orchestrator side starts a worker.
       bindLeadAssignments(store, { assign: (ticketId, assignmentId) => this.executor.assignForLead(ticketId, assignmentId) })
+    bindLeadFacts(store, { deliver: (ticketId, assignmentId, inputId) => this.executor.deliverForLead(ticketId, assignmentId, inputId) })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
       const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }

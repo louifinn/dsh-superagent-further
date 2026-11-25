@@ -38,6 +38,12 @@ informed but woken when upper-level work appears: a Lead escalation and a projec
 needs-attention queue a durable `wake` effect that prompts the main Session with the request id and the tool
 that decides it, and the effect queue retries a failed wake and records failures in the panel's health.
 
+An Input reaches a running worker only after the project Lead releases it (issue #41, docs/010): the Executor
+queues the delivery, records a durable `lead-fact:<assignmentId>:<inputId>` request for the Lead, and delivers
+once `lead_fact` acknowledges it; `LeadDispatch.reconcileFacts` asks again across a restart while the
+Assignment still runs and the Input still waits, and a delivery without a grant is refused and recorded as
+`delivery.dispatchRefused`.
+
 When a Report ends the Ticket that made it — a `ready` Report on an `answer` Ticket, or a `dropped` Report — the ending is recorded inside the Report call and must not cancel the turn still running that call. The Executor stops the worker only after the ending transaction commits: for cause `report` it waits, bounded by `RETIRE_GRACE_MS` (60 s), for the worker's turn to end, then disposes the activation and stops the worker's background work without cancelling the turn. A turn that outlives the grace is cancelled as a person's stop, with the Report already recorded. A `human` stop, a followed pull request's close (`merge`), an Eval stop (`eval`) and a retry preempt the turn at once, because that work is no longer wanted; a retry ends the Assignment but not the Ticket. A rolled-back end leaves the worker running. The reasoning is recorded in [ADR 0001](adr/0001-ticket-end-authority.md).
 
 Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-further-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. A job wait lasts 60 seconds by default, up to 10 minutes, so a worker can wait for a job to settle before ending its turn. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.

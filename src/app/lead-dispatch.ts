@@ -8,7 +8,7 @@
  * Store, visible to the panel and to the Orchestrator; it is never silently dropped.
  */
 import { key, latestAssignment, liveTicket, projectRequestOpen, waitsForPerson, type Assignment, type Attention, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
-import { assignmentOfRequest, assignmentRequest, type LeadMessage } from './lead-messages.ts'
+import { assignmentOfRequest, assignmentRequest, factOfRequest, factRequest, type LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
 import type { Store } from './store.ts'
 
@@ -277,6 +277,55 @@ export class LeadDispatch {
   }
 
   /**
+   * Asks the project Lead to release a Ticket's waiting Input to its running Assignment with `lead_fact` (issue #41): a
+   * durable `fact` message names that Input, so a crash or restart keeps the request, and no Orchestrator path steers a
+   * worker without its Lead. Only the Lead's grant enqueues the delivery.
+   */
+  async factPending(ticket: Ticket, assignment: Assignment, inputId: string): Promise<void> {
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = factRequest(assignment.id, inputId)
+    const existing = this.host.store.leads.getByRequest('lead', requestId)
+    if (existing && (existing.deliveredAt !== undefined || existing.ackAt !== undefined)) return
+    const input = ticket.inputs.find(candidate => candidate.id === inputId)
+    const body = existing?.body ?? [
+      `Ticket ${ticket.id} "${ticket.title}" has an Input waiting for its worker (Assignment ${assignment.id}).`,
+      input === undefined ? `Input ${inputId} is waiting.` : `The Input says:\n\n${JSON.stringify(input).slice(0, 1_200)}`,
+      `Release it with lead_fact (ticket_id ${ticket.id}, assignment_id ${assignment.id}), then answer its report when it reaches you.`,
+    ].join('\n\n')
+    // Record the request before the Lead Session exists: a test-driven Lead grants it as soon as the tool list is
+    // registered, and a real Lead sees it in its first turn either way.
+    const message = existing ?? this.host.store.leads.send({ project: project.id, kind: 'fact', from: 'orchestrator',
+      to: 'lead', requestId, ticketId: ticket.id, body })
+    try {
+      const session = await this.host.ensureLead(project)
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not ask the Lead of project ${project.id} to release Input ${inputId} on Ticket ${ticket.id}`, error)
+      this.unreachable(ticket, 'fact delivery', error)
+    }
+  }
+
+  /**
+   * Acknowledges fact grants whose Input is no longer waiting and asks the Lead again for a live one that never reached
+   * it, the restart half of issue #41.
+   */
+  private async reconcileFacts(project: Project): Promise<void> {
+    for (const message of this.host.store.leads.list(project.id, RECENT)) {
+      if (message.kind !== 'fact' || message.ackAt !== undefined) continue
+      const parsed = factOfRequest(message.requestId)
+      const ticket = message.ticketId === undefined ? undefined : this.host.store.tickets.get(message.ticketId)
+      const assignment = parsed === undefined ? undefined : ticket?.assignments.find(candidate => candidate.id === parsed.assignmentId)
+      if (ticket === undefined || !liveTicket(ticket) || assignment?.state !== 'running' || !ticket.undelivered.includes(parsed!.inputId)) {
+        this.host.store.leads.ack(message.id)
+        continue
+      }
+      await this.factPending(ticket, assignment, parsed!.inputId)
+    }
+  }
+
+  /**
    * Records the worker's report for each unanswered request it names and prompts the Lead once. The requests are the
    * durable record; the report messages make an unanswered worker report visible in `lead_requests` too.
    */
@@ -397,6 +446,7 @@ export class LeadDispatch {
       try {
         // Dispatch rows recover first: an assignment message is started with `lead_assign`, never replayed as a prompt.
         await this.reconcileAssignments(project)
+        await this.reconcileFacts(project)
         if (!waiting.length && !demands.length) continue
         if (waiting.length) {
           const session = await this.host.ensureLead(project)

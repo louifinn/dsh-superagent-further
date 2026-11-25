@@ -1909,6 +1909,35 @@ Parameters:
 }
 ```
 
+### `lead_fact`
+
+Release a waiting Input to a worker Session that already runs for this project. The Orchestrator hands the Input to the Lead first (issue #41); the worker only receives what the Lead grants here. Pass the ticket_id named by the fact message; omit input_id when exactly one Input waits for that Ticket.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Ticket whose running worker waits for the Input."
+    },
+    "input_id": {
+      "description": "The Input named by the fact message; omit when only one waits.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### `lead_request_create`
 
 Raise a project request when a scheduled automation delivery finds work this project needs. Pass the automation id from the delivery marker. The Lead then decides it with lead_request_decide; an accepted work request creates its domain Request and Tickets at once. Only work requests can be raised here: an architecture request needs a worker-raised request anchored to a Trigger for its approval.
@@ -2856,4 +2885,4 @@ Parameters:
 
 ## Total
 
-55 distinct tools across 5 groups (62 registrations).
+56 distinct tools across 5 groups (63 registrations).

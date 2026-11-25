@@ -8,6 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- An Input now reaches a running worker only after its project Lead releases it (issue #41): the delivery records a
+  durable `lead-fact:<assignmentId>:<inputId>` request for the Lead, `lead_fact` acknowledges it and
+  `DshExecutor.deliverForLead` queues the delivery, a missing grant is refused and recorded as
+  `delivery.dispatchRefused`, and `LeadDispatch.reconcileFacts` asks again across a restart while the Assignment
+  still runs and the Input still waits.
 - The Lead is now a required hop instead of a best effort (issue #27): a worker's `failed` or `blocked` report reaches the
   Lead with its disposition named (`lead_ticket_retry`, `lead_ticket_stop`, `lead_notify_worker`, then `lead_report`), and
   when the Lead cannot be reached for a report, a stalled Assignment, an ending, an overdue question or a pending

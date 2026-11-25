@@ -13,7 +13,7 @@ import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
-import { assignmentOfRequest } from '../app/lead-messages.ts'
+import { assignmentOfRequest, factOfRequest } from '../app/lead-messages.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
@@ -320,6 +320,7 @@ export class DshExecutor implements Executor {
     // worker slot, so a Lead can grant an Assignment while every slot is busy (docs/010).
     host.effects.handle('dispatch', payload => this.dispatchQueued(payload), { limit: () => host.paused() ? 0 : 4,
       retry: [5000, 300_000] })
+
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
     host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
       retry: [5000, 300_000] })
@@ -444,8 +445,48 @@ export class DshExecutor implements Executor {
     this.host.log.info('assignment.assigned ticket=%s assignment=%s session=%s', ticketId, assignmentId, workerSessionId(ticketId))
     return { ticketId, assignmentId, sessionId: workerSessionId(ticketId) }
   }
-  /** Enqueues a `delivery` effect to steer pending inputs into `ticket`'s running worker session. */
-  deliver(ticket: Ticket, _assignment: Assignment): void { this.host.effects.enqueue('delivery', ticket.id, { ticketId: ticket.id }) }
+  /**
+   * Releases a waiting Input at its project Lead's request (`lead_fact`), the one path that hands an Input to a worker
+   * (issue #41). The Lead must hold the unacknowledged fact grant for that Input; a missing grant is refused and
+   * recorded, never replaced by an Orchestrator-side delivery. This method is bound to the Lead tools only.
+   * @throws when the Ticket cannot take the Input, or when the Lead holds no fact grant for it.
+   */
+  deliverForLead(ticketId: string, assignmentId: string, inputId: string): { ticketId: string; assignmentId: string } {
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket) throw new Error(`Unknown Ticket ${ticketId}`)
+    if (!liveTicket(ticket)) throw new Error(`Ticket ${ticketId} has ended; no Input is delivered to it`)
+    const assignment = runningAssignment(ticket)
+    if (assignment?.id !== assignmentId) throw new Error(`Assignment ${assignmentId} is not the running Assignment of Ticket ${ticketId}`)
+    if (!ticket.undelivered.includes(inputId)) {
+      if (ticket.inputs.some(candidate => candidate.id === inputId)) return { ticketId, assignmentId }
+      throw new Error(`Unknown Input ${inputId} on Ticket ${ticketId}`)
+    }
+    const project = ticket.project === undefined ? undefined : projectOf(this.host.store.settings().executor.projects, ticket.project)
+    if (!project) throw new Error(`Ticket ${ticketId} names no registered project; its Input cannot be delivered`)
+    const grant = this.host.store.leads.list(project.id, 500).find(message => {
+      const parsed = factOfRequest(message.requestId)
+      return message.kind === 'fact' && message.ackAt === undefined && parsed?.assignmentId === assignmentId && parsed.inputId === inputId
+    })
+    if (!grant) {
+      this.host.log.warn('delivery.dispatchRefused ticket=%s assignment=%s input=%s reason=no-grant', ticketId, assignmentId, inputId)
+      throw new Error(`The Lead of project ${project.id} holds no fact grant for Input ${inputId} of Assignment ${assignmentId}; deliver only what the Orchestrator handed to the Lead`)
+    }
+    this.host.store.atomic(() => {
+      this.host.store.leads.ack(grant.id)
+      this.host.effects.enqueue('delivery', ticket.id, { ticketId: ticket.id })
+    })
+    this.host.log.info('fact.delivered ticket=%s assignment=%s input=%s', ticketId, assignmentId, inputId)
+    return { ticketId, assignmentId }
+  }
+  /**
+   * Enqueues a fact that asks the Ticket's project Lead to release the ticket's first waiting Input to its running
+   * Assignment (issue #41); only the Lead's grant enqueues the delivery.
+   */
+  deliver(ticket: Ticket, assignment: Assignment): void {
+    if (ticket.undelivered.length === 0) return
+    this.host.effects.enqueue('delivery', key('delivery', ticket.id), { ticketId: ticket.id })
+  }
+
   /** Launches a queued assignment unless its ticket ended or a newer assignment replaced it meanwhile. */
   private async launchQueued({ ticketId, assignmentId }: { ticketId: string; assignmentId: string }): Promise<void> {
     const ticket = this.host.store.tickets.get(ticketId)
@@ -486,6 +527,21 @@ export class DshExecutor implements Executor {
           const person = ticket.undelivered.some(id => fromPerson(ticket.inputs.find(item => item.id === id)))
           this.slots.reserve(ticketId, person ? 'person' : 'wake', ticket.project)
           woken = true
+        }
+        // An Input reaches a worker only after the Ticket's project Lead released it (issue #41): a durable
+        // lead-fact:<assignment>:<input> message records that grant. Without one, ask the Lead and stop; its
+        // lead_fact call enqueues the delivery effect again.
+        const grantProject = ticket.project === undefined ? undefined : projectOf(this.host.store.settings().executor.projects, ticket.project)
+        if (grantProject) {
+          const granted = this.host.store.leads.list(grantProject.id, 500).some(message => {
+            if (message.kind !== 'fact') return false
+            const grant = factOfRequest(message.requestId)
+            return grant?.assignmentId === assignment.id && grant?.inputId === inputId
+          })
+          if (!granted) {
+            await this.host.sessions.lead.factPending(ticket, assignment, inputId)
+            return
+          }
         }
         const input = ticket.inputs.find(item => item.id === inputId)
         try {
