@@ -199,6 +199,12 @@ export const IncidentsConfigSchema = z.object({
 }).strict()
 export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>
 /** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, blocked commands, and the registered projects. */
+export const ExecutorTimeoutsSchema = z.object({
+  requestHours: z.number().int().min(1).max(168).default(6),
+  escalationHours: z.number().int().min(1).max(168).default(4),
+  attentionHours: z.number().int().min(1).max(168).default(24),
+}).strict()
+export type ExecutorTimeouts = z.infer<typeof ExecutorTimeoutsSchema>
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
@@ -211,6 +217,8 @@ export const ExecutorConfigSchema = z.object({
   projects: ProjectsSchema.default([]),
   /// How long a finished Ticket's worktree and branch stay for inspection; 0 keeps them.
   worktreeKeepDays: z.number().int().min(0).max(LIMITS.worktreeKeepDays.max).default(7),
+  /// How long unanswered work may wait before the Runtime escalates it (issue #31); see `ExecutorTimeoutsSchema`.
+  timeouts: ExecutorTimeoutsSchema.default(() => ExecutorTimeoutsSchema.parse({})),
   /// Operational log verbosity: debug also records per-poll and per-turn detail, never message or tool content.
   logLevel: z.enum(['info', 'debug']).default('info'),
   /// How many daily JSONL log files the host keeps before pruning the oldest.

@@ -337,7 +337,7 @@ export interface TicketReview {
   at: string
 }
 /** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
-export interface Attention { id: string; question: string; triggerId?: string }
+export interface Attention { id: string; question: string; triggerId?: string; /** When the question was asked (issue #31); older records omit it. */ at?: string }
 /**
  * The accepted human ask a Ticket belongs to. One Request may deliver through several Tickets, one per delivery unit; the
  * Orchestrator creates it with its Tickets in the accept, orders them by their `after` edges, and reports one result.

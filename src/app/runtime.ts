@@ -74,10 +74,6 @@ const now = (): string => new Date().toISOString()
 const WATCHDOG_MS = 60_000
 /** How long a worker Session may stay idle on a running Assignment before the watchdog raises the Ticket's attention. */
 const STALLED_MS = 10 * 60_000
-/** A project request its Lead leaves unanswered for this long escalates once to the Orchestrator (issue #31). */
-const REQUEST_TIMEOUT_MS = 6 * 60 * 60_000
-/** An escalation the Orchestrator leaves undecided for this long alerts the person on its root Channel once (issue #31). */
-const ESCALATION_TIMEOUT_MS = 4 * 60 * 60_000
 /** How many recent file-delivery failures Overview keeps, newest last, until the ring drops them. */
 const DELIVERY_FAILURES = 20
 /** How long the drain waits for in-flight passes, effects, agent turns and diagnosis before failing that phase and continuing. */
@@ -713,6 +709,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
     // runs even while the Runtime is paused: a paused Runtime dispatches nothing, so an unanswered request would otherwise
     // wait forever.
     await this.timeoutRequests(at)
+    await this.expireAttention(at)
     // A paused Runtime dispatches nothing, so a worker idle now is not yet a stall a Lead could act on.
     if (this.paused()) return
     for (const ticket of open) {
@@ -753,22 +750,24 @@ export class Runtime implements SourceHost, RuntimeHandle {
     }
   }
   /**
-   * One pass of the request timeouts (issue #31). A project request its Lead has not answered within `REQUEST_TIMEOUT_MS`
-   * — since it was raised or since its latest reply — becomes one `escalation` project request for the Orchestrator, which
-   * keeps the original request and its reminders. An escalation the Orchestrator leaves undecided for `ESCALATION_TIMEOUT_MS`
-   * alerts the person once on the Channel of the escalation's root Thread. Escalation only moves the unanswered item one
-   * level up; it never decides for the receiving role, and repeated passes do not repeat either effect.
+   * One pass of the request timeouts (issue #31). A project request its Lead has not answered within
+   * `executor.timeouts.requestHours` — since it was raised or since its latest reply — becomes one `escalation`
+   * project request for the Orchestrator, which keeps the original request and its reminders. An escalation the
+   * Orchestrator leaves undecided for `executor.timeouts.escalationHours` alerts the person once on the Channel of
+   * the escalation's root Thread. Escalation only moves the unanswered item one level up; it never decides for the
+   * receiving role, and repeated passes do not repeat either effect.
    */
   async timeoutRequests(at = new Date()): Promise<void> {
     if (this.closing()) return
+    const { requestHours, escalationHours } = this.timeouts
     for (const request of this.store.projectRequests.list()) {
       if (!projectRequestOpen(request.status)) continue
       if (request.kind === 'escalation') {
-        if (at.getTime() - Date.parse(request.created_at) >= ESCALATION_TIMEOUT_MS) this.alertOverdueEscalation(request)
+        if (at.getTime() - Date.parse(request.created_at) >= escalationHours * 3_600_000) this.alertOverdueEscalation(request, escalationHours)
         continue
       }
       const since = [request.created_at, ...request.replies.map(reply => reply.at)].sort().at(-1)!
-      if (at.getTime() - Date.parse(since) < REQUEST_TIMEOUT_MS) continue
+      if (at.getTime() - Date.parse(since) < requestHours * 3_600_000) continue
       try {
         const title = `Overdue: ${request.title}`.slice(0, PROJECT_REQUEST_TITLE_LIMIT)
         const escalation = this.engine.escalateProjectRequest({
@@ -786,14 +785,36 @@ export class Runtime implements SourceHost, RuntimeHandle {
     }
   }
   /** Send the person one durable notice per overdue escalation, on the Channel of its root Thread. */
-  private alertOverdueEscalation(request: ProjectRequest): void {
+  private alertOverdueEscalation(request: ProjectRequest, hours: number): void {
     const trigger = request.root === undefined ? undefined : this.store.triggers.get(request.root.trigger_id)
     const channel = trigger?.channel
     if (!channel) return
     const id = key('escalation-timeout', request.id)
     if (this.store.receipts.get(id)) return
     this.outbox.send({ id, channel, kind: 'notice',
-      text: `Project request ${request.id} "${request.title}" (project ${request.project}) has waited more than ${ESCALATION_TIMEOUT_MS / 3_600_000} hours for an Orchestrator decision. Decide it with orchestrator_escalation_decide, or answer that it needs more information.` })
+      text: `Project request ${request.id} "${request.title}" (project ${request.project}) has waited more than ${hours} hours for an Orchestrator decision. Decide it with orchestrator_escalation_decide, or answer that it needs more information.` })
+  }
+  /**
+   * One pass of the worker-attention timeout (issue #31): a Ticket whose attention question has been open past
+   * `executor.timeouts.attentionHours` asks its project Lead, once per question, to chase the person or escalate. The
+   * question itself stays open for the person; this pass never answers or clears it.
+   */
+  async expireAttention(at = new Date()): Promise<void> {
+    if (this.closing()) return
+    const hours = this.timeouts.attentionHours
+    for (const ticket of this.store.tickets.open()) {
+      const attention = ticket.attention
+      if (!attention?.at || at.getTime() - Date.parse(attention.at) < hours * 3_600_000) continue
+      try {
+        await this.sessions.lead.attentionOverdue(ticket, attention, hours)
+      } catch (error) {
+        this.log.warn('dsh-superagent-further could not alert the Lead about overdue attention on Ticket %s: %s', ticket.id, String(error))
+      }
+    }
+  }
+  /** The operator's escalation windows and attention timeout (issue #31), read fresh on every pass. */
+  private get timeouts(): { requestHours: number; escalationHours: number; attentionHours: number } {
+    return this.store.settings().executor.timeouts
   }
   /** Drop the attention the watchdog raised for a Ticket, while it is still the current one; nothing else is removed. */
   private clearStalled(ticketId: string, tracked: { attentionId?: string }): void {

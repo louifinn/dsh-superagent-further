@@ -2343,6 +2343,29 @@ it('alerts the person once when an escalation waits too long for an Orchestrator
   expect(runtime.store.receipts.get(id)!.status).toBe(status)
 })
 
+it('uses the operator configured windows and alerts the Lead about an overdue attention question', async () => {
+  const { ticket } = await acceptedTicket()
+  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor,
+    timeouts: { requestHours: 1, escalationHours: 1, attentionHours: 1 } } })
+  const raised = runtime.engine.raiseProjectRequest({ project: 'default', title: 'Needs a decision',
+    instruction: 'Pick one of the two options.', raised_by: { session: `worker-${ticket.id}`, ticket: ticket.id },
+    root: { trigger_id: 'trigger-1', thread_key: 'feishu:oc_1' } })
+  const old = new Date(Date.now() - 2 * 60 * 60_000).toISOString()
+  runtime.store.projectRequests.save({ ...runtime.store.projectRequests.get(raised.id)!, created_at: old, updated_at: old })
+  await runtime.timeoutRequests()
+  expect(runtime.store.projectRequests.list('default').filter(request => request.kind === 'escalation')).toHaveLength(1)
+  // A worker question a person leaves unanswered raises one durable notice to the project Lead, never an answer.
+  const live = runtime.store.tickets.get(ticket.id)!
+  runtime.store.tickets.save({ ...live, attention: { id: 'attention-overdue', question: 'Which one?', at: old } })
+  await runtime.watchdogScan()
+  const overdue = runtime.store.leads.getByRequest('lead', `attention-overdue:${ticket.id}:attention-overdue`)
+  expect(overdue).toMatchObject({ kind: 'notice', ticketId: ticket.id, deliveredAt: expect.any(String) })
+  expect(overdue!.body).toContain('Which one?')
+  await runtime.watchdogScan(new Date(Date.now() + 60_000))
+  expect(runtime.store.leads.list('default').filter(message => message.requestId.startsWith('attention-overdue:'))).toHaveLength(1)
+  expect(runtime.store.tickets.get(ticket.id)!.attention?.question).toBe('Which one?')
+})
+
 it('creates an Executor Session under the bundle\'s worker preset, and the main Session under its router preset', async () => {
   const { sessionId } = await acceptedTicket()
   const created = controller.create.mock.calls.map(([options]) => options as { sessionId: string; agentPreset: string })

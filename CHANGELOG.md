@@ -17,8 +17,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   a Lead leaves unanswered for six hours, counted from the request or its last reply, is escalated once to
   the Orchestrator as an `Overdue: …` escalation request, and an escalation that waits four hours for an
   Orchestrator decision sends one notice on the root request's Channel asking a person to decide it. Both
-  passes are idempotent. The two windows are safe code constants for now; operator-configurable windows and
-  a timeout for a worker's own attention question remain open.
+  passes are idempotent. All three windows — project request, escalation and a Ticket's attention question — are
+  operator-configured under Execution → Escalation timeouts (six, four and 24 hours by default); an overdue attention
+  question asks the project Lead once to chase it or escalate while the question stays open for the person.
 - An Assignment is now dispatched through its project Lead (the other half of issue #12): `Executor.dispatch` writes a
   durable `lead_message` (`kind: assignment`, `requestId: lead-assignment:<assignmentId>`, naming the Ticket, project,
   Assignment and worker Session) and prompts the Lead, which starts the worker with the new `lead_assign` tool — the only

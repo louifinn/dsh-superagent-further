@@ -179,9 +179,11 @@ export function ExecutionSettings() {
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
-  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), logRetentionDays: String(executor.logRetentionDays), blockedCommands: executor.blockedCommands.join(' ') }
+  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), projectWorkers: String(executor.projectWorkers), worktreeKeepDays: String(executor.worktreeKeepDays), logRetentionDays: String(executor.logRetentionDays), blockedCommands: executor.blockedCommands.join(' '),
+    timeouts: { requestHours: String(executor.timeouts.requestHours), escalationHours: String(executor.timeouts.escalationHours), attentionHours: String(executor.timeouts.attentionHours) } }
   const draft = useBlockDraft('executor', saved, blocks.executor.revision,
-    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), logRetentionDays: numberOf(value.logRetentionDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
+    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), projectWorkers: numberOf(value.projectWorkers), worktreeKeepDays: numberOf(value.worktreeKeepDays), logRetentionDays: numberOf(value.logRetentionDays), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean),
+      timeouts: { requestHours: numberOf(value.timeouts.requestHours) ?? 6, escalationHours: numberOf(value.timeouts.escalationHours) ?? 4, attentionHours: numberOf(value.timeouts.attentionHours) ?? 24 } }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   const prepare = useRef<HTMLTextAreaElement>(null)
@@ -211,6 +213,20 @@ export function ExecutionSettings() {
             <Input type="number" min={LIMITS.worktreeKeepDays.min} max={LIMITS.worktreeKeepDays.max} required value={value.worktreeKeepDays}
               onChange={event => edit({ worktreeKeepDays: event.target.value })} />
           </Field>
+          <Section title={t('timeoutSettings')} hint={t('timeoutSettingsHint')}>
+            <Field label={t('requestTimeoutHours')} hint={t('requestTimeoutHoursHint')}>
+              <Input type="number" min={1} max={168} required value={value.timeouts.requestHours}
+                onChange={event => edit({ timeouts: { ...value.timeouts, requestHours: event.target.value } })} />
+            </Field>
+            <Field label={t('escalationTimeoutHours')} hint={t('escalationTimeoutHoursHint')}>
+              <Input type="number" min={1} max={168} required value={value.timeouts.escalationHours}
+                onChange={event => edit({ timeouts: { ...value.timeouts, escalationHours: event.target.value } })} />
+            </Field>
+            <Field label={t('attentionTimeoutHours')} hint={t('attentionTimeoutHoursHint')}>
+              <Input type="number" min={1} max={168} required value={value.timeouts.attentionHours}
+                onChange={event => edit({ timeouts: { ...value.timeouts, attentionHours: event.target.value } })} />
+            </Field>
+          </Section>
         </div>
         <div className="dt-form dt-block">
           <Projects projects={value.projects} onChange={projects => edit({ projects })} />

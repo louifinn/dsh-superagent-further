@@ -119,7 +119,7 @@ export class Assignments extends EnginePart {
     const checks = this.checks(report.checks)
     const at = this.now()
     const previous = ticket.attention
-    const ask = (question: string) => ({ id: key('attention', ticketId, question, at), question, ...(report.askedBy ? { triggerId: report.askedBy } : {}) })
+    const ask = (question: string) => ({ id: key('attention', ticketId, question, at), question, at, ...(report.askedBy ? { triggerId: report.askedBy } : {}) })
     const asked = report.question && report.question !== previous?.question ? ask(report.question) : previous
     const attention = report.question === null || report.state === 'ready' ? undefined : asked
     if (attention) ticket.attention = attention

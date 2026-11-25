@@ -7,7 +7,7 @@
  * bounds the attempts without in-memory state. After two reminders a request is marked `needs-attention` in the
  * Store, visible to the panel and to the Orchestrator; it is never silently dropped.
  */
-import { key, latestAssignment, liveTicket, projectRequestOpen, waitsForPerson, type Assignment, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
+import { key, latestAssignment, liveTicket, projectRequestOpen, waitsForPerson, type Assignment, type Attention, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
 import { assignmentOfRequest, assignmentRequest, type LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
 import type { Store } from './store.ts'
@@ -178,6 +178,31 @@ export class LeadDispatch {
       this.host.store.leads.deliver(message.id)
     } catch (error) {
       this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s Assignment ${assignment.id} stalled`, error)
+    }
+  }
+
+  /**
+   * Tells the project's Lead that a Ticket's attention question has stayed open past the configured window (issue
+   * #31). One durable notice per question; the question itself stays open for the person, and the Lead can chase the
+   * person or escalate the work with `lead_request_escalate`.
+   */
+  async attentionOverdue(ticket: Ticket, attention: Attention, hours: number): Promise<void> {
+    if (ticket.project === undefined || ticket.project === '') return
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = `attention-overdue:${ticket.id}:${attention.id}`
+    if (this.host.store.leads.getByRequest('lead', requestId)) return
+    const body = `Ticket ${ticket.id} "${ticket.title}" in project ${project.id} has waited ${hours} hours since ${attention.at} for a person's answer: "${attention.question}"\n`
+      + 'Ask the person again, or escalate the work with lead_request_escalate when the Orchestrator should decide it. '
+      + 'Do not answer for the person and do not start new work yourself.'
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = this.host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
+        requestId, ticketId: ticket.id, body })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id}'s attention question is overdue`, error)
     }
   }
 

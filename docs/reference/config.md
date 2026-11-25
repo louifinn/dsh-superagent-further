@@ -225,6 +225,11 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
         "blockedCommands": [],
         "projects": [],
         "worktreeKeepDays": 7,
+        "timeouts": {
+          "requestHours": 6,
+          "escalationHours": 4,
+          "attentionHours": 24
+        },
         "logLevel": "info",
         "logRetentionDays": 7,
         "incidents": {
@@ -341,6 +346,35 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "type": "integer",
           "minimum": 0,
           "maximum": 365
+        },
+        "timeouts": {
+          "default": {
+            "requestHours": 6,
+            "escalationHours": 4,
+            "attentionHours": 24
+          },
+          "type": "object",
+          "properties": {
+            "requestHours": {
+              "default": 6,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 168
+            },
+            "escalationHours": {
+              "default": 4,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 168
+            },
+            "attentionHours": {
+              "default": 24,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 168
+            }
+          },
+          "additionalProperties": false
         },
         "logLevel": {
           "default": "info",
