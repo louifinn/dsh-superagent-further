@@ -173,7 +173,7 @@ A reference list of the terms this and the later documents use, with their Chine
 | Assignment | 派工 | The binding of a Ticket to one Executor instance |
 | Report | 报告 | The state an Assignment reports to its Ticket, with its evidence |
 | Information | 信息 | One fact a level must know, with one origin, one authoritative record, one direction and an obligation to pass it on |
-| Directive | 直接指令 | A person's direct word to one Session: authoritative for that message, effective once, propagated up and down, never a Policy or Mandate change |
+| Directive | 直接指令（Directive） | A person's direct word to one Session: authoritative for that message, effective once, propagated up and down, never a Policy or Mandate change |
 | Terminal event | 终局事件 | A Ticket's ending: merged, closed, completed, dropped, stopped or failed; it reaches the Lead before it is considered reported |
 | Alert channel | 告警渠道 | The one configured channel for a fact that cannot wait for its source conversation, such as a top-level failure |
 | Model degradation | 模型降级 | Continuing a failed Session on its parent's model before escalating; a recovery step, not a repair |

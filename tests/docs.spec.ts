@@ -8,6 +8,8 @@ const NUMBERED = /^(\d{3})-[a-z0-9-]+\.md$/
 /** An ADR has its own directory and its own four-digit number, so it is not a numbered document in `docs/`. */
 const ADR = join(ROOT, 'docs', 'adr')
 const ADR_NAME = /^\d{4}-[a-z0-9-]+\.md$/
+/** The one normative document that earlier documents may link forward to, so a reader can click "see 016". */
+const NORMATIVE = '016-information-discipline.md'
 const numbered = readdirSync(join(ROOT, 'docs')).filter(name => NUMBERED.test(name)).sort()
 const entries = ['README.md', 'SETUP.md']
 const documents = [...entries, ...readdirSync(join(ROOT, 'docs')).filter(name => name.endsWith('.md')).map(name => `docs/${name}`)]
@@ -49,11 +51,22 @@ describe('documentation', () => {
       if (!linked.endsWith('.md')) return []
       // A numbered document may link to an ADR: ADRs live in docs/adr and are numbered on their own.
       if (dirname(linked) === ADR && ADR_NAME.test(basename(linked))) return []
+      // A numbered document may link forward to the normative information-discipline document: the numbering rule
+      // exists for reading order, and this document is explicitly the later authority every earlier one points at.
+      if (dirname(linked) === join(ROOT, 'docs') && basename(linked) === NORMATIVE) return []
       // Take the file name with `basename`: on Windows `lastIndexOf('/')` never matches a resolved path.
       const number = NUMBERED.exec(basename(linked))?.[1]
       return dirname(linked) === join(ROOT, 'docs') && number !== undefined && number < name.slice(0, 3) ? [] : [`${name} → ${target}`]
     }))
     expect(violations).toEqual([])
+  })
+  it('keeps the information discipline in one normative document', () => {
+    const source = read(`docs/${NORMATIVE}`)
+    const titles = [...source.matchAll(/^\*\*P(\d{1,2}) — (.+?)\.\*\*/gm)].map(match => match[0])
+    expect(titles).toHaveLength(12)
+    expect([...source.matchAll(/^\*\*P(\d{1,2}) — /gm)].map(match => Number(match[1]))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    const copies = numbered.filter(name => name !== NORMATIVE && titles.some(title => read(`docs/${name}`).includes(title)))
+    expect(copies).toEqual([])
   })
   it('resolves every local link', () => {
     const files = [...entries.map(name => join(ROOT, name)), ...numbered.map(name => join(ROOT, 'docs', name))]

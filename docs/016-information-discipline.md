@@ -334,7 +334,8 @@ A deployment satisfies this document only when all of the following hold and are
 10. A shared-state read path is isolated or recorded as accepted risk and detected; the discipline is not claimed on the
     strength of tool-level absence alone.
 11. The documents keep one normative source: no document contradicts this one; a local summary is subordinate and
-    clearly local, never a second authority.
+    clearly local, never a second authority. `tests/docs.spec.ts` enforces this: only this document carries the P1–P12
+    principles, and earlier documents link here instead of restating them.
 
 ## Out of scope
 

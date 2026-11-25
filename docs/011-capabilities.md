@@ -1040,7 +1040,7 @@ The operator can stage a built runtime, ask the running supervisor to swap to it
 
 ## Part P — Information discipline (accepted 2026-11-19)
 
-The operator adopted a discipline for how information moves through the organization. The normative document is 016
+The operator adopted a discipline for how information moves through the organization. The normative document is [016](016-information-discipline.md)
 (added after this one) and the decision is [ADR 0008](adr/0008-information-discipline.md). The decisions:
 
 - **One fact, one authoritative record and one direction.** Delivery, retry, a second channel or a summary is not a
@@ -1066,5 +1066,5 @@ The operator adopted a discipline for how information moves through the organiza
   coverage statement, and never requires a pull request.
 
 Implementation gaps are tracked by the information-discipline epic in the issue tracker. Earlier parts of this document
-remain the record of the capabilities they describe; where they conflict with 016, 016 is normative for direction and
+remain the record of the capabilities they describe; where they conflict with [016](016-information-discipline.md), 016 is normative for direction and
 obligations.

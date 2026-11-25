@@ -33,7 +33,7 @@ duty to pass on knowledge that changes another level's decision, ends work, or f
 - **Every executor is a source under the same rules.** A worker, a reviewer, an automation, a diagnosis and an external
   session all follow the same discipline.
 
-The later numbered document 016 records the full discipline and the deformation of the tree for a person's direct
+The later normative document [016](016-information-discipline.md) records the full discipline and the deformation of the tree for a person's direct
 intervention. Where an earlier statement in this document or a later one conflicts with it, that document is normative.
 
 ## What follows for the design

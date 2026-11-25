@@ -730,7 +730,7 @@ project's execution, and the panel keeps the person's direct retry/stop.
   pending Assignment, and `LeadDispatch.reconcile` backfills the dispatch messages.
 ## Information discipline program (2026-11-19)
 
-The operator adopted the information discipline: document 016 is normative and
+The operator adopted the information discipline: [016](016-information-discipline.md) is normative and
 [ADR 0008](adr/0008-information-discipline.md) records the decision. The documentation lands first; implementation is
 tracked by the information-discipline epic (#11) and its children. The phases below are a reading order, not a schedule;
 each item keeps `pnpm check` green and cites its issue.

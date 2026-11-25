@@ -30,7 +30,7 @@ Every role prompt carries the same information rules, so a model does not have t
 - One fact is stated once. A role does not re-send a fact that already reached the same recipient, add a second wording
   of it, or send it back the way it came.
 
-The full discipline is the later numbered document 016; these rules are the prompt-level expression of it.
+The full discipline is the later normative document [016](016-information-discipline.md); these rules are the prompt-level expression of it.
 
 ### Built-in parts and templates
 

@@ -5,7 +5,7 @@ are merged. The operator later added D11 (Lead-raised work from automation deliv
 self-bootstrap, Sprint 26) and D13 (Lead escalation to the Orchestrator, Sprint 27), all implemented. `docs/011-capabilities.md`
 Parts E–G record the decision summaries.
 
-Update (2026-11-19, information discipline): the operator adopted the information-discipline program (016 and ADR 0008).
+Update (2026-11-19, information discipline): the operator adopted the information-discipline program ([016](016-information-discipline.md) and [ADR 0008](adr/0008-information-discipline.md)).
 D3's mandatory reply stands. D4's "passive durable parent" is historical: the Lead is now the mandatory carrier, worker
 reports reach it first, and it passes them up to the Orchestrator; the dispatch direction matches it (issue #12) — an
 Assignment is written as a durable `assignment` `lead_message` and starts only when its Lead grants it with `lead_assign`,
@@ -101,7 +101,7 @@ request_create({ title, instruction, kind?: 'work'|'architecture', parent?: stri
 It stores the ProjectRequest (project from the worker's Ticket), marks the request pending, and delivers a message to
 the project Lead Session; if the Lead is not running, `Sessions.ensureLead` + wake as usual. At the time of this phase the Lead was a **passive durable parent**: an assignment was written as a `lead_message` row
 and was not prompted, and worker reports went to the main Session (`src/executor/dsh.ts:544-555`,
-`src/app/tools/executor.ts:84-117`). The information-discipline program (016, ADR 0008) replaces that arrangement: the
+`src/app/tools/executor.ts:84-117`). The information-discipline program ([016](016-information-discipline.md), [ADR 0008](adr/0008-information-discipline.md)) replaces that arrangement: the
 Lead is the mandatory carrier, it is prompted for its assignments, worker reports and terminal endings reach it first,
 and it passes the original report up to the Orchestrator. This phase also adds the effect kind that actually prompts the
 Lead (`Sessions.prompt(leadSessionId, …)`) for raised requests and unanswered worker reports, so the mandatory-reply gate
