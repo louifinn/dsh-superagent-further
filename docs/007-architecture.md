@@ -435,6 +435,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before, the actor and reason a tool-origin save recorded, and the revision a restore came from |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
+| `src/app/surfaces.ts` | The model-facing surface inventory (docs/015): `collectSurfaces` reads each role's registrations, and `ROLE_IDS`/`UNCOLLECTED_ROLES` state the Lead and reviewer gap until step 3 |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
 | `src/app/sessions.ts` | Sessions, and the Lead dispatch it attaches to the Engine and calls at each Lead turn end |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
@@ -568,6 +569,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/archive-state.spec.ts` | `scripts/archive-state.mjs` against a temporary state database: the default `<stateDir>/orchestrator.sqlite`, a `--database` override, the `VACUUM INTO` copy, its name, and pruning by count |
 | `tests/properties.spec.ts` | Property tests over the module boundaries: the Policy gate's acceptance invariants, Trigger IDs scoped by repository for Issues, pull requests and CI, intake and raise deduplication, the schema 22 migration writing `deliverable`, the schema 23 migration writing each ended Ticket's cause, the schema 24 step leaving every record as it was and the schema 25 step creating the empty `incident` table, and reconcile as a fixed point |
 | `tests/surface.spec.ts` | The mounted surface: each role's registered tool set (main Session, project Lead, Executor), the five bundled skills, and the bundle layer, three presets and client injection the package declares |
+| `tests/context-surfaces.spec.ts` | The production surface inventory: one entry per prompt part, generated part, tool and skill, and the declared Lead/reviewer gap |
 | `tests/panel-memory.spec.tsx` | The Memory page: one-click switches saved against the current revision, the limits form, the keyword, project-filter and order combo boxes, paging through the list, pinning, expanding a card to all its fields, and forgetting a stored memory |
 | `tests/worktrees.spec.ts` | Reclaiming finished Tickets' worktrees: an old one and its branch go, a recent or retention-0 one stays, and a directory outside `<stateDir>/work` is never touched |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations, the localized default rules and their upgrade, and assessment outcomes; the self-report gate's default, its tier-B classification and its independence from the Policy version, and discovery Mandates revalidating like installation ones |

@@ -12,6 +12,7 @@ import { latestAssignment } from '../src/core/index.ts'
 import { factOfRequest } from '../src/app/lead-messages.ts'
 import { promptParts } from '../src/app/prompts.ts'
 import { RESOURCES } from '../src/app/resources.ts'
+import { COLLECTED_ROLES, UNCOLLECTED_ROLES, collectSurfaces, uncollectedRoles, type RoleId, type RoleRegistration } from '../src/app/surfaces.ts'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { Runtime } from '../src/app/runtime.ts'
 import { workerSessionId } from '../src/executor/dsh.ts'
@@ -28,7 +29,7 @@ import { startTestRuntime } from './fixtures/host.ts'
 import { fakeWorkspaces, workspaceDirectory } from './fixtures/workspaces.ts'
 
 type Role = 'orchestrator' | 'worker'
-interface Surface { where: string; owner: string; role: Role | 'both'; text: string }
+interface Surface { where: string; owner: string; role: RoleId | 'both'; text: string }
 interface Tool {
   name: string; description: string; parameters: unknown
   execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown>
@@ -337,31 +338,36 @@ function walk(node: unknown, visit: (node: Record<string, unknown>, property?: s
   }
 }
 
-/** Collect all model-visible text surfaces (prompt sections, tool schemas, skills, errors, and session inputs) with their owning module. */
+/**
+ * Collect all model-visible text surfaces (prompt sections, tool schemas, skills, errors, and session inputs) with their
+ * owning module. The role sweep itself lives in `src/app/surfaces.ts` (issue #6, docs/015 step 2): this function only
+ * adapts a running Runtime to the production inventory, classifies each text by the module that owns it, and appends the
+ * session inputs a run observed.
+ */
 function collect(host: Host, { a, b, workerA, workerB, refusal }: Awaited<ReturnType<typeof drive>>): Surface[] {
   const { runtime } = host
-  const surfaces: Surface[] = []
   const config = runtime.prompts.current().config
   const shared = new Set(['runtime/shared', 'communication', 'scope', 'delivery', 'runtime/subscriptions', 'runtime/replies'])
-  for (const [role, sessionId] of [['orchestrator', runtime.masterId], ['worker', workerA], ['worker', workerB]] as const) {
-    const parts = promptParts(config, role)
-    for (const { name, text } of parts) {
-      surfaces.push({ where: `${role} prompt ${name}`, owner: PROMPTS, role: shared.has(name) ? 'both' : role, text })
-    }
-    // The revision line, the execution environment and the note on a proactive ticket come from the runtime.
-    const generated = parts.reduce((text, part) => text.replace(part.text, ''), host.sections.get(sessionId)!({}))
-    surfaces.push({ where: `${role} prompt from the runtime`, owner: SESSIONS, role, text: generated })
-  }
-  for (const [role, sessionId] of [['orchestrator', runtime.masterId], ['worker', workerA]] as const) {
-    for (const tool of host.tools.get(sessionId)!.values()) {
-      const descriptions = [tool.description]
-      walk(tool.parameters, node => { if (typeof node.description === 'string') descriptions.push(node.description) })
-      surfaces.push({ where: `${role} tool ${tool.name}`, owner: TOOLS, role, text: descriptions.join('\n') })
+  const registration = (role: 'orchestrator' | 'worker', sessionId: string): RoleRegistration => {
+    const parts = promptParts(config, role as never)
+    const tools = [...host.tools.get(sessionId)!.values()].map(({ name, description, parameters }) => ({ name, description, parameters }))
+    return {
+      role: role as RoleId,
+      parts,
+      // The revision line, the execution environment and the note on a proactive ticket come from the runtime.
+      generated: parts.reduce((text, part) => text.replace(part.text, ''), host.sections.get(sessionId)!({})),
+      tools,
+      skills: [...host.skills.get(runtime.masterId)!],
     }
   }
-  for (const { name, description, content } of host.skills.get(runtime.masterId)!) {
-    surfaces.push({ where: `skill ${name}`, owner: PROMPTS, role: 'both', text: `${description}\n${content}` })
-  }
+  const surfaces: Surface[] = collectSurfaces([registration('orchestrator', runtime.masterId), registration('worker', workerA)]).map(({ role, where, text }) => {
+    const kind = role === 'worker' || role === 'orchestrator' ? role : 'both'
+    if (where.startsWith(`${role} prompt from the runtime`)) return { where, owner: SESSIONS, role: kind as Role | 'both', text }
+    if (where.startsWith(`${role} tool `)) return { where, owner: TOOLS, role: kind as Role | 'both', text }
+    if (where.startsWith('skill ')) return { where, owner: PROMPTS, role: 'both', text }
+    const name = where.slice(`${role} prompt `.length)
+    return { where, owner: PROMPTS, role: (shared.has(name) ? 'both' : kind) as Role | 'both', text }
+  })
   surfaces.push({ where: 'orchestrator tool orchestrator_reply error', owner: ERRORS, role: 'orchestrator', text: refusal })
   for (const { text } of host.inputs.filter(input => input.sessionId === runtime.masterId)) {
     const value = JSON.parse(text) as Record<string, unknown>
@@ -452,21 +458,23 @@ function failures(): Map<string, string> {
   return found
 }
 
-it('collects both roles\' tools, prompts, skills and inputs', () => {
-  expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
-    'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'request_create'])
-  expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_label', 'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_incident', 'orchestrator_issue_create', 'orchestrator_escalations', 'orchestrator_escalation_decide']))
-  // The one routing tool takes the place of four.
+it('collects exactly what the runtime registered, and declares the roles it does not register yet', () => {
+  // The one routing tool took the place of four; the retired names must not come back.
   for (const name of ['orchestrator_ticket_accept', 'orchestrator_ticket_attach', 'orchestrator_ticket_stop', 'orchestrator_trigger_ignore']) {
     expect(toolsOf('orchestrator').has(name)).toBe(false)
   }
+  // The inventory comes from the registrations, not a hand list: every registered tool, prompt part and skill appears once.
   const wheres = new Set(surfaces.map(surface => surface.where))
-  for (const where of ['orchestrator prompt runtime/dispatch', 'worker prompt runtime/work', 'skill dsh-superagent-further-github', 'skill dsh-superagent-further-feishu',
-    'orchestrator prompt runtime/admission', 'orchestrator input candidate', 'orchestrator input lead_report',
-    'orchestrator input thread_unrelated', 'orchestrator input ticket_ended', 'orchestrator input settings_saved', 'worker input assignment (explicit)',
-    'worker input assignment (inferred)', 'worker input policy-changed', 'worker input resumed', 'worker input status',
-    'worker input recovery', 'worker input note', 'worker input trigger (context)', 'orchestrator input follow_up',
-    'orchestrator input thread_followed', 'orchestrator tool orchestrator_reply error']) expect(wheres).toContain(where)
+  for (const name of toolsOf('orchestrator').keys()) expect(wheres).toContain(`orchestrator tool ${name}`)
+  for (const name of toolsOf('worker').keys()) expect(wheres).toContain(`worker tool ${name}`)
+  for (const { name } of promptParts(host.runtime.prompts.current().config, 'orchestrator')) expect(wheres).toContain(`orchestrator prompt ${name}`)
+  for (const { name } of promptParts(host.runtime.prompts.current().config, 'worker')) expect(wheres).toContain(`worker prompt ${name}`)
+  for (const { name } of host.skills.get(host.runtime.masterId)!) expect(wheres).toContain(`skill ${name}`)
+  // The collected roles are exactly the declared ones, and the declared-but-uncollected pair is Lead and reviewer
+  // (docs/015 step 3 closes it; until then the gap is stated, not silently omitted).
+  const roles = [...new Set(surfaces.map(surface => surface.role))].filter((role): role is RoleId => role !== 'both').sort()
+  expect(roles).toEqual([...COLLECTED_ROLES].sort())
+  expect(uncollectedRoles(roles)).toEqual([...UNCOLLECTED_ROLES])
   expect(sessions.refusal).not.toBe('')
 })
 
