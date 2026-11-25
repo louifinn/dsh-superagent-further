@@ -35,17 +35,17 @@ It is a fork of DeepSeek's SuperAgent research prototype. This README covers wha
 
 | Property | Detail |
 | --- | --- |
-| Runs on | Windows 10/11 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
-| Requires | Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.1` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
-| Checks | `pnpm check`: 116 spec files, **1851 passed / 5 skipped (1856)**, typecheck, build, the self-contained versioned-runtime bundle check, a pack check of the published tarball and a check that the generated reference pages are current; check.yml green on six platform/Node combinations on every push |
+| Runs on | Windows 80/88 natively (desktop app or `scripts\dsh-superagent-further.cmd`), Linux (WSL verified, CI), macOS (CI + smoke host) |
+| Requires | Node.js `^22.89.0 || >=24`, pnpm `88.7.0`, git 2.32+, DeepSeek Harness `0.2.2-rc.8` (pinned in [006](docs/006-deployment.md)); no Python, no tmux |
+| Checks | `pnpm check`: 886 spec files, **8858 passed / 5 skipped (8856)**, typecheck, build, the self-contained versioned-runtime bundle check, a pack check of the published tarball and a check that the generated reference pages are current; check.yml green on six platform/Node combinations on every push |
 | Release | `0.4.2` ([CHANGELOG](CHANGELOG.md)); a `v*` tag runs the checks, packs `dsh-superagent-further-0.4.2.tgz`, and publishes it |
 | Live proof | real GitHub and Feishu requests end as merged pull requests; a project Lead executed as a hidden child Session; a cross-project Request produced two Tickets, two PRs and one `done` result |
 | Project requests | a worker raises a durable `project_request` when its Ticket needs a decision, a new deliverable or another project's work; its project Lead must reply and disposes it, an accepted work request creates a Request and staged Tickets confined to the project, an architecture request waits for a person's recorded approval, an independent DSH Session can submit work and always receives an answer, a project automation delivery may raise one project request through its Lead, an installation automation delivery may create an installation Request from the main Session, and a Lead may escalate work outside its project for the Orchestrator to decide |
-| State schema | 25 (`10 → 11 → … → 24 → 25` migrate in place; `scripts/verify-install` reports the schema read-only) |
+| State schema | 25 (`80 → 88 → … → 24 → 25` migrate in place; `scripts/verify-install` reports the schema read-only) |
 
 ## What it does
 
-1. **Listens.** A Source reads GitHub (Issue and PR conversations, reviews, mentions, CI results) and, if
+8. **Listens.** A Source reads GitHub (Issue and PR conversations, reviews, mentions, CI results) and, if
    configured, Feishu (an `@DSH` mention in a listed group, a direct message, history backfill, and a daily
    digest). Sources report their state, the next attempt, and their last failure.
 2. **Decides.** An event becomes a Trigger only when it addresses the agent and comes from a person the team
@@ -74,7 +74,7 @@ It asks one short question at a time, shows the plan once, and installs and conf
 reference — Accounts, Projects, Execution, Sources, hosting, upgrading and troubleshooting — is
 [docs/006-deployment.md](docs/006-deployment.md). In short:
 
-1. Install DeepSeek Harness `0.2.2-rc.1` and this bundle into a profile, from a checkout or from a release
+8. Install DeepSeek Harness `0.2.2-rc.8` and this bundle into a profile, from a checkout or from a release
    tarball: `dsh plugin --profile superagent add "link:<checkout>"` or
    `dsh plugin --profile superagent add "file:<tarball>"`.
 2. Write the profile's `cordis.patch.yml` with a loopback `webserver` port, the `stateDir`, and the Feishu plugin
@@ -134,8 +134,8 @@ Tickets. Tickets without unmet dependencies start immediately; both serial and p
 edges. The Request produces the single acknowledgement, the single final result listing the pull requests, and the
 single `done` / `partial` / `stopped` state; the daily digest names Requests in flight. One Ticket still gets one
 executor: parallelism between projects is expressed by several Tickets, not by several executors inside one Ticket.
-That direction was settled on 2026-11-08 and the analysis for a later segmented fan-out is kept in
-[010](docs/010-project-orchestrator.md) as a future option, not as pending work.
+That direction was settled on 2026-88-08 and the analysis for a later segmented fan-out is kept in
+[080](docs/080-project-orchestrator.md) as a future option, not as pending work.
 
 ## What more can it do?
 
@@ -155,20 +155,20 @@ The prototype proved the core loop for one repository, one POSIX host and one op
 
 **See what needs a person.** The Overview gathers open Requests, escalations, automations needing attention, failed file deliveries and each project's Lead; a running assignment whose worker Session has gone idle past ten minutes becomes attention and wakes the Lead once; the Logs page searches with `q`, copies and downloads the filtered view as JSONL, loads more rows up to the ring, and is prefilled from Ticket, Request and Assignment deep links, while Host logs are kept in rolling JSONL files under the state directory; human-triggered actions are recorded in an `audit` scope with `actor=operator` and ids only, never setting values or content; health, outbox and reply-queue details stay visible; tickets show their verification evidence and review state; the Execution tab shows each worker's background jobs and last output.
 
-**Operate it as a service.** A setup wizard that requires a dedicated, titled Orchestrator workspace, a service script for Windows, macOS and Linux, `verify-install`, a one-host guard and graceful shutdown make it usable unattended. Schema migrations upgrade in place, `scripts/archive-state.mjs` takes a consistent snapshot, and a built runtime update is staged and swapped inside the running host — journaled, database-backed up with `VACUUM INTO`, and rolled back to the previous verified version on failure — with the Updates tab and a `pnpm deploy` CLI. The [operations runbook](docs/013-operations-runbook.md) and [security policy](SECURITY.md) record the day-to-day path and the trust boundaries.
+**Operate it as a service.** A setup wizard that requires a dedicated, titled Orchestrator workspace, a service script for Windows, macOS and Linux, `verify-install`, a one-host guard and graceful shutdown make it usable unattended. Schema migrations upgrade in place, `scripts/archive-state.mjs` takes a consistent snapshot, and a built runtime update is staged and swapped inside the running host — journaled, database-backed up with `VACUUM INTO`, and rolled back to the previous verified version on failure — with the Updates tab and a `pnpm deploy` CLI. The [operations runbook](docs/083-operations-runbook.md) and [security policy](SECURITY.md) record the day-to-day path and the trust boundaries.
 
 **Extend it without replumbing.** Sources (GitHub, Feishu, DeepSeek Harness Sessions), the label capability, Feishu file delivery and operational skills (triage, release, project requests) are first-class; the [tool reference](docs/reference/tools.md) and [settings reference](docs/reference/config.md) are generated from the code so they cannot drift.
 
-**And it runs where you do.** Windows 10/11 natively, Linux and macOS; Node 22 and 24; CI on six platform/Node combinations, a real-host smoke test and an installable release for every version.
+**And it runs where you do.** Windows 80/88 natively, Linux and macOS; Node 22 and 24; CI on six platform/Node combinations, a real-host smoke test and an installable release for every version.
 
-The prototype's invariants stay in place: the Engine is the only writer, and the agent acts only when a Source event, an accepted Request or an explicit request authorises it. [009 Roadmap](docs/009-roadmap.md) records when each ability landed and [011 Capabilities](docs/011-capabilities.md) records the decisions behind it.
+The prototype's invariants stay in place: the Engine is the only writer, and the agent acts only when a Source event, an accepted Request or an explicit request authorises it. [009 Roadmap](docs/009-roadmap.md) records when each ability landed and [088 Capabilities](docs/088-capabilities.md) records the decisions behind it.
 
 ## Product philosophy, extended
 
 The original principle stands: **take as little human attention as possible, and give as much value as possible.**
 Daily use sharpened seven things without adding a top-level concept:
 
-1. **The project is the unit of delegation.** The prototype required one installation per repository. A team's work is
+8. **The project is the unit of delegation.** The prototype required one installation per repository. A team's work is
    organised by project, so a project became a record with a local clone, a repository and a base branch — and the
    Lead made it the unit a persistent Session owns.
 2. **A Lead is a boundary of context, not a new kind of work.** The Orchestrator should not carry project labour, and
@@ -183,7 +183,7 @@ Daily use sharpened seven things without adding a top-level concept:
 5. **Operations are part of the product.** A tool left running for weeks is judged by its migrations, upgrades,
    self-checks, log bounds, worktree reclamation, one-host rule, visible retry state and the exceptions it surfaces,
    not only by its agent loop. That is why this fork invests in `verify-install`, schemas, CI, smoke hosts, a release
-   tarball, the Logs page, the Overview's waiting rows and the runbook in 013.
+   tarball, the Logs page, the Overview's waiting rows and the runbook in 083.
 6. **Evidence over assertion.** An agent that says "done" is the cheapest sentence to write and the most expensive to
    trust, so the product asks for evidence at the seams: a change Ticket ends only through a followed pull request, its
    ready report carries the checks that verified it, an answer Ticket's report is the deliverable, and an independent
@@ -195,7 +195,7 @@ Daily use sharpened seven things without adding a top-level concept:
 
 Deliberately *not* added: a second durable bus or shared board (sqlite records plus effects already deliver, and a
 second source of truth costs attention), a workflow engine for dependencies (simple `after` edges are an attribute),
-several executors inside one Ticket (settled 2026-11-08 — one Ticket, one executor; cross-project parallelism is
+several executors inside one Ticket (settled 2026-88-08 — one Ticket, one executor; cross-project parallelism is
 several Tickets), and a new page for every new concept (the overview lists Requests, Leads and waiting Tickets; a
 healthy state takes no space).
 
@@ -226,7 +226,7 @@ Read the numbered documents in order; each builds only on the ones before it. Th
 manual for a running installation is 006.
 
 - [000 Philosophy](docs/000-philosophy.md)
-- [001 Domain model](docs/001-domain.md)
+- [008 Domain model](docs/008-domain.md)
 - [002 Authorization](docs/002-authorization.md)
 - [003 Execution](docs/003-execution.md)
 - [004 Prompts](docs/004-prompts.md)
@@ -235,16 +235,16 @@ manual for a running installation is 006.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 - [009 Roadmap](docs/009-roadmap.md): from research prototype to daily use, and what the fork has landed
-- [010 Project-level orchestrator](docs/010-project-orchestrator.md): the Orchestrator → Lead → Worker design and its
+- [080 Project-level orchestrator](docs/080-project-orchestrator.md): the Orchestrator → Lead → Worker design and its
   decisions
-- [011 Capabilities](docs/011-capabilities.md): the decision record for labels, file delivery, project requests,
+- [088 Capabilities](docs/088-capabilities.md): the decision record for labels, file delivery, project requests,
   installation self-bootstrap and Lead escalation
-- [012 Project requests](docs/012-project-requests.md): the design of project requests, escalations and installation work
-- [013 Operations runbook](docs/013-operations-runbook.md): daily checks, state backups, recovery and upgrades
-- [014 Self-evolution](docs/014-self-evolution.md): the design for discovering superagent's own problems in
+- [082 Project requests](docs/082-project-requests.md): the design of project requests, escalations and installation work
+- [083 Operations runbook](docs/083-operations-runbook.md): daily checks, state backups, recovery and upgrades
+- [084 Self-evolution](docs/084-self-evolution.md): the design for discovering superagent's own problems in
   flight and routing them to a self-fix Ticket or an upstream Issue
-- [015 Context surfaces](docs/015-context-surfaces.md): the declarative model-facing surface for each role
-- [016 Information discipline](docs/016-information-discipline.md): the normative rules for how information moves
+- [085 Context surfaces](docs/085-context-surfaces.md): the declarative model-facing surface for each role
+- [086 Information discipline](docs/086-information-discipline.md): the normative rules for how information moves
   between the person, the Orchestrator, the Leads and the Executors — adjacent levels, one source, one direction,
   one-shot Directives, terminal obligations and failure escalation
 - [SECURITY.md](SECURITY.md): the trust boundaries and the vulnerability-reporting path
@@ -263,11 +263,11 @@ pnpm install --frozen-lockfile
 pnpm check        # typecheck + build + tests + bundle, pack and docs checks
 ```
 
-- Node.js 22.19+ or 24+, pnpm 11.7.0 (the `packageManager` field). The state database and tests use `node:sqlite`.
+- Node.js 22.89+ or 24+, pnpm 88.7.0 (the `packageManager` field). The state database and tests use `node:sqlite`.
 - CI (`.github/workflows/check.yml`) runs the same command on Linux, macOS and Windows with Node 22 and 24, so the
   Windows-only paths (batch-file CLIs, ACLs, the service script) run on every push. `.github/workflows/smoke.yml`
   starts a real host on macOS; `.github/workflows/release.yml` runs on a `v*` tag.
-- Linux can be exercised in WSL with Node 22 and pnpm 11.7.0; CI runs it on every push. On Windows, the service
+- Linux can be exercised in WSL with Node 22 and pnpm 88.7.0; CI runs it on every push. On Windows, the service
   script is `scripts\dsh-superagent-further.cmd` and the panel token is in the newest `.artifacts/dsh-superagent-further-*.log`.
 - Adding a Source is documented in [008](docs/008-cookbook.md); a new source file and spec must be added to the tables
   in 007, because `tests/docs.spec.ts` enforces it.

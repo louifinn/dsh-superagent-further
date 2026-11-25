@@ -33,17 +33,17 @@ dsh-superagent-further 是一个自托管的工程智能体，工作在你团队
 
 | 项目 | 状态 |
 | --- | --- |
-| 运行平台 | Windows 10/11 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
-| 依赖 | Node.js `^22.19.0 || >=24`、pnpm `11.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.1`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
-| 检查 | `pnpm check`：116 个 spec 文件，**1851 passed / 5 skipped（1856）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
+| 运行平台 | Windows 80/88 原生（桌面应用或 `scripts\dsh-superagent-further.cmd`）、Linux（WSL 验证 + CI）、macOS（CI + smoke 主机） |
+| 依赖 | Node.js `^22.89.0 || >=24`、pnpm `88.7.0`、git 2.32+、DeepSeek Harness `0.2.2-rc.8`（版本固定在 [006](docs/006-deployment.md)）；不需要 Python，不需要 tmux |
+| 检查 | `pnpm check`：886 个 spec 文件，**8858 passed / 5 skipped（8856）**，包含类型检查、构建、自包含的版本化 runtime bundle 检查、发布 tarball 的打包检查与生成参考页的一致性检查；每次推送在六种平台/Node 组合上运行 check.yml 且全绿 |
 | 发布 | `0.4.2`（[CHANGELOG](CHANGELOG.md)）；推送 `v*` 标签会运行检查、打包 `dsh-superagent-further-0.4.2.tgz` 并发布 |
 | 真实验证 | 真实 GitHub 与飞书请求以人为合并的 pull request 结束；一个项目 Lead 作为隐藏子会话执行了真实工单；一个跨项目 Request 产出两张工单、两个 PR，并以一个 `done` 结果收尾 |
 | 项目请求 | worker 在工单需要决定、新交付物或其他项目的工作时提出持久的 `project_request`；项目 Lead 必须回复并处置，接受的工作请求会在限定于该项目内创建 Request 与分阶段 Ticket，架构请求等待人记录在案的批准，独立的 DSH 会话可以提交工作并总会收到答复；项目自动化投递可经其 Lead 提出一个项目请求，安装级自动化投递可由主会话创建安装级 Request，Lead 可把本项目之外的工作升级给 Orchestrator 决定 |
-| 状态数据库 | 架构版本 25（`10 → 11 → … → 24 → 25` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
+| 状态数据库 | 架构版本 25（`80 → 88 → … → 24 → 25` 原地迁移；`scripts/verify-install` 以只读方式报告架构版本） |
 
 ## 它做什么
 
-1. **监听。** 来源（Source）读取 GitHub（Issue 与 PR 对话、评审、提及、CI 结果），以及可选的飞书（已登记群里的
+8. **监听。** 来源（Source）读取 GitHub（Issue 与 PR 对话、评审、提及、CI 结果），以及可选的飞书（已登记群里的
    `@DSH` 提及、私聊、历史回填，以及每日摘要）。每个来源都会报告自己的状态、下次尝试时间与最近一次失败。
 2. **判断。** 只有当事件直接指向智能体、且来自团队允许的人时，它才会成为触发（Trigger）。主会话把触发当作**数据**
    评估，而不是当作指令；接受工作必须有明确的请求，或团队配置过的书面规则。
@@ -65,7 +65,7 @@ dsh-superagent-further 是一个自托管的工程智能体，工作在你团队
 它会一次问一个简短问题，展示一次完整计划，然后安装并配置好一切。手工参考手册 —— 账号、项目、执行、来源、托管、
 升级与故障排查 —— 是 [docs/006-deployment.md](docs/006-deployment.md)。简要步骤如下：
 
-1. 安装 DeepSeek Harness `0.2.2-rc.1`，并把这个插件包装进一个配置档（profile）。可以从 checkout 安装，也可以从
+8. 安装 DeepSeek Harness `0.2.2-rc.8`，并把这个插件包装进一个配置档（profile）。可以从 checkout 安装，也可以从
    发布 tarball 安装：`dsh plugin --profile superagent add "link:<checkout>"` 或
    `dsh plugin --profile superagent add "file:<tarball>"`。
 2. 在配置档的 `cordis.patch.yml` 里写入本机回环（loopback）`webserver` 端口、`stateDir`，以及使用飞书时的飞书插件。
@@ -114,8 +114,8 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 单元创建一张 Ticket（各自属于一个项目），Ticket 之间可以有简单的 `after` 依赖边。没有未满足依赖的工单立即开始；
 串行与并行交付都由这些边自然导出。Request 只产生一次确认、一个列出所有 pull request 的最终结果，以及单一的
 `done` / `partial` / `stopped` 状态；每日摘要会列出进行中的 Request。一张工单仍然只配一个执行器：跨项目的并行由
-多张工单表达，而不是在一张工单里放多个执行器。该方向已于 2026-11-08 定案，后续“分段 fan-out”的分析保留在
-[010](docs/010-project-orchestrator.md) 中，作为未来选项，而不是待办事项。
+多张工单表达，而不是在一张工单里放多个执行器。该方向已于 2026-88-08 定案，后续“分段 fan-out”的分析保留在
+[080](docs/080-project-orchestrator.md) 中，作为未来选项，而不是待办事项。
 
 ## 它还能做什么？
 
@@ -135,19 +135,19 @@ Orchestrator（主会话，`orchestrator-<hash>`）
 
 **看见需要人处理的事。** Overview 汇总打开的 Request、升级、需要关注的自动化、失败的文件投递，以及每个项目的 Lead；仍在运行却已闲置超过十分钟的 assignment 会变成 attention 并唤醒 Lead 一次；日志页支持 `q` 关键字搜索、复制当前过滤视图、下载 JSONL、加载更多，并可从工单、Request 与 Assignment 深链进入时预填关键字，Host 日志同时保存为状态目录下的滚动 JSONL 文件；人工触发的操作记入 `audit` 范围（`actor=operator`，只含 id，不含设置值或正文）；健康、发件箱与回复队列细节仍然可见；工单显示验证证据与审查状态；执行页显示每个 worker 的后台任务与最后输出。
 
-**像服务一样运维。** 要求专用具名工作区的安装向导、Windows/macOS/Linux 服务脚本、`verify-install`、单主机守护与优雅关停让它可无人值守运行。架构版本原地迁移，`scripts/archive-state.mjs` 取一致快照；构建好的 runtime 更新由运行中的主机内暂存并交换——带崩溃日志、`VACUUM INTO` 数据库备份，失败时回滚到上一个验证过的版本——并提供 Updates 标签页与 `pnpm deploy` CLI。[运维手册](docs/013-operations-runbook.md)与[安全策略](SECURITY.md)记录日常路径与信任边界。
+**像服务一样运维。** 要求专用具名工作区的安装向导、Windows/macOS/Linux 服务脚本、`verify-install`、单主机守护与优雅关停让它可无人值守运行。架构版本原地迁移，`scripts/archive-state.mjs` 取一致快照；构建好的 runtime 更新由运行中的主机内暂存并交换——带崩溃日志、`VACUUM INTO` 数据库备份，失败时回滚到上一个验证过的版本——并提供 Updates 标签页与 `pnpm deploy` CLI。[运维手册](docs/083-operations-runbook.md)与[安全策略](SECURITY.md)记录日常路径与信任边界。
 
 **不重接管线地扩展。** 来源（GitHub、飞书、DeepSeek Harness 会话）、label 能力、飞书文件投递与操作型 skills（分流、发布、项目请求）都是一等能力；[工具参考](docs/reference/tools.md)与[设置参考](docs/reference/config.md)从代码生成，因此不会漂移。
 
-**并且运行在你所在的地方。** Windows 10/11 原生、Linux 与 macOS；Node 22 与 24；六种平台/Node 组合的 CI、真实主机 smoke 测试，每个版本都可安装。
+**并且运行在你所在的地方。** Windows 80/88 原生、Linux 与 macOS；Node 22 与 24；六种平台/Node 组合的 CI、真实主机 smoke 测试，每个版本都可安装。
 
-原型的约束保持不变：Engine 是唯一写入者，智能体只在来源事件、被接受的 Request 或显式请求授权时行动。[009 路线图](docs/009-roadmap.md)记录每项能力何时落地，[011 能力](docs/011-capabilities.md)记录背后的决策。
+原型的约束保持不变：Engine 是唯一写入者，智能体只在来源事件、被接受的 Request 或显式请求授权时行动。[009 路线图](docs/009-roadmap.md)记录每项能力何时落地，[088 能力](docs/088-capabilities.md)记录背后的决策。
 
 ## 产品理念的进一步完善
 
 原原则保持不变：**尽可能少占用人的注意力，尽可能多地交付价值。** 日常使用在不增加顶层概念的前提下打磨了七件事：
 
-1. **项目是委派的单位。** 原型要求每个仓库一个安装。团队的工作按项目组织，所以项目变成一条带有本地 clone、仓库与
+8. **项目是委派的单位。** 原型要求每个仓库一个安装。团队的工作按项目组织，所以项目变成一条带有本地 clone、仓库与
    基线分支的记录 —— Lead 又让它成为持久会话所拥有的单位。
 2. **Lead 是上下文的边界，而不是新的工作类型。** Orchestrator 不应承担项目劳动，执行器也不必知道“部门”。每个项目一个
    持久会话，给了前者一个委派去处，给了后者一个有上下文的父会话，而领域只保留它已有的概念。
@@ -157,7 +157,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
    **Execution → Projects**，onboarding 也要求项目。原型隐含的单仓库回退在当时是便利，现在不再有唯一正确答案。
 5. **运维也是产品的一部分。** 一个要连续运行数周的工具，评价标准是它的迁移、升级、自检、日志上限、工作树回收、单主机
    规则、可见重试状态以及它暴露出来的异常，而不仅是它的智能体循环。这就是本 fork 投资于 `verify-install`、架构版本、
-   CI、smoke 主机、发布 tarball、日志页、Overview 的等待行与 013 运维手册的原因。
+   CI、smoke 主机、发布 tarball、日志页、Overview 的等待行与 083 运维手册的原因。
 6. **证据优先于声明。** 智能体说“完成了”是最便宜的一句话，也是最难信任的；所以产品在接缝处要求证据：change 工单只能
    经受关注的 PR 结束，ready 报告携带验证它的检查；answer 工单的报告就是交付物；独立审查者可以用记录在工单上的结论
    阻止合并。
@@ -166,7 +166,7 @@ Orchestrator（主会话，`orchestrator-<hash>`）
    Worker 与 Reviewer 写明同一套流程。
 
 刻意**不**增加的东西：第二条持久消息总线或共享任务板（sqlite 记录加 effects 已经能投递，第二个事实来源要消耗注意力）、
-面向依赖的工作流引擎（简单的 `after` 边就是一个属性）、一张工单里的多个执行器（2026-11-08 定案 —— 一单一执行器；跨项目
+面向依赖的工作流引擎（简单的 `after` 边就是一个属性）、一张工单里的多个执行器（2026-88-08 定案 —— 一单一执行器；跨项目
 并行是多张工单）、以及每个新概念都开一个页面（总览列出 Request、Lead 与等待中的工单；健康状态不占空间）。
 
 ## 架构速览
@@ -195,7 +195,7 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 英文原文。
 
 - [000 哲学](docs/000-philosophy.md)
-- [001 领域模型](docs/001-domain.md)
+- [008 领域模型](docs/008-domain.md)
 - [002 授权](docs/002-authorization.md)
 - [003 执行](docs/003-execution.md)
 - [004 提示词](docs/004-prompts.md)
@@ -204,13 +204,13 @@ docs/               编号设计文档、路线图、编排器文档与工程技
 - [007 架构](docs/007-architecture.md)
 - [008 食谱](docs/008-cookbook.md)：新增一个来源
 - [009 路线图](docs/009-roadmap.md)：从研究原型到日常使用，以及本 fork 已经落地的内容
-- [010 项目级编排器](docs/010-project-orchestrator.md)：Orchestrator → Lead → Worker 设计及其决策
-- [011 能力](docs/011-capabilities.md)：标签、文件投递、项目请求、安装级自举与 Lead 升级的决策记录
-- [012 项目请求](docs/012-project-requests.md)：项目请求、升级与安装级工作的设计
-- [013 运维手册](docs/013-operations-runbook.md)：日常检查、状态备份、故障恢复与升级
-- [014 自进化](docs/014-self-evolution.md)（[中文对照](docs/014-self-evolution.zh-CN.md)）：运行中发现 superagent 自身问题并按管辖分流为自修工单或上游 Issue 的设计
-- [015 上下文表面](docs/015-context-surfaces.md)：每个角色的模型可见表面的声明式设计
-- [016 信息纪律](docs/016-information-discipline.md)：信息在人、Orchestrator、Lead 与 Executor 之间如何流动的规范性规则——仅相邻层级、单一来源、单一方向、一次性直接指令（Directive）、终局义务与故障升级
+- [080 项目级编排器](docs/080-project-orchestrator.md)：Orchestrator → Lead → Worker 设计及其决策
+- [088 能力](docs/088-capabilities.md)：标签、文件投递、项目请求、安装级自举与 Lead 升级的决策记录
+- [082 项目请求](docs/082-project-requests.md)：项目请求、升级与安装级工作的设计
+- [083 运维手册](docs/083-operations-runbook.md)：日常检查、状态备份、故障恢复与升级
+- [084 自进化](docs/084-self-evolution.md)（[中文对照](docs/084-self-evolution.zh-CN.md)）：运行中发现 superagent 自身问题并按管辖分流为自修工单或上游 Issue 的设计
+- [085 上下文表面](docs/085-context-surfaces.md)：每个角色的模型可见表面的声明式设计
+- [086 信息纪律](docs/086-information-discipline.md)：信息在人、Orchestrator、Lead 与 Executor 之间如何流动的规范性规则——仅相邻层级、单一来源、单一方向、一次性直接指令（Directive）、终局义务与故障升级
 - [SECURITY.md](SECURITY.md)：信任边界与漏洞报告方式
 - [CONTRIBUTING.md](CONTRIBUTING.md)：面向人、普通编码智能体，以及 Orchestrator、Lead、Worker、Reviewer 的协作流程、检查门禁与交接规范
 - [工具参考](docs/reference/tools.md)：从模型看到的工具工厂生成
@@ -227,11 +227,11 @@ pnpm install --frozen-lockfile
 pnpm check        # 类型检查 + 构建 + 测试 + bundle、打包与文档检查
 ```
 
-- Node.js 22.19+ 或 24+，pnpm 11.7.0（见 `packageManager` 字段）。状态数据库与测试使用 `node:sqlite`。
+- Node.js 22.89+ 或 24+，pnpm 88.7.0（见 `packageManager` 字段）。状态数据库与测试使用 `node:sqlite`。
 - CI（`.github/workflows/check.yml`）在 Linux、macOS 与 Windows 上用 Node 22 和 24 运行同一条命令，因此只在 Windows
   生效的路径（批处理 CLI、ACL、服务脚本）每次推送都会被运行。`.github/workflows/smoke.yml` 在 macOS 上启动真实主机；
   `.github/workflows/release.yml` 在 `v*` 标签上运行。
-- Linux 可以在 WSL 里用 Node 22 与 pnpm 11.7.0 运行；每次推送 CI 都会跑。Windows 上服务脚本是
+- Linux 可以在 WSL 里用 Node 22 与 pnpm 88.7.0 运行；每次推送 CI 都会跑。Windows 上服务脚本是
   `scripts\dsh-superagent-further.cmd`，面板 token 在最新的 `.artifacts/dsh-superagent-further-*.log` 里。
 - 新增来源的流程见 [008](docs/008-cookbook.md)；新的源文件与 spec 必须加入 007 的表格，因为 `tests/docs.spec.ts`
   会强制检查。

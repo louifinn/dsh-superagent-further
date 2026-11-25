@@ -1,0 +1,290 @@
+[
+  {
+    "name": "orchestrator_read",
+    "description": "Read one page of a resource of this ticket that the resource parameter lists. Follow next_offset, and next_resource where a page names one.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The resource, one of: thread/<key>: one thread: its label and link, its tickets and latest decisions, and its triggers, newest first; ticket/<id>: a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first; ticket/<id>/assignment: its assignment text; ticket/<id>/assignments: its assignments, newest first, with the start of each report; ticket/<id>/inputs: its inputs, newest first; ticket/<id>/result: its latest report; ticket/<id>/report/<id>: the report of one of its assignments; ticket/<id>/transcript: its Executor Session's messages, newest first; ticket/<id>/message/<n>: one message of that transcript; ticket/<id>/input/<id>: one input it was delivered; trigger/<id>: a trigger's text, where it went, the message it replies to and the messages around it on its thread; prompts/<revision>: one prompt version by number, or current, the one the Session works under; feishu/<trigger-id>/…: a Feishu original, as the dsh-superagent-further-feishu skill describes; github/…: a GitHub original, as the dsh-superagent-further-github skill describes."
+        },
+        "offset": {
+          "default": 0,
+          "description": "Copy next_offset from the previous page; it counts characters of a text and items of a list.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "description": "Characters of a text, 4000 by default and 8000 at most, or items of a list, 20 by default and 50 at most.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8000
+        }
+      },
+      "required": [
+        "resource",
+        "offset"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_ack",
+    "description": "Acknowledge one original human request before substantial work, as the replies section says; it posts as a reply to that message.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "trigger_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "At most 100 words; Markdown is supported."
+        }
+      },
+      "required": [
+        "trigger_id",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_thread_unrelated",
+    "description": "Stop following an attached thread that is not about this ticket, as the work section says; its own threads cannot be dropped.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "thread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The thread key, which trigger/<id> of one of its messages shows as thread, such as feishu:<chat>:<root> or github:<number>."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One sentence on why the thread is not about this ticket."
+        }
+      },
+      "required": [
+        "thread",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_thread_follow",
+    "description": "Follow a related thread, such as an Issue or another PR, for context only.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "thread": {
+          "type": "string",
+          "description": "Thread key, such as github:<number>."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "How it relates, in one sentence."
+        }
+      },
+      "required": [
+        "thread",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_trigger_handback",
+    "description": "Hand back a message that asks for work beyond this ticket or for another one, for a fresh assessment; once per message. queued is false while another ticket still decides it, and for a message that was never this ticket's to decide, such as a bot's, which is assessed without it.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "trigger_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One sentence on what it asks for beyond this ticket."
+        }
+      },
+      "required": [
+        "trigger_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "request_create",
+    "description": "Raise a project request when this ticket cannot finish without a decision, a new deliverable, or work in another project of this project. The project Lead answers it; one open request per title exists for this ticket, so raising a duplicate returns it.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "One line naming what the Lead must decide."
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "description": "What is needed, in enough detail for the Lead to decide and for a worker to act on it."
+        },
+        "kind": {
+          "description": "work for deliverable project work, architecture for a change of approach or its approval.",
+          "type": "string",
+          "enum": [
+            "work",
+            "architecture"
+          ]
+        },
+        "parent": {
+          "description": "An open project request of this project this one refines, so the Lead sees it on that request and its reply.",
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "description": "The facts that justify it, such as an error, a link, or what was tried.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "title",
+        "instruction"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_report",
+    "description": "Report progress, ready, blocked, failed or dropped, as the work and handoff sections say.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "progress",
+            "ready",
+            "blocked",
+            "failed",
+            "dropped"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "human_action": {
+          "description": "One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question_for_trigger_id": {
+          "description": "With human_action: the human message that raised the question, which is asked where that person wrote.",
+          "type": "string"
+        },
+        "pr_number": {
+          "description": "The ticket's PR: its source PR, or one by agent-bot from a branch named after this ticket (DSH_SUPERAGENT_NAME).",
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reply_to_trigger_id": {
+          "description": "The explicit human question this report answers; never for ordinary progress. An answer ticket's ready report already answers the question that started it.",
+          "type": "string"
+        },
+        "requests": {
+          "description": "The project requests this ticket raised that this report answers or leaves behind; a ready, blocked, failed or dropped report must name every open one it still leaves unanswered, or the report is refused.",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "checks": {
+          "description": "The verifications this report rests on; list only checks you actually ran.",
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "What was verified, such as \"pnpm check\" or \"reproduced the crash\"."
+              },
+              "command": {
+                "description": "The command that produced the evidence.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "exit_code": {
+                "description": "The command's exit code.",
+                "type": "integer",
+                "minimum": -1000,
+                "maximum": 1000
+              },
+              "evidence": {
+                "description": "A short line of evidence, such as the key output or the test count.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "state",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

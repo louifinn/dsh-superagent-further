@@ -515,4 +515,24 @@ it('lists in the main Session\'s Policy section exactly the enabled rules, as th
   // The drive disabled every rule but copy and changed the copy rule's instruction.
   expect(listed).toEqual([expect.stringMatching(/^- .* \(copy\): .*Keep the wording short\.$/)])
 })
+
+/**
+ * Golden baselines for issue #6, step 1 ([015](../docs/015-context-surfaces.md), migration order): the composed prompts,
+ * the registered tool JSON and the resource grammar stay byte-for-byte identical through the context-surface refactor, so
+ * every later step can prove it changed no model-facing text. Machine-dependent text (the runtime-generated section) is
+ * already excluded from a role's composed prompt; line endings are normalised so all six CI combinations compare equal.
+ */
+it('keeps the composed prompts, tool JSON and resource grammar byte-for-byte stable', async () => {
+  const golden = (text: string) => text.replace(/\r\n/g, '\n')
+  const parts = (role: Role) => promptParts(host.runtime.prompts.current().config, role)
+    .map(part => `### ${part.name}\n\n${part.text}`).join('\n\n')
+  const tools = (role: Role) => JSON.stringify([...toolsOf(role).values()]
+    .map(({ name, description, parameters }) => ({ name, description, parameters })), null, 2)
+  const resources = JSON.stringify(RESOURCES, null, 2)
+  await expect(golden(parts('orchestrator'))).toMatchFileSnapshot('./fixtures/context-golden/orchestrator-prompt.md')
+  await expect(golden(parts('worker'))).toMatchFileSnapshot('./fixtures/context-golden/worker-prompt.md')
+  await expect(golden(tools('orchestrator'))).toMatchFileSnapshot('./fixtures/context-golden/orchestrator-tools.json')
+  await expect(golden(tools('worker'))).toMatchFileSnapshot('./fixtures/context-golden/worker-tools.json')
+  await expect(golden(resources)).toMatchFileSnapshot('./fixtures/context-golden/resources.json')
+})
 })
