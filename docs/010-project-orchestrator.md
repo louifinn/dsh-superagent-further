@@ -173,13 +173,15 @@ orchestrator-<hash>          visible  sources, Eval, Policy, tickets, replies
 When the GitHub Source observes that a followed pull request merged or closed, the Ticket ends in the core (unless a
 reviewer blocked it). The Orchestrator then tells the project Lead through the durable `lead_message` channel
 (`LeadDispatch.pullEnded`): the message names the pull request, the ended Ticket and the worker Session(s) to notify, and
-the Lead relays it with `lead_notify_worker`, one call per Session. The same path carries every other ending — a
-person's stop, a panel stop, an Eval stop, a dropped Ticket, a completed answer and a failed Ticket: the Lead is told,
+the Lead relays it with `lead_notify_worker`, one call per Session. `LeadDispatch.ended` carries every other ending —
+a person's stop, a panel stop, an Eval stop, a dropped Ticket, a completed answer and a failed Ticket: the Lead is told,
 and it decides how to tell the workers whose work it ends. A merged pull request is the common case, not the only case.
 A Ticket that belongs to no registered project cannot run: acceptance refuses it and onboarding requires a project, so
 there is no project-less execution path. An installation-level Request still names a registered project for every
-delivery unit, so every Ticket has a Lead. The notice is written once per Ticket. This keeps the end of a change visible to the people
-who did the work without waking a worker on its own: a worker Session only runs when its Lead sends it something.
+delivery unit, so every Ticket has a Lead. The notice is written once per Ticket. A Ticket that belongs to a Request is
+not also noticed on its own Channel: the Request's single result notice says it once (issue #17). This keeps the end of a
+change visible to the people who did the work without waking a worker on its own: a worker Session only runs when its
+Lead sends it something.
 
 ## Data model changes
 

@@ -299,12 +299,18 @@ export class Runtime implements SourceHost, RuntimeHandle {
           const followed = !this.quiet && (event.type === 'trigger.received' || event.type === 'ticket.resumed' || event.type === 'trigger.followup')
           const followup = followed ? followupNotice(store, sources, event.data.triggerId) : undefined
           if (followup) sessions.relay(followup.id, followup.text)
-          // Report a Request whose Tickets all ended once, instead of once per Ticket.
+          // Report a Request whose Tickets all ended once, instead of once per Ticket. A Request that started a project
+          // request is reported once by that project request's aggregate (docs/012 D6), so its own result notice would
+          // repeat the same facts (issue #17).
           if (event.type === 'request.ended') {
             const request = store.requests.get(event.data.requestId)
-            const first = request ? store.tickets.get(request.ticketIds[0] ?? '') : undefined
-            const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
-            if (request) for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+            const rootOfProjectRequest = request !== undefined && store.projectRequests.list().some(item =>
+              item.root?.request_id === request.id && item.root.project_request_id === undefined)
+            if (request && !rootOfProjectRequest) {
+              const first = store.tickets.get(request.ticketIds[0] ?? '')
+              const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
+              for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+            }
           }
           // Always answer a Session submission: an independent DSH Session sees every outcome, including the ones that
           // start no work, and an accept promises the final result in the same Session (docs/012 D9). Filtered triggers
@@ -341,22 +347,22 @@ export class Runtime implements SourceHost, RuntimeHandle {
             const trigger = store.triggers.get(event.data.triggerId)
             if (trigger?.human) runtime.routeApprovalReply(trigger)
           }
-          // Notify the ticket's conversations whenever it ends via a pull request.
+          // Notice a Ticket ending in a way no Request reports: a Ticket delivered by a Request is reported once, by the
+          // Request's result notice below, so its own Channel is not told again (issue #17: one fact, one notice).
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
           if (ended && setup.configured()) {
             const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
             const requestRecord = ended.requestId ? store.requests.get(ended.requestId) : undefined
-            // A Request delivered by several Tickets reports once, when the Request ends (see the request.ended branch below).
-            if (!requestRecord || requestRecord.ticketIds.length === 1) {
+            if (!requestRecord) {
               for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
-              // Relay the end to the project Lead, which tells the Ticket's worker Sessions (docs/010). A project-less
-              // installation Ticket has no Lead to tell.
-              const receipt = pullEndReceipt(ended, setup.deployment.repository)
-              if (receipt) void sessions.lead.pullEnded(ended, receipt).catch(error => {
-                this.log.warn('dsh-superagent-further could not relay a pull request ending to the Lead of project %s: %s',
-                  ended.project ?? '', String(error))
-              })
             }
+            // Relay every ending to the project Lead, which tells the Ticket's worker Sessions (docs/010, issue #18). A
+            // project-less installation Ticket has no Lead to tell.
+            const receipt = pullEndReceipt(ended, setup.deployment.repository)
+            void (receipt ? sessions.lead.pullEnded(ended, receipt) : sessions.lead.ended(ended)).catch(error => {
+              this.log.warn('dsh-superagent-further could not relay the ending of Ticket %s to the Lead of project %s: %s',
+                ended.id, ended.project ?? '', String(error))
+            })
             // A worktree past its retention no longer needs to exist; a fresh one is kept so a person can inspect it.
             void runtime.reclaimFinishedWorktrees()
           }

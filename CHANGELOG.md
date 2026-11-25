@@ -19,6 +19,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- An ending is one fact with one notification. A Ticket delivered by a Request no longer sends its own
+  pull-request notice in addition to the Request's result notice, and a Request that started a project
+  request leaves the single aggregate report to the project request (issue #17).
+- Every ending — a ready report, a person's stop, a dropped report, a failure or an Eval stop, not only
+  a merged pull request — now reaches the project Lead. `LeadDispatch.ended` writes the durable notice and
+  asks the Lead to relay it to the Ticket's worker Sessions with `lead_notify_worker` (issue #18).
 - A project can no longer lose its Lead. `Sessions.ensure` unarchives an archived Lead before returning
   it, `Runtime.initialize` gives every project with an open Ticket a Lead Session at startup, and saving
   the Execution settings refuses to remove a project that still has open Tickets. A Workspace switch

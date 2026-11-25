@@ -459,6 +459,10 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
     user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/x', repo: { full_name: 'acme/widgets' } } }
   // Memory is off by default, so the operator opts in before the ending is remembered deterministically.
   runtime.store.saveSettings({ ...runtime.store.settings(), memory: { ...runtime.store.settings().memory, enabled: true } })
+  // Capture the notices this ending sends, so the test can count what the conversation hears.
+  const sent: Parameters<typeof runtime.outbox.send>[0][] = []
+  const realSend = runtime.outbox.send.bind(runtime.outbox)
+  const send = vi.spyOn(runtime.outbox, 'send').mockImplementation(message => { sent.push(message); realSend(message) })
   await observePull(runtime.context(githubKind), merged)
   const ended = runtime.store.tickets.get(ticket.id)!
   expect(ended).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'merged' }) })
@@ -503,8 +507,32 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
   // The merge ends the Ticket, and a merge end preempts the worker's turn; only a report end retires it gracefully.
   expect(agents.get(sessionId)!.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
-  const notice = runtime.store.receipts.waiting().find(item => item.kind === 'notice')
-  expect(notice ?? runtime.store.replyStatus(key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
+  // Issue #17: one fact, one notice. The single-ticket Request's result notice replaces the per-ticket pull request
+  // notice, so the Feishu conversation hears the ending exactly once, when its Request ends.
+  const terminals = sent.filter(message => message.kind === 'notice' && message.channel.address.chatId === CHAT)
+  expect(terminals).toHaveLength(1)
+  expect(terminals[0]!.text).toContain('#42')
+  send.mockRestore()
+})
+
+it('tells the project Lead when a ticket ends without a pull request', async () => {
+  const { ticket, sessionId } = await acceptedTicket(feishu('7', '@bot 给个结论'), 'answer')
+  deliveries.mockClear()
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'answered' })
+  expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
+  // Issue #18: every ending reaches the Lead, not only a merged pull request. The prompt is sent before the message is
+  // marked delivered, so wait for the delivery mark rather than for the message alone.
+  const notice = await vi.waitFor(() => {
+    const found = runtime.store.leads.list('default', 50)
+      .find(message => message.requestId === `ticket-end:${ticket.id}` && message.deliveredAt !== undefined)
+    expect(found).toBeDefined()
+    return found!
+  })
+  expect(notice).toMatchObject({ kind: 'notice', from: 'orchestrator', to: 'lead', ticketId: ticket.id })
+  expect(notice.body).toContain('ended as completed')
+  expect(notice.body).toContain(`worker-${ticket.id}`)
+  expect(notice.body).toContain('lead_notify_worker')
+  expect(notice.deliveredAt).toBeDefined()
 })
 
 it('binds a PR the worker reports from the Ticket\'s own project repository', async () => {
@@ -1681,14 +1709,21 @@ it('tells the conversation that the PR merged when work a restart recovered ends
   // The PR merged before the restart; the recovered work goes on, and nothing is said yet.
   const merged = { number: 42, state: 'closed', merged: true, merged_at: before.assignments[0]!.createdAt, html_url: 'https://github.com/acme/widgets/pull/42',
     user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/x', repo: { full_name: 'acme/widgets' } } }
+  // Capture the notices this ending sends, so the test can count what the conversation hears.
+  const sent: Parameters<typeof runtime.outbox.send>[0][] = []
+  const realSend = runtime.outbox.send.bind(runtime.outbox)
+  const send = vi.spyOn(runtime.outbox, 'send').mockImplementation(message => { sent.push(message); realSend(message) })
   await observePull(runtime.context(githubKind), merged)
   expect(runtime.store.tickets.get(ticket.id)).not.toHaveProperty('ended')
-  const id = key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged')
-  expect(runtime.store.replyStatus(id)).toBeUndefined()
+  // Issue #17: the Request reports its single ending, so nothing is said when the pull request merges before the work.
+  expect(sent.filter(message => message.kind === 'notice')).toHaveLength(0)
   // Its ready report ends the ticket with the PR, and the conversation hears of the merge once.
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Recovered and verified' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'merged' })
-  expect(runtime.store.replyStatus(id)).toBeDefined()
+  const terminals = sent.filter(message => message.kind === 'notice' && message.channel.address.chatId === CHAT)
+  expect(terminals).toHaveLength(1)
+  expect(terminals[0]!.text).toContain('#42')
+  send.mockRestore()
   // The report that ended the ticket was the worker's own: its turn is not cancelled inside that tool call.
   expect(agents.get(sessionId)!.cancel).not.toHaveBeenCalled()
 })
@@ -1982,14 +2017,19 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
   await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'completed' })
+  // Issue #18 reaches the Lead for this ending too; once its notice is delivered the panel row has nothing waiting.
+  await vi.waitFor(() => {
+    expect(runtime.store.leads.getByRequest('lead', `ticket-end:${ticket.id}`)?.deliveredAt).toBeDefined()
+  })
   // The panel's Lead row names the Session and the project it serves.
   expect(runtime.leadOverview()).toEqual([{ project: 'app', name: 'App', session: 'lead-app', status: expect.any(String),
     running: 0, waiting: 0, projectRequests: { pending: 0, automated: 0 } }])
-  // The launch records the dispatch to the Lead and marks it delivered once the child runs.
+  // The launch records the dispatch to the Lead and marks it delivered once the child runs; the ending notice follows.
   const messages = runtime.store.leads.list('app')
-  expect(messages).toHaveLength(1)
-  expect(messages[0]!).toMatchObject({ kind: 'assignment', from: 'orchestrator', to: 'lead', ticketId: ticket.id })
-  expect(messages[0]!.deliveredAt).toBeDefined()
+  expect(messages.map(message => message.kind).sort()).toEqual(['assignment', 'notice'])
+  const assignment = messages.find(message => message.kind === 'assignment')!
+  expect(assignment).toMatchObject({ from: 'orchestrator', to: 'lead', ticketId: ticket.id })
+  expect(assignment.deliveredAt).toBeDefined()
 })
 
 it('splits an accept into one Ticket per project, and starts the second once the first ends', async () => {

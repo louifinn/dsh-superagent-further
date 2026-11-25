@@ -119,6 +119,38 @@ export class LeadDispatch {
   }
 
   /**
+   * Tells the project's Lead that a Ticket ended without a followed pull request ending it (a ready report, a person's
+   * stop, an Eval or a dropped report), so the Lead relays the end to the Ticket's worker Sessions with
+   * `lead_notify_worker` (docs/010). Durable like every Lead prompt: the message is written before its prompt, and a
+   * failed prompt is retried by `reconcile` at the next startup. One notice per Ticket, because the request id is derived
+   * from the Ticket and an existing Lead message for it deduplicates the ending.
+   */
+  async ended(ticket: Ticket): Promise<void> {
+    if (ticket.project === undefined || ticket.project === '') return
+    if (!ticket.ended) return
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = `ticket-end:${ticket.id}`
+    if (this.host.store.leads.getByRequest('lead', requestId)) return
+    const cause = ticket.ended.cause === 'merge' ? 'its pull request' : ticket.ended.cause
+    const reason = ticket.ended.reason ? ` Reason: ${ticket.ended.reason}` : ''
+    const workers = [`worker-${ticket.id}`, ...(ticket.review?.sessionId ? [ticket.review.sessionId] : [])]
+    const body = `Ticket ${ticket.id} "${ticket.title}" in project ${project.id} ended as ${ticket.ended.outcome} (${cause}, by ${ticket.ended.by}).${reason}\n`
+      + `Relay this to the Ticket's worker Session(s) with the lead_notify_worker tool, one call per Session: ${workers.join(', ')}. `
+      + 'Tell them the work is closed, no further action is expected, and they should not start new work. '
+      + 'Do not open work or change the external thread unless a person asks.'
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = this.host.store.leads.send({ project: project.id, kind: 'notice', from: 'orchestrator', to: 'lead',
+        requestId, ticketId: ticket.id, body })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not tell the Lead of project ${project.id} that Ticket ${ticket.id} ended`, error)
+    }
+  }
+
+  /**
    * Tells the project's Lead that a running Assignment has stalled: its worker Session stayed idle past the Runtime's
    * threshold without a new Report. The Runtime already wrote the waiting Report that raises the Ticket's attention; this
    * durable notice asks the Lead to inspect the Session and either nudge it or end the work. One notice per Assignment,

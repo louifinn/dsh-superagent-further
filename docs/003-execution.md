@@ -116,7 +116,7 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 
 ### Endings and notification
 
-Every ending is information as well as state. The Lead hears of the ending, and the person hears the result exactly once: one fact, one notification. A merged pull request, a closed pull request, a completed answer, a dropped Ticket, a stopped Ticket and a failed Ticket all follow this rule; the pull-request path is one case, not the only case.
+Every ending is information as well as state. The Lead hears of the ending — `LeadDispatch.pullEnded` for an end through a followed pull request, `LeadDispatch.ended` for a ready report, a person's stop, a dropped report, a failure or an Eval stop — and the person hears the result exactly once: one fact, one notification. A merged pull request, a closed pull request, a completed answer, a dropped Ticket, a stopped Ticket and a failed Ticket all follow this rule; the pull-request path is one case, not the only case.
 
 ### Pull requests
 
@@ -126,7 +126,7 @@ The Ticket is done when none of the pull requests it opened remain open. If it o
 
 A close does not end the Ticket while resumed, retried or recovered work is unfinished. It also waits if the Executor acknowledged or answered a follow-up it owns but has not since made a non-progress Report or ended a turn after reading that message. A later `ready` Report ends the Ticket once the same pull-request completion rule is satisfied.
 
-Chat Channels receive one final notice about the pull-request outcome — one fact, one notification — and a root project Request adds one aggregate report across its Tickets and derived requests when its Lead completes it. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
+Chat Channels hear the result once. A Ticket that belongs to a Request is reported by that Request's single result notice, whose Ticket lines carry the pull-request outcomes (issue #17); a Ticket outside any Request notices its own pull-request outcome. A root project Request sends one aggregate report instead of its own Request result notice, so no Channel hears the same fact twice. GitHub already displays the outcome on the pull request itself. Removing a Ticket's Subscription to a pull request also stops it following that pull request.
 
 "Awaiting review" therefore means a `ready` Report with a pull request on a `change` Ticket.
 
