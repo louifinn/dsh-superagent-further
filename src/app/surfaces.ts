@@ -76,6 +76,24 @@ export type SurfaceSection = typeof SURFACE_SECTIONS[number]
 /** The runtime-context contributions a role receives; the scope each one takes is decided by the registration code. */
 export type RuntimeKey = 'memory' | 'automations' | 'language'
 
+/** Which bucket one budget entry bounds (docs/015 D4): the prompt text, the tool-schema text, or what the runtime injects. */
+export type BudgetKind = 'prompt' | 'tool-schemas' | 'injection'
+/**
+ * Why a budget is the number it is (docs/015 D4): a budget change is a data change with a reason, reviewed in a diff. `delta`
+ * names the measured movement, `issue` the request that asked for it, and `date` when the reason was recorded.
+ */
+export interface BudgetReason {
+  readonly change: string
+  readonly delta: string
+  readonly issue: string
+  readonly date: string
+}
+/** One bound of one role's model-facing text. */
+export interface BudgetEntry { readonly kind: BudgetKind; readonly chars: number; readonly reason: BudgetReason }
+
+/** A structured reason helper: the current numbers are the 0.4.x surface, measured 2026-11-26 for issue #6. */
+const budgetReason = (change: string, delta: string): BudgetReason => ({ change, delta, issue: '#6', date: '2026-11-26' })
+
 /** What docs/015 declares one role's model should see; the whole point is that the assembly code reads this, not a second list. */
 export interface Surface {
   readonly sections: readonly SurfaceSection[]
@@ -84,6 +102,8 @@ export interface Surface {
   /** Resource visibility over the `RESOURCES` name templates; empty until docs/015 step 6 derives it. */
   readonly reads: readonly string[]
   readonly runtimes: readonly RuntimeKey[]
+  /** The bounds a test and the generated docs/budgets.md page read, each with its structured reason (docs/015 D4). */
+  readonly budget: readonly BudgetEntry[]
   /** The reviewer is a subagent activation without a prompt of its own: this is the instruction its activation carries. */
   readonly activation?: string
 }
@@ -109,6 +129,14 @@ export const SURFACES: Record<RoleId, Surface> = {
       'memory_search', 'memory_forget'],
     reads: [],
     runtimes: ['memory', 'automations', 'language'],
+    budget: [
+      { kind: 'prompt', chars: 47_400, reason: budgetReason('the headline prompt plus its generated parts, as the surface test composes it',
+        '45,145 measured on 2026-11-26; the 5% headroom covers the team sections') },
+      { kind: 'tool-schemas', chars: 31_000, reason: budgetReason('the JSON of the main Session application tool definitions, excluding DSH-native tools',
+        '28,617 measured on 2026-11-26; tools move together with capability, never silently') },
+      { kind: 'injection', chars: 6_000, reason: budgetReason('the runtime-context text the main Session receives around its prompt',
+        'memory, language and automation snapshots stay together under this bound') },
+    ],
   },
   worker: {
     sections: ['shared', 'role', 'team/communication', 'team/scope', 'team/delivery', 'subscriptions', 'replies', 'work', 'handoff',
@@ -117,6 +145,14 @@ export const SURFACES: Record<RoleId, Surface> = {
       'request_create', 'orchestrator_report'],
     reads: [],
     runtimes: ['language'],
+    budget: [
+      { kind: 'prompt', chars: 38_800, reason: budgetReason('the worker prompt, as the runtime hands it to the Executor Session',
+        '36,872 measured on 2026-11-26; the 5% headroom covers the work and handoff sections') },
+      { kind: 'tool-schemas', chars: 8_200, reason: budgetReason('the JSON of the worker application tool definitions',
+        '7,697 measured on 2026-11-26; a worker tool is added only with the rule that names it') },
+      { kind: 'injection', chars: 1_000, reason: budgetReason('the language directive a worker receives around its prompt',
+        'the worker has no memory or automation injection by design') },
+    ],
   },
   lead: {
     sections: ['shared', 'role', 'team/communication', 'team/scope', 'team/delivery', 'subscriptions', 'replies', 'environment',
@@ -128,12 +164,24 @@ export const SURFACES: Record<RoleId, Surface> = {
       'memory_search', 'memory_forget'],
     reads: [],
     runtimes: ['memory', 'automations', 'language'],
+    budget: [
+      { kind: 'prompt', chars: 50_000, reason: budgetReason('the Lead prompt assembled from its surface sections and the project it owns',
+        'the Lead was outside the budget until #6; its prompt derives from SURFACES now, so this entry can be measured') },
+      { kind: 'tool-schemas', chars: 30_000, reason: budgetReason('the JSON of the Lead application tool definitions, including the project memory tools',
+        'the Lead tool set is the widest of the four roles, which is why it had to enter the same table') },
+      { kind: 'injection', chars: 8_000, reason: budgetReason('the runtime-context text a Lead receives around its prompt',
+        'memory, language and automation snapshots stay together under this bound') },
+    ],
   },
   reviewer: {
     sections: [],
     tools: [],
     reads: [],
     runtimes: [],
+    budget: [
+      { kind: 'prompt', chars: 400, reason: budgetReason('the reviewer activation text, which is the only model-facing text this role has',
+        'the same text the review dispatch carries; a longer review instruction raises this entry in the same diff') },
+    ],
     activation: 'Review this change independently in the project worktree: read the diff and the relevant code, run the checks '
       + 'that matter, and answer with a concise verdict. The Lead records it with lead_review_record; do not edit files, commit '
       + 'or merge.',

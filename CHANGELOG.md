@@ -16,6 +16,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - Every model-facing field is bounded by one projection policy table (`src/app/projection.ts`): each field names its
   policy, width, style and read pointer, `docs/context-policy.md` is generated from that table, and a call-site
   truncation outside it fails the architecture check (part of #6).
+- Each role's character budgets (prompt, tool-schemas and injection) live beside its surface declaration with a
+  structured reason, including the Lead and the reviewer, and `docs/budgets.md` is generated from that table and gated
+  by `docs:check`; the model-surface test measures the running surface against it (part of #6).
 - An Input now reaches a running worker only after its project Lead releases it (issue #41): the delivery records a
   durable `lead-fact:<assignmentId>:<inputId>` request for the Lead, `lead_fact` acknowledges it and
   `DshExecutor.deliverForLead` queues the delivery, a missing grant is refused and recorded as

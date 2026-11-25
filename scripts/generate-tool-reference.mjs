@@ -33,6 +33,7 @@ const { automationTools } = await import('../src/app/tools/automation.ts')
 const { memoryTools } = await import('../src/app/tools/memory.ts')
 const { SettingsSchema } = await import('../src/policy.ts')
 const { FIELD_KEYS, POLICY_SURFACES, PROJECTION_POLICIES, PROJECTION_POLICY, PROJECTION_STYLES } = await import('../src/app/projection.ts')
+const { ROLE_IDS, SURFACES } = await import('../src/app/surfaces.ts')
 
 const groups = [
   ['Main Session', mainTools(inert, { id: 'main' })],
@@ -87,10 +88,26 @@ function contextPolicyPage() {
   return lines.join('\n')
 }
 
+/** The budget table (docs/015 D4): each role's model-facing text budgets with the reason the number exists. */
+function budgetsPage() {
+  const lines = [header('Context budgets', 'scripts/generate-tool-reference.mjs'), '',
+    'The character budget of every role\'s model-facing text, generated from `SURFACES[role].budget` in `src/app/surfaces.ts` (docs/015 D4). Each entry names one bucket (`prompt`, `tool-schemas`, `injection`) and carries a structured reason: what the budget is, how far the measurement moved, which issue asked for it and when. A budget change is a data change reviewed in this diff, and `tests/model-surface.spec.ts` measures the running surface against these numbers.', '',
+    '| Role | Bucket | Chars | Change | Delta | Issue | Date |', '| --- | --- | --- | --- | --- | --- | --- |']
+  for (const role of ROLE_IDS) {
+    for (const entry of SURFACES[role].budget) {
+      const { change, delta, issue, date } = entry.reason
+      lines.push(`| ${role} | ${entry.kind} | ${entry.chars} | ${change} | ${delta} | ${issue} | ${date} |`)
+    }
+  }
+  lines.push('')
+  return lines.join('\n')
+}
+
 const pages = {
   [path.join(reference, 'tools.md')]: toolsPage(),
   [path.join(reference, 'config.md')]: configPage(),
   [path.join(root, 'docs', 'context-policy.md')]: contextPolicyPage(),
+  [path.join(root, 'docs', 'budgets.md')]: budgetsPage(),
 }
 
 if (check) {

@@ -10,15 +10,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { latestAssignment } from '../src/core/index.ts'
 import { factOfRequest } from '../src/app/lead-messages.ts'
-import { promptParts } from '../src/app/prompts.ts'
+import { composeSurfacePrompt, promptParts } from '../src/app/prompts.ts'
 import { RESOURCES } from '../src/app/resources.ts'
-import { COLLECTED_ROLES, UNCOLLECTED_ROLES, collectSurfaces, uncollectedRoles, type RoleId, type RoleRegistration } from '../src/app/surfaces.ts'
+import { COLLECTED_ROLES, SURFACES, UNCOLLECTED_ROLES, collectSurfaces, uncollectedRoles, type RoleId, type RoleRegistration } from '../src/app/surfaces.ts'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { Runtime } from '../src/app/runtime.ts'
 import { workerSessionId } from '../src/executor/dsh.ts'
 import { Store } from '../src/app/store.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { inputMessage } from '../src/executor/dsh.ts'
+import { leadTools } from '../src/app/tools/lead.ts'
+import { memoryTools } from '../src/app/tools/memory.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
 import { IM_WORDS, NOTE_WORDS, checkedImText } from '../src/infra/text.ts'
 import { SettingsSchema } from '../src/policy.ts'
@@ -38,38 +40,11 @@ type Section = (context: { signal?: AbortSignal }) => string
 interface Skill { name: string; description: string; content: string }
 
 /**
- * Maximum combined character count of system prompt and tool definitions per role (~5% above baseline).
- * Lower this limit when shrinking model-facing text; raise it only intentionally and explain why in the commit message.
+ * The per-role budgets come from `SURFACES[role].budget` (docs/015 D4) and are generated into `docs/budgets.md`; raising one
+ * is a data change with a structured reason reviewed in that diff, not a comment here.
  */
-// The orchestrator budget rose from 59,000 with the three memory tools (memory_write, memory_search, memory_forget),
-// which add about 2,200 characters of schemas and no prompt text: attention stays bounded, the capability is real.
-// It rose from 62,000 with orchestrator_label, which adds about 1,000 characters of schema for the GitHub label
-// capability approved on 2026-11-09; deleting the label capability would let the budget drop back.
-// It rose from 63,500 with orchestrator_send_file, which adds about 900 characters of schema and description for the
-// Feishu file delivery approved on 2026-11-09; deleting that capability would let the budget drop back.
-// The worker budget rose from 40,500 with the 0.3.0 rename: the package name appears in the preset, skill and
-// tool text the model reads, and the longer registration ids add about 30 characters at this size.
-// It rose from 40,600 with request_create, which adds a schema and the rule for raising a project request (docs/012 D4);
-// the capability is the point of the change, so the budget grows with it.
-// It rose from 64,500 with orchestrator_request_create, which adds a schema and description for the installation-level
-// self-bootstrap approved on 2026-11-10 (docs/012 D12); deleting that capability would let the budget drop back.
-// It rose from 66,500 with orchestrator_escalations and orchestrator_escalation_decide, which add the Lead escalation
-// channel (docs/012 D13); deleting those tools would let the budget drop back.
-// It rose from 43,800 with the worker rules that finish a background job inside its own turn and keep one worktree and cwd
-// per Ticket, about 480 characters of work instructions; the incident stalled an assignment for three hours, so the budget
-// grows with the rules. Deleting the rules would let it drop back.
-// It rose from 44,400 with the answer-registration rule (about 320 characters across the replies and work prompt sections
-// and the reply_to_trigger_id description): an answer ticket's ready report answers its origin question, so a worker that
-// never learns the exception strands the person's answer; the rule text is the fix's worker-facing half.
-// It rose from 68,600 with orchestrator_issue_create and the discovery variant of orchestrator_request_create, which add
-// about 1,770 characters of schemas and descriptions for the self-evolution outlet (docs/014 Phase 2); deleting that
-// outlet would let the budget drop back.
-// It rose from 70,500 with orchestrator_incident, which adds the list/get/diagnose/dismiss/route schema and description
-// for the read-only diagnosis contract (ADR-0005); deleting that tool would let the budget drop back.
-// It rose from 73,000 with the delivery-contract templates in the dispatch and admission sections (#35), about 1,100
-// characters that name the review/answer shape and multi-project units so an accept is not silently misfiled; deleting
-// the templates would let the budget drop back.
-const BUDGET: Record<Role, number> = { orchestrator: 74_500, worker: 44_800 }
+const promptBudget = (role: RoleId) => SURFACES[role].budget.find(entry => entry.kind === 'prompt')!.chars
+const toolBudget = (role: RoleId) => SURFACES[role].budget.find(entry => entry.kind === 'tool-schemas')!.chars
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -505,7 +480,20 @@ it.each(['orchestrator', 'worker'] as const)('keeps the %s within its character 
   const prompt = Math.max(...ids.map(id => builtIn(host.sections.get(id)!({})).length))
   const definitions = [...toolsOf(role).values()].map(({ name, description, parameters }) => ({ name, description, parameters }))
   const tools = JSON.stringify(definitions).length
-  expect(prompt + tools, `${prompt} characters of prompt and ${tools} of tools`).toBeLessThanOrEqual(BUDGET[role])
+  expect(prompt, `${prompt} characters of prompt`).toBeLessThanOrEqual(promptBudget(role))
+  expect(tools, `${tools} characters of tools`).toBeLessThanOrEqual(toolBudget(role))
+})
+
+it('keeps the Lead and the reviewer within the same budget table', () => {
+  const config = host.runtime.prompts.current().config
+  const project = host.runtime.store.settings().executor.projects[0]!
+  const prompt = composeSurfacePrompt(config, 'lead', { project }).length
+  const presented = [...host.tools.get('lead-default')!.values()]
+    .map(({ name, description, parameters }) => ({ name, description, parameters }))
+  const tools = JSON.stringify(presented).length
+  expect(prompt, `${prompt} characters of Lead prompt`).toBeLessThanOrEqual(promptBudget('lead'))
+  expect(tools, `${tools} characters of Lead tools`).toBeLessThanOrEqual(toolBudget('lead'))
+  expect(SURFACES.reviewer.activation!.length).toBeLessThanOrEqual(promptBudget('reviewer'))
 })
 
 it('keeps the routing rules in dispatch, which says the main Session may accept the rest of a stop message as new work', () => {
