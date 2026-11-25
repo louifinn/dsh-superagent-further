@@ -3,12 +3,13 @@ import { latestReport, reasonText, threadKey, ticketStage, type Decision, type M
   type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { pullOf } from '../sources/github-pull.ts'
 import { batchLine, inputResource } from '../executor/dsh.ts'
+import { field, project } from './projection.ts'
 
-/** Collapses whitespace and truncates text for display previews while keeping code, angle brackets, and links intact for model readers. */
-export function preview(text: string): string { return text.replace(/\s+/g, ' ').slice(0, 160) }
+/** Collapses whitespace and bounds text for a display preview through the projection policy table (docs/015). */
+export function preview(text: string): string { return project(field('card.error'), text).inline }
 export function triggerCard(trigger: Trigger, disposition?: TriggerDisposition) {
   return { trigger_id: trigger.id, source: trigger.source, ...(trigger.url ? { source_url: trigger.url } : {}), actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), human: trigger.human, at: trigger.at,
-    preview: preview(trigger.text), chars: trigger.text.length, read: `trigger/${trigger.id}`,
+    preview: project(field('card.trigger'), trigger.text).inline, chars: trigger.text.length, read: `trigger/${trigger.id}`,
     ...(disposition ? { disposition: { ...(disposition.filtered ? { filtered: reasonText(disposition.filtered) } : {}),
       ...(disposition.decisionId ? { decision_id: disposition.decisionId } : {}),
       delivered_to: disposition.fanout } } : {}) }
@@ -30,25 +31,25 @@ export function ticketCard(ticket: Ticket) {
   return { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket), strength: ticket.mandate.strength,
     ...(pullOf(ticket) ? { pr_number: pullOf(ticket) } : {}), ...(ended ? { ended } : {}),
     ...(attention ? { attention: { question: attention.question, ...attention.triggerId ? { trigger_id: attention.triggerId } : {} } } : {}),
-    preview: preview(latestReport(ticket)?.summary ?? ''), read: `ticket/${ticket.id}` }
+    preview: project(field('card.report'), latestReport(ticket)?.summary ?? '').inline, read: `ticket/${ticket.id}` }
 }
 /** Strips `policyVersion`, an internal hash that callers never query by. */
 const mandateOf = ({ policyVersion: _version, ...mandate }: Mandate) => mandate
 export const INPUTS = 10, ASSIGNMENTS = 3
-const INPUT_TEXT = 80
+
 /** Summarizes a ticket input inline for short text or as a resource reference, omitting decision IDs for worker Sessions. */
 export function inputLine(ticket: Ticket, input: TicketInput, worker = false) {
   const read = { read: inputResource(ticket.id, input.id) }
   const names = input.kind === 'trigger' || input.kind === 'resumed' ? { trigger_id: input.triggerId }
     : input.kind === 'reopen' && !worker ? { decision_id: input.decisionId }
     : input.kind !== 'text' ? read
-    : input.text.length <= INPUT_TEXT ? { text: input.text }
-    : { preview: preview(input.text).slice(0, INPUT_TEXT), chars: input.text.length, ...read }
+    : input.text.length <= 80 ? { text: input.text }
+    : { preview: project(field('card.input'), input.text).inline, chars: input.text.length, ...read }
   return { kind: input.kind, at: input.at, ...names, ...ticket.undelivered.includes(input.id) ? { undelivered: true } : {} }
 }
 export function assignmentLine(ticket: Ticket, item: Ticket['assignments'][number]) {
   return { id: item.id, state: item.state, at: item.createdAt, ...(item.endedReason ? { ended_reason: reasonText({ code: item.endedReason }) } : {}),
-    ...(item.report ? { report: { state: item.report.state, at: item.report.at, preview: preview(item.report.summary).slice(0, 100),
+    ...(item.report ? { report: { state: item.report.state, at: item.report.at, preview: project(field('card.report'), item.report.summary).inline,
       chars: item.report.summary.length, read: `ticket/${ticket.id}/report/${item.id}` } } : {}) }
 }
 export function newestPage<T, L>(items: readonly T[], offset: number, size: number, line: (item: T) => L, next: string) {

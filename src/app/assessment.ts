@@ -7,6 +7,7 @@ import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, dire
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
+import { field, project, type Projection } from './projection.ts'
 import { admissionContext } from '../sources/admission-context.ts'
 import { projectByRepository, projectOf } from '../projects.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
@@ -41,8 +42,6 @@ export const AssessmentSchema = z.object({
 }).strict().refine(value => value.decision !== 'accept' || !directionAllowed(value.direction) || !value.rule_assessments.some(rule => rule.matched)
   || !requiresPullRequest(value.deliverable) || !!value.worktree_name, { message: 'Accepted change work requires a short English worktree_name; for read-only work such as a review, set deliverable: answer instead', path: ['worktree_name'] })
 
-/** Character limits in the initial thread window: for the trigger itself, its two nearest neighbours, other window messages, and stub previews. */
-const TRIGGER_CHARS = 4000, NEAR_CHARS = 1200, WINDOW_CHARS = 400, STUB_CHARS = 50
 const FINISHED = 'This assessment has finished: it was decided, timed out or restarted'
 const EXPLICIT = 'This is an explicit request, which is routed instead of assessed: use orchestrator_route with its trigger_id and kind accept, attach, stop or ignore'
 type AssessmentContext = Awaited<ReturnType<typeof admissionContext>>
@@ -181,11 +180,11 @@ export class MasterAssessor implements Assessor {
     if (!this.live(evalId, trigger)) throw new Error(FINISHED)
   }
   /**
-   * Returns the `orchestrator_eval` payload: the trigger's text once (up to `TRIGGER_CHARS`), batch peers, related tickets
-   * on the thread, the Policy version its Eval was built from, and the initial thread window (first five messages and five
-   * on either side of the trigger, truncated to `WINDOW_CHARS` or `NEAR_CHARS` for its two nearest neighbours with total
-   * length and image IDs, plus other loaded messages as `STUB_CHARS` previews; `orchestrator_eval_read` reads any message
-   * in full by ID).
+   * Returns the `orchestrator_eval` payload: the trigger's text once (whole, under the `assessment.trigger` field), batch
+   * peers, related tickets on the thread, the Policy version its Eval was built from, and the initial thread window (first
+   * five messages and five on either side of the trigger, bounded by the `assessment.window`/`assessment.near` fields with
+   * total length and image IDs, plus other loaded messages as `assessment.stub` previews; `orchestrator_eval_read` reads any
+   * message in full by ID). Widths and policies live in `src/app/projection.ts` and `docs/context-policy.md`.
    * Assessment instructions live in the main Session's prompt (`prompts/admission.md`), not in this payload.
    */
   async context(triggerId: string, signal?: AbortSignal) {
@@ -196,18 +195,20 @@ export class MasterAssessor implements Assessor {
     const images = (text: string) => source?.images(text) ?? []
     const imageIds = (id: string, text: string) => { const keys = images(text); return keys.length
       ? { images: keys.map(key => `${id}/${key}`) } : {} }
-    const cut = (text: string, limit: number) => text.length <= limit ? { text } : { text: `${text.slice(0, limit)}…`, chars: text.length }
+    // Every bounded text below names a field of the generated context-policy table (docs/015 D2) instead of slicing here.
+    const shown = (projected: Projection) => ({ text: projected.inline, ...projected.chars === undefined ? {} : { chars: projected.chars } })
     const thread = context ? (() => {
-      const shown = new Map(context.window.entries.map(entry => [entry.message.id, entry]))
+      const windowEntries = new Map(context.window.entries.map(entry => [entry.message.id, entry]))
       const at = context.messages.findIndex(message => message.id === source?.messageId)
       const messages = context.messages.map((message, index) => {
         const author = { id: message.id, from: message.from, ...message.bot ? { bot: true } : {} }
         if (message.deleted) return { ...author, deleted: true }
-        if (!shown.has(message.id)) return { ...author, preview: message.text.replace(/\s+/g, ' ').slice(0, STUB_CHARS) }
+        if (!windowEntries.has(message.id)) return { ...author, preview: project(field('assessment.stub'), message.text).inline }
         // The trigger's own text is already included once at the top level.
         if (index === at) return { ...author, at: message.at, trigger: true }
         const near = at >= 0 && Math.abs(index - at) <= 2
-        return { ...author, at: message.at, ...cut(message.text, near ? NEAR_CHARS : WINDOW_CHARS), ...imageIds(message.id, message.text) }
+        return { ...author, at: message.at, ...shown(project(field(near ? 'assessment.near' : 'assessment.window'), message.text)),
+          ...imageIds(message.id, message.text) }
       })
       return { complete: context.complete, loaded_messages: context.messages.length, source_found: context.window.source_found,
         ...context.next ? { next_cursor: context.next } : {}, messages }
@@ -217,12 +218,14 @@ export class MasterAssessor implements Assessor {
     return { trigger_id: trigger.id, strength: candidate.strength, mode: settings.eval.mode,
       source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
         ? { url: trigger.url } : {}) },
-      ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
+      ...shown(project(field('assessment.trigger', { resource: 'trigger', id: trigger.id }), trigger.text)),
+      ...imageIds(source?.messageId ?? '', trigger.text),
       // A Feishu message names no repository; the registered projects let the assessment choose one (or none).
       ...settings.executor.projects.length ? { projects: settings.executor.projects.map(({ id, name, repository, branch }) => ({ id, name, repository, ...branch ? { branch } : {} })) } : {},
       ...others.length ? { batch: others.map(item => {
-        const text = cut(item.text, WINDOW_CHARS)
-        return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...text, ...'chars' in text ? { read: `trigger/${item.id}` } : {} }
+        const projected = project(field('assessment.window', { resource: 'trigger', id: item.id }), item.text)
+        return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...shown(projected),
+          ...projected.read === undefined ? {} : { read: projected.read } }
       }) } : {},
       // The rules are in the main Session's Policy section, which names the version the candidate's Eval was built from.
       ...relatedTickets(candidate.tickets), policy_version: candidate.policyVersion,

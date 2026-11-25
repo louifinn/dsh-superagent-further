@@ -9,6 +9,7 @@ import { feishuTriggerId } from '../sources/feishu-trigger.ts'
 import { ASSIGNMENTS, INPUTS, assignmentLine, decisionCard, decisionDetails, inputLine, newestPage, preview, textPage, threadCard, ticketCard,
   ticketDetails, triggerCard, type TicketThread } from './cards.ts'
 import { threadTitle } from './views/records.ts'
+import { field, project } from './projection.ts'
 import { transcriptEntry } from './context.ts'
 import { builtInParts, defaultPrompts } from './prompts.ts'
 import type { Context } from '@deepseek-ai/cordis'
@@ -286,7 +287,7 @@ const ROUTES: readonly Route[] = [
       body = (await transcript(host, id)).flatMap((event, index) => {
         const entry = transcriptEntry(event)
         const said = entry?.message.content.map(block => block.type === 'text' ? block.text : `[${block.type}]`).join(' ') ?? ''
-        return entry ? [{ type: entry.type, preview: preview(said).slice(0, 80), chars: JSON.stringify(entry).length,
+        return entry ? [{ type: entry.type, preview: project(field('card.transcript'), preview(said)).inline, chars: JSON.stringify(entry).length,
           read: `ticket/${id}/message/${index}` }] : []
       }).reverse().map(event => JSON.stringify(event)).join('\n')
     } else throw new Error('Unknown context resource')

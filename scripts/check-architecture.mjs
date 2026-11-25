@@ -12,9 +12,22 @@
  * - `src/**` may import neither `tests/` nor `scripts/`; those are development-only.
  * - A bare `instanceof CliError` is bundle-local, because the versioned runtime is its own bundle; classify a CLI
  *   failure that may come from the runtime's Commands with `isCliError` instead.
+ * - Model-facing text is bounded in one place: no module outside `src/app/projection.ts` may slice text to a context
+ *   policy width or keep one of the retired truncation constants (docs/015 D2). The two internal exceptions below carry
+ *   text that never reaches a model.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+
+/** Files whose truncation stays local because the text never reaches a model, with the reason. */
+const RAW_TEXT_EXEMPT = new Map([
+  ['src/app/outbox.ts', 'the delivery detail is a health line, not model-facing'],
+  ['src/sources/feishu-loops.ts', 'a Feishu loop diagnostic line, not model-facing'],
+])
+/** The truncation constants the projection policy absorbed; a call site that keeps one re-establishes a second policy. */
+const LEGACY_TRUNCATION = /\b(?:TRIGGER_CHARS|NEAR_CHARS|WINDOW_CHARS|STUB_CHARS|INPUT_TEXT)\b/
+/** A call-site cut at one of the policy widths: the same silent truncation the policy table exists to replace. */
+const RAW_POLICY_SLICE = /\.slice\(\s*0\s*,\s*(?:50|80|100|160|200|400|600|1_200|1200|1500|4000)\s*\)/
 
 /** Every TypeScript file under `src/`, with its path relative to the repository root. */
 function sourceFiles(root) {
@@ -61,6 +74,14 @@ export function violations(files) {
     for (const [index, line] of lines.entries()) {
       if (file !== 'src/infra/commands.ts' && /\binstanceof\s+CliError\b/.test(line)) {
         found.push({ file, line: index + 1, imported: 'CliError', rule: 'instanceof CliError is bundle-local; classify CLI failures with isCliError' })
+      }
+      if (file !== 'src/app/projection.ts' && !RAW_TEXT_EXEMPT.has(file)) {
+        if (LEGACY_TRUNCATION.test(line)) {
+          found.push({ file, line: index + 1, imported: 'truncation constant', rule: 'model-facing text is bounded by a docs/context-policy.md field, not a truncation constant' })
+        }
+        if (/^src\/(app|executor|sources)\//.test(file) && RAW_POLICY_SLICE.test(line)) {
+          found.push({ file, line: index + 1, imported: 'slice(0, width)', rule: 'model-facing text is bounded by a docs/context-policy.md field, not a call-site slice' })
+        }
       }
       IMPORT.lastIndex = 0
       const match = IMPORT.exec(line)

@@ -17,6 +17,7 @@ import { assignmentOfRequest, factOfRequest } from '../app/lead-messages.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import { REVIEWER_PRESET, WORKER_PRESET, type Sessions } from '../app/sessions.ts'
 import { SURFACES } from '../app/surfaces.ts'
+import { field, project as projectText } from '../app/projection.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { CaptureLogs } from '../app/logs.ts'
@@ -161,23 +162,22 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
 export const worktreePrepare = (ticket: Ticket, project: Project): string[] =>
   ['git', '-C', project.workspace, 'worktree', 'add', '-b', `agent/${ticket.execution?.name ?? ''}`,
     ticket.execution?.directory ?? '', project.branch || 'HEAD']
-/** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */
-const ASSIGNMENT_CHARS = 1500, TRIGGER_CHARS = 600
-/** Returns `text` up to `limit` characters, or a truncated preview with total character count and the resource path to read the full text. */
-const capped = (text: string, limit: number, read: string) =>
-  text.length <= limit ? { text } : { text: `${text.slice(0, limit)}…`, chars: text.length, read }
+/** The inline text and read pointer a projection hands a worker message; see docs/context-policy.md for the widths. */
+const shown = (projected: { inline: string; chars?: number; read?: string }) =>
+  ({ text: projected.inline, ...(projected.chars === undefined ? {} : { chars: projected.chars }), ...(projected.read === undefined ? {} : { read: projected.read }) })
 /**
- * Formats a Trigger for worker delivery: author, thread, timestamp, text up to `TRIGGER_CHARS`, source message link,
- * optional routing note, and a preview of the replied-to message when the worker has not yet seen it.
+ * Formats a Trigger for worker delivery: author, thread, timestamp, its text under the worker Trigger policy, source
+ * message link, optional routing note, and a preview of the replied-to message when the worker has not yet seen it.
  */
 export function triggerMessage(trigger: Trigger, link: { source_url?: string; source_url_read?: string }, note?: string, repliesTo?: Trigger) {
   return { trigger_id: trigger.id, from: trigger.actor.id, thread: threadKey(trigger.threads[0]!), at: trigger.at,
-    ...capped(trigger.text, TRIGGER_CHARS, `trigger/${trigger.id}`), ...link, ...(note ? { routing_note: note } : {}),
-    ...(repliesTo ? { replies_to: { trigger_id: repliesTo.id, preview: repliesTo.text.replace(/\s+/g, ' ').slice(0, 160) } } : {}) }
+    ...shown(projectText(field('worker.trigger', { resource: 'trigger', id: trigger.id }), trigger.text)), ...link,
+    ...(note ? { routing_note: note } : {}),
+    ...(repliesTo ? { replies_to: { trigger_id: repliesTo.id, preview: projectText(field('card.trigger'), repliesTo.text).inline } } : {}) }
 }
-/** Formats a peer trigger from the ticket's acceptance batch with author, timestamp, 160-character preview, and read resource path. */
+/** Formats a peer trigger from the ticket's acceptance batch with author, timestamp, a card-width preview and read resource path. */
 export const batchLine = (trigger: Trigger) => ({ trigger_id: trigger.id, from: trigger.actor.id, at: trigger.at,
-  preview: trigger.text.replace(/\s+/g, ' ').slice(0, 160), read: `trigger/${trigger.id}` })
+  preview: projectText(field('card.trigger'), trigger.text).inline, read: `trigger/${trigger.id}` })
 /** Returns the other triggers in a ticket's origin batch (excluding the primary `origin.triggerId`), oldest first. */
 export const batchOf = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger[] => ticket.origin.triggerIds
   .filter(id => id !== ticket.origin.triggerId).flatMap(id => host.store.triggers.get(id) ?? [])
@@ -570,7 +570,9 @@ export class DshExecutor implements Executor {
     const trigger = input.kind === 'trigger' ? await this.triggerCard(ticket, input.triggerId, input.note) : undefined
     const message = inputMessage(input, trigger)
     if (message === undefined) return
-    const text = message.length > ASSIGNMENT_CHARS ? JSON.stringify(capped(message, ASSIGNMENT_CHARS, inputResource(ticket.id, input.id))) : message
+    const projected = projectText(field('worker.input', { resource: `ticket/${ticket.id}/inputs`, id: input.id }), message)
+    const text = projected.chars === undefined ? message
+      : JSON.stringify({ text: projected.inline, chars: projected.chars, ...(projected.read === undefined ? {} : { read: projected.read }) })
     // A Lead-hosted child's Session is subagent-owned and refuses a root prompt, so the Lead steers the message instead;
     // after a restart the activation map is empty, but the durable child still takes a message from its Lead.
     const leadProject = this.leadProject(ticket)
@@ -901,13 +903,13 @@ export class DshExecutor implements Executor {
     if (!current()) return
     const retried = ticket.assignments.at(-2)?.endedReason === 'retried' ? { note: RETRIED } : {}
     const assignmentText = ticket.execution?.assignment ?? ''
-    const { text: brief, chars, read } = capped(assignmentText, ASSIGNMENT_CHARS, `ticket/${ticket.id}/assignment`)
+    const projected = projectText(field('worker.assignment', { resource: `ticket/${ticket.id}`, id: 'assignment' }), assignmentText)
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)
     if (!current()) return
     const batch = told ? [] : batchOf(this.host, ticket).map(batchLine)
     const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
-      : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
-        ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
+      : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(projected.inline ? { assignment: projected.inline } : {}),
+        ...(projected.read ? { assignment_chars: projected.chars, assignment_read: projected.read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried })
     {
       const lead = await this.host.sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
@@ -1038,7 +1040,7 @@ export class DshExecutor implements Executor {
   /** Schedules a worker turn retry with exponential backoff after a transient provider or network error. */
   private resumeAfter(ticketId: string, assignmentId: string, error: unknown): void {
     const tries = this.transient.get(assignmentId)!
-    const text = `Your last turn failed for a passing reason (${String(error).slice(0, 200)}). Continue the assignment where it stopped.`
+    const text = `Your last turn failed for a passing reason (${projectText(field('worker.nudge'), String(error)).inline}). Continue the assignment where it stopped.`
     this.resuming.add(assignmentId)
     const go = () => {
       if (this.host.closing()) return

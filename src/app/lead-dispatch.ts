@@ -10,6 +10,7 @@
 import { key, latestAssignment, liveTicket, projectRequestOpen, waitsForPerson, type Assignment, type Attention, type EngineForMainSession, type ProjectRequest, type Ticket } from '../core/index.ts'
 import { assignmentOfRequest, assignmentRequest, factOfRequest, factRequest, type LeadMessage } from './lead-messages.ts'
 import type { Project } from '../projects.ts'
+import { field, project as projectText } from './projection.ts'
 import type { Store } from './store.ts'
 
 /**
@@ -290,7 +291,7 @@ export class LeadDispatch {
     const input = ticket.inputs.find(candidate => candidate.id === inputId)
     const body = existing?.body ?? [
       `Ticket ${ticket.id} "${ticket.title}" has an Input waiting for its worker (Assignment ${assignment.id}).`,
-      input === undefined ? `Input ${inputId} is waiting.` : `The Input says:\n\n${JSON.stringify(input).slice(0, 1_200)}`,
+      input === undefined ? `Input ${inputId} is waiting.` : `The Input says:\n\n${projectText(field('lead.fact'), JSON.stringify(input)).inline}`,
       `Release it with lead_fact (ticket_id ${ticket.id}, assignment_id ${assignment.id}), then answer its report when it reaches you.`,
     ].join('\n\n')
     // Record the request before the Lead Session exists: a test-driven Lead grants it as soon as the tool list is

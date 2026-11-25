@@ -54,6 +54,7 @@ import { registerWorkspace, resumeWorkspaceMaster, retireMaster, type WorkspaceR
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
+import { field, project as projectText } from './projection.ts'
 import { bindLeadApprovals, bindLeadAssignments, bindLeadFacts } from './tools/lead.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
@@ -432,7 +433,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
               const request = store.requests.get(event.data.requestId)
               if (request?.ended) store.memories.save({
                 kind: 'decision',
-                text: `Request "${request.title.slice(0, 200)}" (${request.ticketIds.length} Ticket${request.ticketIds.length === 1 ? '' : 's'}) ended ${request.ended.outcome} at ${request.ended.at}.`,
+                text: `Request "${projectText(field('notice.request'), request.title).inline}" (${request.ticketIds.length} Ticket${request.ticketIds.length === 1 ? '' : 's'}) ended ${request.ended.outcome} at ${request.ended.at}.`,
                 source: { request: request.id },
                 tags: [request.ended.outcome],
               }, request.ended.at)

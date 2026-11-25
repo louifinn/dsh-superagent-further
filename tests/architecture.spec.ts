@@ -33,4 +33,13 @@ describe('architecture', () => {
     ])
     expect(check('src/infra/commands.ts', 'return error instanceof CliError')).toEqual([])
   })
+  it('reports model-facing text cut at a call site instead of through the projection policy', () => {
+    expect(check('src/app/notices.ts', 'const text = summary.slice(0, 600)').map((item: { rule: string }) => item.rule))
+      .toEqual(['model-facing text is bounded by a docs/context-policy.md field, not a call-site slice'])
+    expect(check('src/app/assessment.ts', 'const TRIGGER_CHARS = 4000').map((item: { rule: string }) => item.rule))
+      .toEqual(['model-facing text is bounded by a docs/context-policy.md field, not a truncation constant'])
+    // The policy table itself keeps the widths; the two internal texts are exempt with their reason.
+    expect(check('src/app/projection.ts', 'const text = summary.slice(0, 600)')).toEqual([])
+    expect(check('src/app/outbox.ts', 'const detail = error.slice(0, 160)')).toEqual([])
+  })
 })

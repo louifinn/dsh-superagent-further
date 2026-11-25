@@ -20,6 +20,7 @@ import { SELF_REPORT_TITLE_LIMIT, SELF_REPOSITORY } from '../core/self-reports.t
 import type { Activation, ActivationSpec, SubagentService } from '../executor/lead-dispatch.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { sameName } from '../infra/text.ts'
+import { field, project } from './projection.ts'
 import { KV } from '../kv.ts'
 import type { Settings } from '../policy.ts'
 import type { Health } from '../sources/host.ts'
@@ -126,7 +127,7 @@ function readDiagnosis(answer: string): IncidentDiagnosis {
   const parsed = parseIncidentDiagnosis(document) ?? parseIncidentDiagnosis(body)
   if (parsed !== null) return parsed
   const raw = answer.trim()
-  return { rootCause: raw.slice(0, 4000), evidence: [], hypotheses: [], fixPlan: '', confidence: 'low',
+  return { rootCause: project(field('diagnosis.rootCause'), raw).inline, evidence: [], hypotheses: [], fixPlan: '', confidence: 'low',
     target: { kind: 'none' }, parsed: false, raw }
 }
 

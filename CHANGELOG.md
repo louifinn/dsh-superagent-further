@@ -10,7 +10,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
-  and the resources each role sees, so a change to either surface has to be acknowledged (part of #6). The prompt of every role is\n  now assembled from that declaration's section list, replacing the separate Lead composer, and a tool registered for a\n  role whose declaration omits it fails at registration.
+  and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).
+- Every role's prompt is assembled from that declaration's section list, replacing the separate Lead composer, and a tool
+  registered for a role whose declaration omits it fails at registration.
+- Every model-facing field is bounded by one projection policy table (`src/app/projection.ts`): each field names its
+  policy, width, style and read pointer, `docs/context-policy.md` is generated from that table, and a call-site
+  truncation outside it fails the architecture check (part of #6).
 - An Input now reaches a running worker only after its project Lead releases it (issue #41): the delivery records a
   durable `lead-fact:<assignmentId>:<inputId>` request for the Lead, `lead_fact` acknowledges it and
   `DshExecutor.deliverForLead` queues the delivery, a missing grant is refused and recorded as

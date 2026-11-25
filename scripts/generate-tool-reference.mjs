@@ -32,6 +32,7 @@ const { leadTools } = await import('../src/app/tools/lead.ts')
 const { automationTools } = await import('../src/app/tools/automation.ts')
 const { memoryTools } = await import('../src/app/tools/memory.ts')
 const { SettingsSchema } = await import('../src/policy.ts')
+const { FIELD_KEYS, POLICY_SURFACES, PROJECTION_POLICIES, PROJECTION_POLICY, PROJECTION_STYLES } = await import('../src/app/projection.ts')
 
 const groups = [
   ['Main Session', mainTools(inert, { id: 'main' })],
@@ -72,9 +73,24 @@ function configPage() {
   return [header('Settings and configuration reference', 'scripts/generate-tool-reference.mjs'), '', 'The JSON Schema of the settings this plugin accepts, generated from `SettingsSchema` in `src/policy.ts`. The management panel edits these blocks; the Profile supplies the deployment configuration (`Config` in `src/deployment.ts`).', '', '```json', JSON.stringify(schema, null, 2), '```', ''].join('\n')
 }
 
+/** The context policy table (docs/015 D2): every bounded model-facing field, its policy, width and why it exists. */
+function contextPolicyPage() {
+  const lines = [header('Context policy', 'scripts/generate-tool-reference.mjs'), '',
+    'Every bounded model-facing field the runtime projects, generated from `PROJECTION_POLICY` and `FIELD_KEYS` in `src/app/projection.ts` (docs/015 D2). A field names a closed policy from `' + PROJECTION_POLICIES.join('`, `') + '`; call sites pass a field descriptor to `project()` and never slice model-facing text themselves. Widths are inline characters; a resource names where a followable field reveals the rest.', '',
+    `Policies: ${PROJECTION_POLICIES.join(', ')}. Styles: ${PROJECTION_STYLES.join(', ')}. Surfaces: ${POLICY_SURFACES.join(', ')}.`, '',
+    '| Field | Policy | Width | Style | Resource | Why |', '| --- | --- | --- | --- | --- | --- |']
+  for (const key of FIELD_KEYS) {
+    const entry = PROJECTION_POLICY[key]
+    lines.push(`| \`${key}\` | ${entry.policy} | ${entry.width ?? ''} | ${entry.style ?? ''} | ${entry.resource ?? ''} | ${entry.reason ?? ''} |`)
+  }
+  lines.push('')
+  return lines.join('\n')
+}
+
 const pages = {
   [path.join(reference, 'tools.md')]: toolsPage(),
   [path.join(reference, 'config.md')]: configPage(),
+  [path.join(root, 'docs', 'context-policy.md')]: contextPolicyPage(),
 }
 
 if (check) {
