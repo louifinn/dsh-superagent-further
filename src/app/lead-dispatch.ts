@@ -39,6 +39,8 @@ export interface LeadDispatchHost {
   prompt(sessionId: string, requestId: string, text: string): Promise<void>
   /** Injects a notice into the main Session, which the Orchestrator reads. */
   notify(name: string, value: Record<string, unknown>, summary: string): void
+  /** Wakes the Orchestrator's main Session with a durable prompt when work reaches it (issue #16). */
+  wake?(requestId: string, text: string): void
   /** Logs a delivery failure without failing the worker's report or request. */
   warn?(message: string, error: unknown): void
 }
@@ -422,6 +424,9 @@ export class LeadDispatch {
       this.host.notify(key('lead-attention', request.id), { lead_attention: { project: project.id, request_id: request.id,
         title: request.title, kind: request.kind, status: request.status, raised_by: request.raised_by } },
       `Project request ${request.id} needs attention: the Lead did not reply`)
+      // Waking the Orchestrator is a durable effect, so a moment of Host unavailability retries instead of losing it.
+      this.host.wake?.(key('lead-attention', request.id),
+        `Project request ${request.id} needs your attention: the Lead of project ${project.id} did not reply after ${REMINDERS} reminders. Remind the Lead with orchestrator_lead_instruction, or wait for the escalation that hands it to you: ${request.title}`)
     }
   }
 

@@ -8,6 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- A Lead escalation and a project request that reaches needs-attention now wake the Orchestrator
+  instead of waiting for a pull (issue #16): the Engine announces `project-request.escalated`, the Runtime
+  queues a durable `wake` prompt for the main Session naming `orchestrator_escalation_decide`, and
+  `LeadDispatch.markAttention` also wakes it to point at `orchestrator_lead_instruction`. The wake effect
+  retries through the effect queue and its failures appear in health.
 - Project requests and escalations no longer wait forever (a first slice of issue #31): a project request
   a Lead leaves unanswered for six hours, counted from the request or its last reply, is escalated once to
   the Orchestrator as an `Overdue: …` escalation request, and an escalation that waits four hours for an

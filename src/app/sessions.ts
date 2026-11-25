@@ -157,10 +157,12 @@ export class Sessions {
     }, ensureLead: async project => (await this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)).id,
     prompt: (sessionId, requestId, text) => this.prompt(sessionId, requestId, text, 'queue'),
     notify: (name, value, summary) => this.notify(name, value, summary),
+    wake: (requestId, text) => this.wake(requestId, text),
     warn: (message, error) => this.warn('dsh-superagent-further %s: %s', message, String(error)) })
     // Deliver relays and notices to the main Session in the order they were queued.
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
+    host.effects.handle('wake', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'queue'), { ordered: true })
   }
   /** Writes a warning into the Host log ring when the Runtime injected a scoped logger; the Host logger's own output is unchanged. */
   private warn(format: string, ...args: unknown[]): void {
@@ -291,6 +293,11 @@ export class Sessions {
   promptedId(requestId: string): MessageId { return messageId(this.host.values, key(requestId)) }
   /** Enqueues a steering relay to the main Session; relays are durable and retried by `Effects` until delivered, at most once per `requestId`. */
   relay(requestId: string, text: string): void { this.host.effects.enqueue('relay', requestId, { text }) }
+  /**
+   * Wakes the main Session with a durable prompt: delivered at once when it is idle, otherwise queued as its next input.
+   * The wake effect retries; repeated failures appear in the panel's health.
+   */
+  wake(requestId: string, text: string): void { this.host.effects.enqueue('wake', requestId, { text }) }
   /**
    * Relays upward a worker report the project Lead reviewed: the Lead reads the worker's report, then this method emits a
    * `lead_report` relay to the main Session and acknowledges the Lead's copy. Reports reach the Orchestrator only through

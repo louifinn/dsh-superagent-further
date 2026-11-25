@@ -21,6 +21,8 @@ export interface EffectPayloads {
   relay: { text: string }
   /** Inject a notice into the main Session without waking it; the key names what it reports, such as `prompts`. */
   notice: { value: Record<string, unknown>; summary: string }
+  /** Wake the main Session with a durable prompt; the key is the request ID, and repeated failures show in health. */
+  wake: { text: string }
   /** Send a message for a Channel through its Source; the key is the message ID, whose receipt the Outbox keeps. */
   reply: Record<string, never>
 }

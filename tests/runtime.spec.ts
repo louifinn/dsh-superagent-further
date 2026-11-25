@@ -2317,6 +2317,11 @@ it('escalates a project request its Lead leaves unanswered, once', async () => {
   // A second pass at the same time adds no second escalation.
   await runtime.timeoutRequests()
   expect(runtime.store.projectRequests.list('default').filter(request => request.kind === 'escalation')).toHaveLength(1)
+  // The new escalation woke the Orchestrator with the decision tool it needs (issue #16).
+  await runtime.pump(); await runtime.idle()
+  const escalationId = escalations[0]!.id
+  expect(relays(runtime.masterId).some(item => typeof item.text === 'string' && item.text.includes(escalationId) &&
+    item.text.includes('orchestrator_escalation_decide'))).toBe(true)
 })
 
 it('alerts the person once when an escalation waits too long for an Orchestrator decision', async () => {

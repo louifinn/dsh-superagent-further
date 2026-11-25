@@ -346,6 +346,17 @@ export class Runtime implements SourceHost, RuntimeHandle {
               for (const message of projectApprovalNotices(request, channels)) outbox.send(message)
             }
           }
+          // Wake the Orchestrator when a Lead escalates a request it cannot decide, naming the decision tool (issue #16).
+          if (event.type === 'project-request.escalated') {
+            const request = store.projectRequests.get(event.data.projectRequestId)
+            if (request) {
+              sessions.wake(key('escalation-arrived', request.id), [
+                `Project ${request.project} escalated project request ${request.id}: ${request.title}`,
+                request.instruction,
+                'Review it with orchestrator_escalations, then decide it with orchestrator_escalation_decide (decision accept, reject or needs-info, with a non-empty reply).',
+              ].join('\n\n'))
+            }
+          }
           // A person's message on an awaiting approval's root thread reaches its Lead, which records the answer (docs/012 D7).
           if (event.type === 'trigger.received') {
             const trigger = store.triggers.get(event.data.triggerId)

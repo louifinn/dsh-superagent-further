@@ -20,6 +20,8 @@ declare module './ports.ts' {
     'project-request.completed': { projectRequestId: string }
     /** An architecture request's design ended and its proposal must reach the root Channel for a person's approval (docs/012 D7). */
     'project-request.approval-requested': { projectRequestId: string }
+    /** A project Lead escalated a request it cannot decide itself; the runtime wakes the Orchestrator to decide it (issue #16). */
+    'project-request.escalated': { projectRequestId: string }
   }
 }
 
@@ -360,6 +362,7 @@ export class Engine {
         updated_at: at,
       }
       store.save(request)
+      this.options.emit?.({ type: 'project-request.escalated', at, data: { projectRequestId: request.id } })
       return request
     })
   }

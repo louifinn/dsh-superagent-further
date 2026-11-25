@@ -121,6 +121,10 @@ it('reminds the Lead twice at the activation boundary, then marks the request ne
   await endLeadTurn()
   expect(h.runtime.store.leads.getByRequest('lead', `lead-attention:${request.id}`)?.body)
     .toContain('needs attention: its Lead did not reply after 2 reminders')
+  // The needs-attention record also wakes the Orchestrator with a durable prompt naming the request (issue #16).
+  await h.runtime.pump(); await h.runtime.idle()
+  const masterTexts = h.deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === h.runtime.masterId).map(call => call.text)
+  expect(masterTexts.some(text => text.includes(request.id) && text.includes('needs your attention'))).toBe(true)
   const listed = await h.runTool('lead-default', 'lead_requests', {}) as { attention: { request_id: string }[] }
   expect(listed.attention.map(item => item.request_id)).toEqual([request.id])
   // The bounded attempts stop: a fourth turn end adds no reminder and no second attention record.

@@ -26,8 +26,10 @@ const open = () => {
   const path = join(directory, 'orchestrator.sqlite')
   const store = new Store(path)
   let clock = '2026-11-10T09:00:00.000Z'
-  const engine = new Engine({ repo: store, scope, policy: () => policy, assessor, executor, outbox, now: () => clock })
-  return { store, engine, path, setClock: (at: string) => { clock = at } }
+  const emitted: { type: string; data: Record<string, unknown> }[] = []
+  const engine = new Engine({ repo: store, scope, policy: () => policy, assessor, executor, outbox, now: () => clock,
+    emit: event => { emitted.push(event as { type: string; data: Record<string, unknown> }) } })
+  return { store, engine, path, emitted, setClock: (at: string) => { clock = at } }
 }
 
 const request = (overrides: Partial<ProjectRequestInput> = {}): ProjectRequestInput => ({
@@ -376,5 +378,19 @@ it("lets the Orchestrator decide a project Lead's escalated request into one ins
   const rejected = engine.decideEscalation(second.id, { by: 'orchestrator', action: 'reject', text: 'Stay in your project' }, { units: [] })
   expect(rejected.status).toBe('rejected')
   expect(store.requests.list()).toHaveLength(1)
+  store.close()
+})
+
+it('announces an escalation once, so the runtime can wake the Orchestrator', () => {
+  const { engine, emitted, store } = open()
+  const raised = engine.escalateProjectRequest({ project: 'superagent', kind: 'escalation', title: 'Rework the shared build',
+    instruction: 'The shared build belongs to another project; rework it there.', raised_by: { session: 'lead-superagent' } })
+  const announcements = () => emitted.filter(event => event.type === 'project-request.escalated')
+  expect(announcements()).toEqual([{ type: 'project-request.escalated', at: '2026-11-10T09:00:00.000Z',
+    data: { projectRequestId: raised.id } }])
+  // A repeated escalation of the open request keeps the same record and announces nothing.
+  expect(engine.escalateProjectRequest({ project: 'superagent', kind: 'escalation', title: 'Rework the shared build',
+    instruction: 'Again.', raised_by: { session: 'lead-superagent' } }).id).toBe(raised.id)
+  expect(announcements()).toHaveLength(1)
   store.close()
 })
