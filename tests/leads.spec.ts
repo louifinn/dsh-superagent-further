@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { composeLeadPrompt, defaultPrompts } from '../src/app/prompts.ts'
+import { composeSurfacePrompt, defaultPrompts } from '../src/app/prompts.ts'
 import { leadProjectOf, leadSessionId } from '../src/app/sessions.ts'
 import type { Project } from '../src/projects.ts'
 import { KV } from '../src/kv.ts'
@@ -20,7 +20,7 @@ describe('Lead Sessions', () => {
   })
 
   it('composes a Lead prompt from the shared rules, the Lead instructions, and its project', () => {
-    const prompt = composeLeadPrompt(defaultPrompts(), PROJECT)
+    const prompt = composeSurfacePrompt(defaultPrompts(), 'lead', { project: PROJECT })
     expect(prompt).toContain('You are the Lead of one project')
     expect(prompt).toContain('Project App (app).')
     expect(prompt).toContain('Local clone /src/app; repository acme/app; base branch main.')
@@ -44,7 +44,7 @@ describe('Lead Sessions', () => {
 
   it('follows a team override of the Lead section and names the default branch when none is set', () => {
     const config = { ...defaultPrompts(), overrides: { 'runtime/lead': { text: '## lead\nOur own Lead rules.', base: 'previous' } } }
-    const prompt = composeLeadPrompt(config, { ...PROJECT, branch: '' })
+    const prompt = composeSurfacePrompt(config, 'lead', { project: { ...PROJECT, branch: '' } })
     expect(prompt).toContain('Our own Lead rules.')
     expect(prompt).toContain('base branch the repository default branch')
   })

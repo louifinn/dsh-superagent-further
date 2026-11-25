@@ -11,6 +11,7 @@ import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV } from '../kv.ts'
+import { SURFACES, type RoleId, type SurfaceSection } from './surfaces.ts'
 
 /** Prompt sections the team writes; the built-in parts follow dsh-superagent-further's text until the team overrides them. */
 export const TEAM_SECTIONS = ['communication', 'scope', 'delivery'] as const
@@ -99,41 +100,67 @@ export function policySection(settings: Settings, config: PromptConfig = default
   return { key: part, text: fill(builtIn(config, part), { version: policyVersion(settings), mode: settings.eval.mode, rules: rules.join('\n') }) }
 }
 /**
- * Assemble a role's system prompt sections in order from fixed templates, team sections, the generated execution environment
- * and, last, the main Session's generated Policy section, which nothing follows, and whose change leaves the rest unchanged.
+ * Assemble one Surface's system prompt sections in the order the surface declares (docs/015 D1): the role's own part, the
+ * team sections, the conversation guides, the generated environment and Policy parts, and, for a Lead, the project it owns.
+ * Moving a section in or out of a role is a `SURFACES` edit, not a second composer function.
  */
-export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }) {
+function surfaceSections(config: PromptConfig, role: RoleId, options: {
+  environment?: string
+  policy?: { key: string; text: string }
+  project?: Project
+} = {}): { name: string; kind: 'fixed' | 'team' | 'generated'; key?: string; heading?: string; text: string }[] {
   // A built-in part names the key its text is overridden by, which for the handoff names the role.
   const fixed = (name: string, part = name) => ({ name, kind: 'fixed' as const, key: part, text: builtIn(config, part as PartKey) })
   const team = (name: TeamSection) => ({ name, kind: 'team' as const, heading: `## ${TEAM_HEADINGS[name]}`,
     text: config[name] ? `## ${TEAM_HEADINGS[name]}\n${config[name]}` : '' })
-  return [
-    fixed('runtime/shared'), fixed(`runtime/${role}`),
-    ...TEAM_SECTIONS.map(team),
-    ...['subscriptions', 'replies', role === 'orchestrator' ? 'dispatch' : 'work'].map(name => fixed(`runtime/${name}`)),
-    ...role === 'orchestrator' ? [fixed('runtime/admission')] : [],
-    fixed('runtime/handoff', `runtime/handoff/${role}`),
-    ...environment ? [{ name: 'runtime/environment', kind: 'generated' as const, key: 'runtime/environment', text: environment }] : [],
-    ...role === 'orchestrator' && policy ? [{ name: 'runtime/policy', kind: 'generated' as const, ...policy }] : [],
-  ].filter(part => part.text)
+  const section = (key: SurfaceSection) => {
+    switch (key) {
+      case 'shared': return [fixed('runtime/shared')]
+      case 'role': return [fixed(`runtime/${role}`)]
+      case 'team/communication': return [team('communication')]
+      case 'team/scope': return [team('scope')]
+      case 'team/delivery': return [team('delivery')]
+      case 'subscriptions': return [fixed('runtime/subscriptions')]
+      case 'replies': return [fixed('runtime/replies')]
+      case 'dispatch': return [fixed('runtime/dispatch')]
+      case 'work': return [fixed('runtime/work')]
+      case 'admission': return [fixed('runtime/admission')]
+      case 'handoff': return [fixed('runtime/handoff', `runtime/handoff/${role}`)]
+      // A Lead's environment is always present: the generated part, or the setup-wait notice while setup is missing.
+      case 'environment': return options.environment === undefined && role !== 'lead' ? []
+        : [{ name: 'runtime/environment', kind: 'generated' as const, key: 'runtime/environment',
+          text: options.environment ?? environmentSection(config, undefined) }]
+      case 'policy': return options.policy === undefined ? []
+        : [{ name: 'runtime/policy', kind: 'generated' as const, ...options.policy }]
+      case 'project': return options.project === undefined ? [] : [{ name: 'project', kind: 'generated' as const, text: projectSection(options.project) }]
+    }
+  }
+  const parts: { name: string; kind: 'fixed' | 'team' | 'generated'; key?: string; heading?: string; text: string }[] = []
+  for (const key of SURFACES[role].sections) parts.push(...section(key))
+  return parts
+}
+/**
+ * Assemble a role's system prompt sections in order from its `SURFACES` entry: the fixed templates, team sections, the
+ * generated execution environment and, last, the main Session's generated Policy section. The main Session's prompt never
+ * carries a project; the Lead's prompt ({@link composeSurfacePrompt}) is the same composer over its own surface.
+ */
+export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }) {
+  return surfaceSections(config, role, { environment, policy }).filter(part => part.text)
 }
 export function composePrompt(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }): string {
   return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
 }
+/**
+ * The prompt of a role that has no `PART_KEYS` preview of its own (today the Lead): the same section list its `SURFACES`
+ * entry declares, with the environment always generated and, for a Lead, the project it owns last.
+ */
+export function composeSurfacePrompt(config: PromptConfig, role: RoleId,
+  options: { environment?: string; policy?: { key: string; text: string }; project?: Project } = {}): string {
+  return surfaceSections(config, role, options).map(part => part.text).filter(Boolean).join('\n\n')
+}
 export function composeSkill(config: PromptConfig, name: string): string {
   if ((OPERATIONAL_SKILLS as readonly string[]).includes(name)) return bundledSkills[name as OperationalSkill].content
   return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
-}
-/**
- * The prompt of a project's Lead Session: the shared rules and the Lead's own instructions, the team's sections, the two
- * conversation guides, the execution environment, and the project the Lead owns. It leaves out the Orchestrator's admission
- * and Policy sections and the worker's work section, which do not apply to a Lead.
- */
-export function composeLeadPrompt(config: PromptConfig, project: Project, variables?: Variable[]): string {
-  const team = (name: TeamSection) => config[name] ? `## ${TEAM_HEADINGS[name]}\n${config[name]}` : ''
-  return [builtIn(config, 'runtime/shared'), builtIn(config, 'runtime/lead'), ...TEAM_SECTIONS.map(team),
-    builtIn(config, 'runtime/subscriptions'), builtIn(config, 'runtime/replies'), environmentSection(config, variables),
-    projectSection(project)].filter(Boolean).join('\n\n')
 }
 /** The project a Lead owns, named so the Lead knows its clone, repository and base branch; a person may talk to it. */
 function projectSection(project: Project): string {

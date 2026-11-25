@@ -17,13 +17,14 @@ import type { Variable } from './execution-environment.ts'
 import { RetryHealth, type BudgetRetryStatus } from './retry-health.ts'
 import { initializeRoleModel, resolveRoleModel, sessionModel, switchSessionModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
-import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
+import { composeSurfacePrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
 import { leadReportRelay } from './notices.ts'
 import { leadTools } from './tools/lead.ts'
 import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
 import { memoryTools } from './tools/memory.ts'
+import { SURFACES, type RoleId } from './surfaces.ts'
 import type { Store } from './store.ts'
 import type { CaptureLogs } from './logs.ts'
 import type { Project } from '../projects.ts'
@@ -484,7 +485,7 @@ export class Sessions {
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-further-policy', order: 9999, interpolate: false, text: context => {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
-      const composed = project ? composeLeadPrompt(version.config, project)
+      const composed = project ? composeSurfacePrompt(version.config, 'lead', { project })
         : host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       const delivery = current && canComplete(current.deliverable)
         ? '\nThis Ticket accepts an ANSWER: read the live checkout and never modify it. Do not create branches, commits, or pull requests; deliver the answer in your ready report.'
@@ -551,7 +552,13 @@ export class Sessions {
     const scopedMemoryTools = master ? memoryTools(host.store.memories)
       : project ? memoryTools(host.store.memories, { project: project.id, ticketOf: id => host.store.tickets.get(id) })
         : []
+    // The declared surface is the authority: a tool registered for a role that does not declare it is drift the compiler
+    // cannot see, so registration refuses it instead of letting docs/015 and the runtime disagree.
+    const role: RoleId = master ? 'orchestrator' : project ? 'lead' : 'worker'
     for (const tool of [...tools, ...scopedMemoryTools]) {
+      if (!SURFACES[role].tools.includes(tool.name)) {
+        throw new Error(`dsh-superagent-further registers ${tool.name} on the ${role} surface, which its SURFACES entry does not declare`)
+      }
       register(tool.name, tool.description, tool.schema, tool.execute)
     }
     if (master) {
