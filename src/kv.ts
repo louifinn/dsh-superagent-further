@@ -48,6 +48,11 @@ export const KV = {
   },
   /** The dedupe key of the model-failure set already reported, so one outage is one message (issue #26). */
   faults: { models: record<string>('model-fault-notified') },
+  /** The recovery ladder (issue #23): how many times a Ticket's stall was continued, and the continue nudge per Assignment. */
+  recovery: {
+    attempts: family<number, [ticket: string]>('recovery-attempts:'),
+    nudged: family<boolean, [assignment: string]>('recovery-nudged:'),
+  },
   /** Schema 11 migration: legacy main-Session queues imported into the effect table. */
   queues: { relays: record<{ id: string; text: string }[]>('relay-queue'), unsubscribed: record<string[]>('subscription-results'),
     prompts: record<number | null>('prompt-notification'), settings: record<number | null>('settings-notification') },

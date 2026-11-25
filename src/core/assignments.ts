@@ -82,15 +82,16 @@ export class Assignments extends EnginePart {
   /**
    * Handles a running assignment interrupted by a host restart: restarts it with a recovery note unless its latest report is
    * `waiting`, `ready`, `blocked`, or `failed` and no input was delivered after that report, in which case it keeps its
-   * session and flushes any waiting undelivered inputs.
+   * session and flushes any waiting undelivered inputs. `restart` forces the restart, which the bounded recovery ladder
+   * (issue #23) uses for a waiting report the watchdog itself raised.
    */
-  interrupted(ticketId: string, assignmentId: string): void {
+  interrupted(ticketId: string, assignmentId: string, restart = false): void {
     const ticket = this.running(ticketId, assignmentId)
     const running = ticket && runningAssignment(ticket)
     if (!ticket || !running) return
     const report = running.report
     const busy = !!running.deliveredAt && !!report && running.deliveredAt >= report.at
-    const settled = !!report && ['waiting', 'ready', 'blocked', 'failed'].includes(report.state) && !busy
+    const settled = !restart && !!report && ['waiting', 'ready', 'blocked', 'failed'].includes(report.state) && !busy
     if (!settled) this.tickets.restart(ticket, running, 'hostRestarted', RECOVERY_NOTE)
     else if (ticket.undelivered.length) this.options.executor.deliver(ticket, running)
   }

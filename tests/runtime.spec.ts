@@ -2291,14 +2291,69 @@ it('raises attention once for a running Assignment whose worker Session stays id
   expect(runtime.store.leads.getByRequest('lead', requestId)).toMatchObject({ kind: 'notice', deliveredAt: expect.any(String) })
   const notices = () => deliveries.mock.calls.filter(([call]) => call.sessionId === 'lead-default' && call.text.includes('lead_notify_worker'))
   expect(notices()).toHaveLength(1)
-  // Another pass past the threshold does not repeat the notice or change the question.
-  await runtime.watchdogScan(new Date(Date.now() + 12 * 60_000))
-  expect(notices()).toHaveLength(1)
-  expect(runtime.store.tickets.get(ticket.id)!.attention?.id).toBe(watched.attention!.id)
-  // A newer report shows the worker is alive: the watchdog clears the attention it raised.
+  // A newer report shows the worker is alive: the watchdog clears the attention it raised and the ladder's continue.
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'still here' })
+  agent.status = 'idle'
   await runtime.watchdogScan(new Date(Date.now() + 25 * 60_000))
   expect(runtime.store.tickets.get(ticket.id)!.attention).toBeUndefined()
+})
+
+it('continues a stalled Assignment once, restarts it once, and then leaves it to the Lead (issue #23)', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const agent = agents.get(sessionId)! as { status: string }
+  const before = runtime.store.tickets.get(ticket.id)!
+  const first = before.assignments.at(-1)!.id
+  const old = new Date(Date.now() - 11 * 60_000).toISOString()
+  // A first turn that ended without a report is still a stall: the watchdog falls back to when the Assignment started.
+  runtime.store.tickets.save({ ...before, updatedAt: new Date().toISOString(),
+    assignments: before.assignments.map(item => item.id === first ? { ...item, startedAt: old, idleAt: undefined, report: undefined } : item) })
+  agent.status = 'idle'
+  await runtime.watchdogScan()
+  expect(runtime.store.get(KV.recovery.attempts(ticket.id))).toBe(1)
+  expect(deliveries.mock.calls.some(([call]) => call.sessionId === sessionId && call.text.includes('Continue the Assignment now'))).toBe(true)
+  expect(runtime.store.tickets.get(ticket.id)!.assignments).toHaveLength(1)
+  // A second window without a report restarts the Assignment once.
+  agent.status = 'idle'
+  await runtime.watchdogScan(new Date(Date.now() + 12 * 60_000))
+  const restarted = runtime.store.tickets.get(ticket.id)!
+  expect(restarted.assignments).toHaveLength(2)
+  expect(restarted.assignments.at(-1)!.id).not.toBe(first)
+  // A third window does not restart it again: after one continue and one restart the Lead owns the escalation.
+  await runtime.pump(); await runtime.idle()
+  await assign(ticket.id)
+  const current = runtime.store.tickets.get(ticket.id)!
+  const running = current.assignments.at(-1)!
+  runtime.store.tickets.save({ ...current, assignments: current.assignments.map(item => item.id === running.id
+    ? { ...item, startedAt: old, idleAt: undefined, report: undefined } : item) })
+  ;(agents.get(sessionId)! as { status: string }).status = 'idle'
+  await runtime.watchdogScan(new Date(Date.now() + 30 * 60_000))
+  expect(runtime.store.tickets.get(ticket.id)!.assignments).toHaveLength(2)
+})
+
+it('never automatically continues a worker whose report waits for or blocks on a person (issue #23)', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const agent = agents.get(sessionId)! as { status: string }
+  const before = runtime.store.tickets.get(ticket.id)!
+  const first = before.assignments.at(-1)!.id
+  const old = new Date(Date.now() - 11 * 60_000).toISOString()
+  runtime.store.tickets.save({ ...before, updatedAt: new Date().toISOString(),
+    assignments: before.assignments.map(item => item.id === first
+      ? { ...item, idleAt: old, report: { state: 'blocked', summary: 'Needs the operator to decide', at: old } } : item) })
+  agent.status = 'idle'
+  await runtime.watchdogScan()
+  await runtime.watchdogScan(new Date(Date.now() + 30 * 60_000))
+  expect(runtime.store.tickets.get(ticket.id)!.assignments).toHaveLength(1)
+  expect(runtime.store.get(KV.recovery.attempts(ticket.id))).toBeUndefined()
+  expect(deliveries.mock.calls.some(([call]) => call.sessionId === sessionId && call.text.includes('recovery-continue:'))).toBe(false)
+})
+
+it('restarts a Ticket once when its worker Session was disposed (issue #23)', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  const first = runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.id
+  ;(runtime as unknown as { ctx: Context }).ctx.emit('agent/disposed', { agent: agents.get(sessionId)! } as never)
+  const after = runtime.store.tickets.get(ticket.id)!
+  expect(after.assignments).toHaveLength(2)
+  expect(after.assignments.at(-1)!.id).not.toBe(first)
 })
 
 it('escalates a project request its Lead leaves unanswered, once', async () => {

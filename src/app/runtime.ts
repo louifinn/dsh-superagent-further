@@ -245,6 +245,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       const sessions = this.sessions = new Sessions({ context: ctx, values: host.values, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime, automations: this.automations, log: this.capture('session'),
         closing: () => this.closing(), environment, onModelRetries: retries => { void this.faults.modelRetries(retries) },
+        onWorkerDisposed: sessionId => { void this.workerDisposed(sessionId) },
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
@@ -749,18 +750,50 @@ export class Runtime implements SourceHost, RuntimeHandle {
       if (tracked && tracked.assignmentId !== assignment.id) this.clearStalled(ticket.id, tracked)
       const agent = this.ctx.agents.get(workerSessionId(ticket.id) as SessionId)
       if (agent && agent.status !== 'idle') continue
-      // The worker's latest activity is its last turn end or its last Report, whichever is later: a Report shows it is alive.
-      const since = [assignment.idleAt, assignment.report?.at].filter((value): value is string => value !== undefined)
-        .sort().at(-1)
+      // The worker's latest activity is its last turn end or its last Report, whichever is later; an Assignment that
+      // never reported a turn falls back to when it started, so a first-turn crash is still detected (issue #23).
+      const since = [assignment.idleAt, assignment.report?.at]
+        .filter((value): value is string => value !== undefined).sort().at(-1) ?? assignment.startedAt
       if (!since || at.getTime() - Date.parse(since) < STALLED_MS) continue
-      const current = this.stalled.get(ticket.id)
       // A Report newer than the one this watchdog wrote shows the worker alive: clear its attention and restart the clock.
+      const current = this.stalled.get(ticket.id)
       if (current && assignment.report && assignment.report.at > current.reportAt) {
         this.clearStalled(ticket.id, current)
+        // A worker that recovered gets its one continue back if it stalls again later (issue #23).
+        this.store.set(KV.recovery.attempts(ticket.id), 0)
         continue
       }
-      // One notice per Assignment, and never over a question or attention another part of the Runtime raised.
-      if (current || ticket.attention) continue
+      // The recovery ladder (issue #23): continue once, restart once, then let the Lead escalate. A waiting or blocked
+      // report is a request for a person and is never auto-continued; a waiting report this watchdog raised itself
+      // (tracked in `current`) is not such a request, so the ladder may still restart that one.
+      const reportState = assignment.report?.state
+      const personRequest = reportState === 'blocked' || (reportState === 'waiting' && current === undefined)
+      if (!personRequest) {
+        const attempts = this.store.get(KV.recovery.attempts(ticket.id)) ?? 0
+        if (attempts === 0) {
+          this.store.set(KV.recovery.attempts(ticket.id), 1)
+          this.store.set(KV.recovery.nudged(assignment.id), true)
+          if (agent && agent.status === 'idle') {
+            void this.sessions.prompt(workerSessionId(ticket.id) as SessionId, `recovery-continue:${assignment.id}`,
+              'Your turn ended without a report and this Assignment is still running. Continue the Assignment now; before the next turn ends, report ready, blocked or failed. Do not start new work outside this Ticket.', 'queue')
+              .catch(error => this.log.warn('dsh-superagent-further: could not continue the stalled Assignment of Ticket %s: %s', ticket.id, String(error)))
+          }
+          this.log.info('dsh-superagent-further: continued the stalled Assignment of Ticket %s once before restarting it', ticket.id)
+        } else if (attempts === 1) {
+          this.store.set(KV.recovery.attempts(ticket.id), 2)
+          try {
+            if (reportState === 'failed') this.engine.retryTicket(ticket.id)
+            else this.engine.assignmentInterrupted(ticket.id, assignment.id, true)
+            this.log.warn('dsh-superagent-further: restarted the stalled Assignment of Ticket %s after one continue', ticket.id)
+          } catch (error) {
+            this.log.warn('dsh-superagent-further: could not restart the stalled Assignment of Ticket %s: %s', ticket.id, String(error))
+          }
+          if (current) this.clearStalled(ticket.id, current)
+          continue
+        }
+      }
+      // One notice per Assignment, and never over a question, a person's request or another attention the Runtime raised.
+      if (current || ticket.attention || personRequest) continue
       const question = `The worker Session ${workerSessionId(ticket.id)} of Assignment ${assignment.id} has been idle since ${since} without a newer Report. Is the Assignment stuck?`
       try {
         const updated = this.engine.report(ticket.id, { state: 'waiting',
@@ -774,6 +807,33 @@ export class Runtime implements SourceHost, RuntimeHandle {
       } catch (error) {
         this.log.warn('dsh-superagent-further watchdog could not raise attention for Ticket %s: %s', ticket.id, String(error))
       }
+    }
+  }
+  /**
+   * A worker Session the host disposed of mid-assignment is a crash from its Ticket's point of view (issue #23): restart
+   * the Assignment once when its report did not ask for a person, and hand a waiting or blocked Assignment to the Lead.
+   * The one-restart cap keeps a crash loop bounded; after it the stall path escalates instead.
+   */
+  async workerDisposed(sessionId: string): Promise<void> {
+    const ticketId = sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
+    if (!ticketId) return
+    const ticket = this.store.tickets.get(ticketId)
+    const assignment = ticket && runningAssignment(ticket)
+    if (!ticket || !assignment) return
+    const reportState = assignment.report?.state
+    if (reportState === 'waiting' || reportState === 'blocked') {
+      await this.sessions.lead.stalled(ticket, assignment, assignment.report?.at ?? new Date().toISOString())
+      return
+    }
+    const attempts = this.store.get(KV.recovery.attempts(ticketId)) ?? 0
+    if (attempts >= 2) return
+    this.store.set(KV.recovery.attempts(ticketId), 2)
+    try {
+      if (reportState === 'failed') this.engine.retryTicket(ticketId)
+      else this.engine.assignmentInterrupted(ticketId, assignment.id)
+      this.log.warn('dsh-superagent-further: restarted Ticket %s after its worker Session was disposed', ticketId)
+    } catch (error) {
+      this.log.warn('dsh-superagent-further: could not restart Ticket %s after its worker Session was disposed: %s', ticketId, String(error))
     }
   }
   /**

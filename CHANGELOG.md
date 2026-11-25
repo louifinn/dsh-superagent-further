@@ -8,6 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Unfinished work now recovers through a bounded ladder (issue #23): a running Assignment whose worker ends a turn
+  without a report, or reports failed, gets one continue prompt, then one restart — a failed report through retry, any
+  other through the interrupted path with a recovery note — and after that only the Lead and the attention path escalate;
+  a `waiting` or `blocked` report that asks a person is never continued or restarted automatically; a first turn that
+  never reported counts from when the Assignment started; and a worker Session the host disposes is treated the same way.
 - Incidents can reach a person outside the panel (issue #19): with an alert chat configured in Execution → Incidents, a
   new, reopened or resolved record at or above the alert severity is sent there once per incident and change, deduplicated
   by incident and change and capped per UTC day, and the recovery message has its own switch. A failed send is logged and

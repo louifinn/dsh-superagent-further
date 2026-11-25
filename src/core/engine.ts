@@ -809,8 +809,8 @@ export class Engine {
    * `waiting`, `ready`, `blocked`, or `failed` and no Input reached its worker after that report, in which case it keeps its
    * Session and state and gets the Inputs that wait for it.
    */
-  assignmentInterrupted(ticketId: string, assignmentId: string): void {
-    this.repo.atomic(() => { this.assignments.interrupted(ticketId, assignmentId) })
+  assignmentInterrupted(ticketId: string, assignmentId: string, restart = false): void {
+    this.repo.atomic(() => { this.assignments.interrupted(ticketId, assignmentId, restart) })
   }
 
   // Settings

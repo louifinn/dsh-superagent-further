@@ -53,6 +53,8 @@ export interface SessionsHost {
   readonly log?: CaptureLogs
   /** Called whenever the model-budget retry set changes, so the Runtime can alert a person about a real outage (issue #26). */
   onModelRetries?(retries: readonly BudgetRetryStatus[]): void
+  /** Called when the host disposed of a worker Session mid-assignment, so the Runtime can recover the Ticket (issue #23). */
+  onWorkerDisposed?(sessionId: string): void
 }
 
 /**
@@ -180,6 +182,8 @@ export class Sessions {
     ctx.on('agent/disposed', ({ agent }) => {
       this.release(agent)
       this.retryHealth.clear(agent.id); this.updateModelHealth()
+      // A worker Session the host disposed of mid-assignment is a crash from the Ticket's point of view (issue #23).
+      if (agent.id.startsWith('worker-')) this.host.onWorkerDisposed?.(agent.id)
     })
     ctx.on('session/event', (session, event) => {
       const agent = ctx.agents.get(session.id)
