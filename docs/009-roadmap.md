@@ -738,7 +738,10 @@ when an escalation waits four hours for an Orchestrator decision; operator-confi
 worker's own attention question stay open. [#35](https://github.com/louifinn/dsh-superagent-further/issues/35) names the
 delivery-contract shapes in the admission and dispatch prompts — a review spanning projects accepts as one answer request
 with one unit per project and no worktree name, a change keeps one worktree name with `after` edges — and turns a missing
-project unit or a change without a name into a field-named refusal instead of a silent downgrade.
+project unit or a change without a name into a field-named refusal instead of a silent downgrade. A first slice of
+[#12](https://github.com/louifinn/dsh-superagent-further/issues/12) now sends a worker report up the chain: the report is
+a durable Lead message and the Orchestrator receives only the Lead's `lead_report` with the original text and the Lead's
+note; assignment dispatch still reaches the Executor directly.
 [#15](https://github.com/louifinn/dsh-superagent-further/issues/15) tests and documents the layer boundary: the
 Orchestrator has no direct tool into a worker Session, a worker's report is a durable Lead message mirrored read-only to
 the Orchestrator, and the shared OS account and state database are declared an accepted operational boundary (not a

@@ -28,6 +28,9 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Fixed
 
+- A worker's report now reaches the Orchestrator only through its project Lead: `orchestrator_report` writes a durable
+  `lead_message` from `executor` to `lead`, the Lead validates it and forwards it with the new `lead_report` tool, and the
+  main Session no longer receives `worker_report` or `worker_attention` relays directly (a first slice of #12).
 - The layer boundary is now a tested and documented contract instead of a convention (issue #15): the
   Orchestrator has no direct tool into a worker Session (the removed `orchestrator_ticket_note` stays
   removed; the only cross-layer path is `orchestrator_lead_instruction` writing a durable Lead message),

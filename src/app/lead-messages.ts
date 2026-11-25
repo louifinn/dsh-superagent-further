@@ -11,8 +11,8 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 
-/** Who a record is from or to: the Orchestrator, a project's Lead, or a person. */
-export type LeadParty = 'orchestrator' | 'lead' | 'person'
+/** Who a record is from or to: the Orchestrator, a project's Lead, its Executor, or a person. */
+export type LeadParty = 'orchestrator' | 'lead' | 'executor' | 'person'
 /** What a record carries: work to start or continue, a settled report, a question, or a notice. */
 export type LeadMessageKind = 'assignment' | 'report' | 'question' | 'notice' | 'instruction'
 /** A durable message between the Orchestrator and a project's Lead. */
@@ -39,7 +39,7 @@ export interface LeadMessage {
 export type LeadMessageInput = Omit<LeadMessage, 'id' | 'at' | 'deliveredAt' | 'ackAt'>
 
 const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'report', 'question', 'notice', 'instruction']),
-  from: z.enum(['orchestrator', 'lead', 'person']), to: z.enum(['orchestrator', 'lead', 'person']), requestId: z.string(),
+  from: z.enum(['orchestrator', 'lead', 'executor', 'person']), to: z.enum(['orchestrator', 'lead', 'executor', 'person']), requestId: z.string(),
   ticketId: z.string().optional(), body: z.string(), at: z.string(), deliveredAt: z.string().optional(), ackAt: z.string().optional() }).strict()
 
 /** The row shape the `lead_message` table stores: a JSON record plus the columns reads and uniqueness use. */

@@ -18,6 +18,7 @@ import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { composeLeadPrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
+import { leadReportRelay } from './notices.ts'
 import { leadTools } from './tools/lead.ts'
 import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
@@ -290,6 +291,21 @@ export class Sessions {
   promptedId(requestId: string): MessageId { return messageId(this.host.values, key(requestId)) }
   /** Enqueues a steering relay to the main Session; relays are durable and retried by `Effects` until delivered, at most once per `requestId`. */
   relay(requestId: string, text: string): void { this.host.effects.enqueue('relay', requestId, { text }) }
+  /**
+   * Relays upward a worker report the project Lead reviewed: the Lead reads the worker's report, then this method emits a
+   * `lead_report` relay to the main Session and acknowledges the Lead's copy. Reports reach the Orchestrator only through
+   * the Lead (docs/010, issue #12).
+   */
+  reportUpward(project: string, reportId: string, note?: string): { reported: true } {
+    const message = this.host.store.leads.getByRequest('lead', `executor-report:${reportId}`)
+    if (!message || message.project !== project || message.ticketId === undefined) throw new UserError('unknownWorkerReport')
+    const ticket = this.host.store.tickets.get(message.ticketId)
+    if (!ticket || ticket.project !== project) throw new UserError('unknownWorkerReport')
+    const relay = leadReportRelay(ticket, reportId, message.body, note)
+    this.relay(relay.id, relay.text)
+    this.host.store.leads.ack(message.id)
+    return { reported: true }
+  }
   /** Enqueues a durable background notice for injection into the main Session; a new notice with the same `name` replaces a still-waiting notice of that `name`. */
   notify(name: string, value: Record<string, unknown>, summary: string): void { this.host.effects.enqueue('notice', name, { value, summary }) }
   /** Waits for currently runnable `notice` effects to settle and returns `'injected'` if notice `name` has reached the main Session or `'pending'` if it is still queued. */
@@ -427,7 +443,9 @@ export class Sessions {
       requestStatus: (ticketId: string) => engine.requestStatus(ticketId),
     }
     const tools = project ? leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
-      notify: (session, text) => this.notifyWorker(project.id, session, text), ...tickets === undefined ? {} : { tickets } }, project)
+      notify: (session, text) => this.notifyWorker(project.id, session, text),
+      report: (reportId: string, note?: string) => this.reportUpward(project.id, reportId, note),
+      ...tickets === undefined ? {} : { tickets } }, project)
       : host.tools(agent, ticket)
     // The main Session remembers across the installation; a project Lead only inside its own project.
     const scopedMemoryTools = master ? memoryTools(host.store.memories)

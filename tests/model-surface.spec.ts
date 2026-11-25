@@ -266,6 +266,10 @@ async function drive(host: Host) {
   await runtime.pump()
   await runtime.idle()
   await run(workerA, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
+  // Reports travel through the Lead (worker → Lead → Orchestrator, #12): the Orchestrator's input is the Lead's relay.
+  for (const message of runtime.store.leads.list('default', 50).filter(item => item.requestId.startsWith('executor-report:'))) {
+    await run('lead-default', 'lead_report', { report_id: message.requestId.slice('executor-report:'.length) })
+  }
   await runtime.receive(feishu('2', '再加一个按钮', { mentions: [], root_id: 'om_1' }))
   await vi.waitFor(async () => {
     await runtime.pump()
@@ -331,7 +335,7 @@ function collect(host: Host, { a, b, workerA, workerB, refusal }: Awaited<Return
   for (const { text } of host.inputs.filter(input => input.sessionId === runtime.masterId)) {
     const value = JSON.parse(text) as Record<string, unknown>
     const kind = String(value.kind ?? Object.keys(value)[0])
-    const owner = kind === 'candidate' ? LINKS : kind === 'worker_attention' ? TOOLS : kind === 'worker_report' ? EXECUTOR : NOTICES
+    const owner = kind === 'candidate' ? LINKS : kind === 'worker_attention' ? TOOLS : kind === 'worker_report' ? EXECUTOR : kind === 'lead_report' ? NOTICES : NOTICES
     surfaces.push({ where: `orchestrator input ${kind}`, owner, role: 'orchestrator', text })
   }
   for (const [id, sessionId] of [[a, workerA], [b, workerB]] as const) {
@@ -427,7 +431,7 @@ it('collects both roles\' tools, prompts, skills and inputs', () => {
   }
   const wheres = new Set(surfaces.map(surface => surface.where))
   for (const where of ['orchestrator prompt runtime/dispatch', 'worker prompt runtime/work', 'skill dsh-superagent-further-github', 'skill dsh-superagent-further-feishu',
-    'orchestrator prompt runtime/admission', 'orchestrator input candidate', 'orchestrator input worker_attention', 'orchestrator input worker_report',
+    'orchestrator prompt runtime/admission', 'orchestrator input candidate', 'orchestrator input lead_report',
     'orchestrator input thread_unrelated', 'orchestrator input ticket_ended', 'orchestrator input settings_saved', 'worker input assignment (explicit)',
     'worker input assignment (inferred)', 'worker input policy-changed', 'worker input resumed', 'worker input status',
     'worker input recovery', 'worker input note', 'worker input trigger (context)', 'orchestrator input follow_up',

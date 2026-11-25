@@ -69,6 +69,13 @@ let agents: Map<string, { id: string; status: string; inbox: { nextTurn: UserMes
 /** The subagent service a Lead uses to start and reach its executor children, and the host uses to wait for and drain them. */
 let subagents: { startActivation: ReturnType<typeof vi.fn>; sendMessage: ReturnType<typeof vi.fn>; interrupt: ReturnType<typeof vi.fn>
   waitForChildren: ReturnType<typeof vi.fn>; listChildren: ReturnType<typeof vi.fn>; drainChildren: ReturnType<typeof vi.fn>; drainDescendants: ReturnType<typeof vi.fn> }
+/** Relays the newest worker report through its project Lead, as production does (worker → Lead → Orchestrator, #12). */
+const reportUpward = async (project = 'default'): Promise<void> => {
+  const lead = await runtime.sessions.ensureLead(project, join(directory, project), project)
+  const message = runtime.store.leads.list(project, 50).find(item => item.requestId.startsWith('executor-report:'))
+  if (!message) throw new Error('no worker report reached the Lead')
+  await runTool(lead.id, 'lead_report', { report_id: message.requestId.slice('executor-report:'.length) })
+}
 const runTool = async (sessionId: string, name: string, args: unknown) => {
   const tool = tools.get(sessionId)?.get(name)
   if (!tool) throw new Error(`Tool ${name} is not registered for ${sessionId}`)
@@ -442,7 +449,10 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(relays(runtime.masterId)).toEqual([])
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'need a decision', human_action: 'Desktop too?' })
   expect(runtime.store.tickets.get(ticket.id)!.attention).toMatchObject({ question: 'Desktop too?' })
-  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_attention', ticket: { ticket_id: ticket.id, attention: { question: 'Desktop too?' } } })
+  await reportUpward()
+  const attention = relays(runtime.masterId).at(-1) as { kind: string; original: Record<string, unknown> }
+  expect(attention).toMatchObject({ kind: 'lead_report' })
+  expect(attention.original).toMatchObject({ kind: 'worker_attention', ticket: { ticket_id: ticket.id, attention: { question: 'Desktop too?' } } })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: 'other', text: 'x' })).rejects.toThrow('current attention question')
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: 'Desktop too?', text: '要不要也改桌面端？' })).toEqual({ status: 'sent' })
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42, human_action: null })
@@ -452,7 +462,10 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
-  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', state: 'ready' })
+  await reportUpward()
+  const ready = relays(runtime.masterId).at(-1) as { kind: string; original: Record<string, unknown> }
+  expect(ready).toMatchObject({ kind: 'lead_report' })
+  expect(ready.original).toMatchObject({ kind: 'worker_report', state: 'ready' })
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '已提交 PR #42，待 review。' })).toEqual({ status: 'sent' })
   const mergedAt = new Date().toISOString()
   const merged = { number: 42, state: 'closed', merged: true, merged_at: mergedAt, html_url: 'https://github.com/acme/widgets/pull/42',
@@ -604,7 +617,10 @@ it('ends a review or read-only ticket on ready with no PR, and delivers its find
   const findings = '审查完成：未发现阻塞问题。'
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: findings })
   expect(runtime.store.tickets.get(ticket.id)).toMatchObject({ ended: expect.objectContaining({ outcome: 'completed' }) })
-  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', state: 'ready', summary: findings })
+  await reportUpward()
+  const reported = relays(runtime.masterId).at(-1) as { kind: string; original: Record<string, unknown> }
+  expect(reported).toMatchObject({ kind: 'lead_report' })
+  expect(reported.original).toMatchObject({ kind: 'worker_report', state: 'ready', summary: findings })
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: findings })).toEqual({ status: 'sent' })
   await expect(runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'late' })).rejects.toThrow('Ticket ended')
 })
@@ -2026,7 +2042,7 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
     running: 0, waiting: 0, projectRequests: { pending: 0, automated: 0 } }])
   // The launch records the dispatch to the Lead and marks it delivered once the child runs; the ending notice follows.
   const messages = runtime.store.leads.list('app')
-  expect(messages.map(message => message.kind).sort()).toEqual(['assignment', 'notice'])
+  expect(messages.map(message => message.kind).sort()).toEqual(['assignment', 'notice', 'report'])
   const assignment = messages.find(message => message.kind === 'assignment')!
   expect(assignment).toMatchObject({ from: 'orchestrator', to: 'lead', ticketId: ticket.id })
   expect(assignment.deliveredAt).toBeDefined()

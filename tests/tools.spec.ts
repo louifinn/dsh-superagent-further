@@ -493,6 +493,17 @@ it('reads a trigger once with the message it replies to and the messages around 
 })
 
 const relaysOf = (kind: string) => h.relays(h.runtime.masterId).filter(item => item.kind === kind)
+/** Relays the newest worker report through its project Lead, as production does (worker → Lead → Orchestrator, #12). */
+const relayUp = async (): Promise<void> => {
+  const lead = await h.runtime.sessions.ensureLead('default', join(h.directory, 'default'), 'Default')
+  const message = h.runtime.store.leads.list('default', 50).find(item => item.requestId.startsWith('executor-report:'))
+  if (!message) throw new Error('no worker report reached the Lead')
+  await h.runTool(lead.id, 'lead_report', { report_id: message.requestId.slice('executor-report:'.length) })
+  await h.runtime.pump()
+  await h.runtime.idle()
+}
+/** The original worker relay a Lead forwarded upward. */
+const originalOf = (relay: Record<string, unknown>): Record<string, unknown> => relay.original as Record<string, unknown>
 const notices = () => h.agents.get(h.runtime.masterId)!.inject.mock.calls
   .map(([message]) => JSON.parse(message.content.map(block => block.type === 'text' ? block.text : '').join('')) as Record<string, unknown>)
 
@@ -529,12 +540,15 @@ it('relays a worker\'s report with its ticket card and the start of its summary,
   const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'), 'answer')
   await h.runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'Needs a decision.', human_action: 'Desktop too?' })
   await h.runtime.idle()
-  expect(relaysOf('worker_attention').at(-1)).toEqual({ kind: 'worker_attention', state: 'progress', read: `ticket/${ticket.id}/result`,
+  await relayUp()
+  expect(relaysOf('lead_report').at(-1)).toMatchObject({ kind: 'lead_report' })
+  expect(originalOf(relaysOf('lead_report').at(-1)!)).toEqual({ kind: 'worker_attention', state: 'progress', read: `ticket/${ticket.id}/result`,
     ticket: expect.objectContaining({ ticket_id: ticket.id, state: 'person/answer', attention: expect.objectContaining({ question: 'Desktop too?' }) }) })
   const summary = 'Done. ' + 'Evidence. '.repeat(100)
   await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary, human_action: null })
   await h.runtime.idle()
-  const report = relaysOf('worker_report').at(-1)!
+  await relayUp()
+  const report = originalOf(relaysOf('lead_report').at(-1)!)
   expect(report).toMatchObject({ ticket: { ticket_id: ticket.id, title: ticket.title }, trigger_id: trigger.id, state: 'ready', chars: summary.length,
     read: `ticket/${ticket.id}/result` })
   expect(String(report.summary)).toBe(summary.slice(0, 600))

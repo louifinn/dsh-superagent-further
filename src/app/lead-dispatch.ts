@@ -207,6 +207,31 @@ export class LeadDispatch {
     }
   }
 
+  /**
+   * Delivers a worker's report relay to the project Lead. The Lead reviews it and relays it upward with `lead_report`;
+   * the Orchestrator hears report facts only through that step (docs/010, issue #12). Durable like every Lead prompt: the
+   * message is written before its prompt, so a failed prompt waits for the next reconciliation.
+   */
+  async reportReceived(ticket: Ticket, relay: { id: string; text: string }): Promise<void> {
+    if (ticket.project === undefined || ticket.project === '') return
+    const project = this.projectOf(ticket.project)
+    if (!project) return
+    const requestId = `executor-report:${relay.id}`
+    if (this.host.store.leads.getByRequest('lead', requestId)) return
+    const body = `The worker of Ticket ${ticket.id} "${ticket.title}" in project ${project.id} reported:\n${relay.text}\n\n`
+      + 'Review the report, then relay it upward with the lead_report tool, passing report_id ' + relay.id + '. '
+      + 'Do not start new work or change the external thread unless a person asks.'
+    try {
+      const session = await this.host.ensureLead(project)
+      const message = this.host.store.leads.send({ project: project.id, kind: 'report', from: 'executor', to: 'lead',
+        requestId, ticketId: ticket.id, body: relay.text })
+      await this.host.prompt(session, requestId, body)
+      this.host.store.leads.deliver(message.id)
+    } catch (error) {
+      this.host.warn?.(`could not prompt the Lead of project ${project.id} about the report on Ticket ${ticket.id}`, error)
+    }
+  }
+
   /** Records the Lead's disposition of a request, acknowledges its prompts, and tells the Session that raised it. */
   async decide(request: ProjectRequest, input: { action: 'accept' | 'reject' | 'needs-info'; reply: string; notes?: string }):
   Promise<{ request: ProjectRequest; delivered: boolean }> {

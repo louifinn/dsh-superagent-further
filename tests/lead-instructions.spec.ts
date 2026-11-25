@@ -1,4 +1,5 @@
 /** Lead-mediated ticket instructions: the Orchestrator asks, the project Lead decides and acts, and nothing acts directly. */
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { feishu, startRuntime, type Host } from './fixtures/host.ts'
 
@@ -46,7 +47,7 @@ it('keeps an instruction out of the worker Session and offers no direct Orchestr
   })).rejects.toThrow()
 })
 
-it('delivers a worker report to its project Lead and only mirrors a read-only notice to the Orchestrator', async () => {
+it('delivers a worker report to its project Lead, which forwards it to the Orchestrator', async () => {
   const accepted = await h.acceptedTicket(feishu('3', '@bot 审查这个仓库'), 'answer')
   const raised = await h.runTool(accepted.sessionId, 'request_create', {
     title: 'Need a decision', instruction: 'The review found a decision for the Lead.', evidence: 'The page layout is open.',
@@ -55,9 +56,21 @@ it('delivers a worker report to its project Lead and only mirrors a read-only no
   await h.runTool(accepted.sessionId, 'orchestrator_report', {
     state: 'ready', summary: 'found a decision for the lead', requests: [raised.id],
   })
-  // The actionable report is a durable Lead message; the Orchestrator Session only receives the mirror notice.
+  // The actionable report is a durable Lead message, and so is the worker's report the Lead reviews.
   expect(h.runtime.store.leads.getByRequest('lead', `worker-report:${raised.id}`)).toMatchObject({ kind: 'report', to: 'lead' })
-  const mirrored = h.relays(h.runtime.masterId)
-  expect(mirrored).toHaveLength(1)
-  expect(mirrored[0]).toMatchObject({ kind: 'worker_report' })
+  const delivered = h.runtime.store.leads.list('default', 50).find(item => item.requestId.startsWith('executor-report:'))!
+  expect(delivered).toMatchObject({ kind: 'report', from: 'executor', to: 'lead' })
+  // Reports travel stepwise: the Orchestrator hears nothing until the Lead forwards the report upward.
+  expect(h.relays(h.runtime.masterId)).toHaveLength(0)
+  const lead = await h.runtime.sessions.ensureLead('default', join(h.directory, 'default'), 'Default')
+  const forwarded = await h.runTool(lead.id, 'lead_report', {
+    report_id: delivered.requestId.slice('executor-report:'.length), note: 'Reviewed: the layout question is real.',
+  }) as { reported: boolean }
+  expect(forwarded.reported).toBe(true)
+  expect(h.runtime.store.leads.get(delivered.id)!.ackAt).toBeDefined()
+  await h.runtime.pump()
+  await h.runtime.idle()
+  const relayed = h.relays(h.runtime.masterId)
+  expect(relayed).toHaveLength(1)
+  expect(relayed[0]).toMatchObject({ kind: 'lead_report' })
 })

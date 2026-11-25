@@ -33,6 +33,8 @@ export interface LeadToolsHost {
   readonly session: string
   /** Relays a notice to a worker or reviewer Session of this project; the Sessions layer validates the Session belongs to it. */
   notify(session: string, text: string): Promise<{ delivered: true }>
+  /** Relays a worker report this Lead reviewed upward to the Orchestrator (worker → Lead → Orchestrator). */
+  report(reportId: string, note?: string): { reported: true }
   /** The Engine's ticket commands; the runtime binds them once its composition is complete (ADR-0008). */
   readonly tickets?: LeadTicketHost
 }
@@ -413,5 +415,16 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       text: z.string().trim().min(1).max(2_000).describe('The notice, in the language of the work.'),
     }).strict(),
     execute: async ({ session, text }: { session: string; text: string }) => host.notify(session, text),
+  }), tool({
+    name: 'lead_report',
+    description: 'Relay a worker report you reviewed upward to the Orchestrator. Take the report_id from the worker-report '
+      + 'message; the Orchestrator receives your relay with the worker\'s original report and your optional note. Reports reach '
+      + 'the Orchestrator only through this tool: do not start new work or change the external thread, and never relay a report '
+      + 'you did not review.',
+    schema: z.object({
+      report_id: z.string().trim().min(1).max(200).describe('The report_id from the worker-report message.'),
+      note: z.string().trim().min(1).max(2_000).optional().describe('Your review: what you checked and what the Orchestrator should know.'),
+    }).strict(),
+    execute: async ({ report_id, note }: { report_id: string; note?: string }) => host.report(report_id, note),
   })]
 }

@@ -2479,6 +2479,37 @@ Parameters:
 }
 ```
 
+### `lead_report`
+
+Relay a worker report you reviewed upward to the Orchestrator. Take the report_id from the worker-report message; the Orchestrator receives your relay with the worker's original report and your optional note. Reports reach the Orchestrator only through this tool: do not start new work or change the external thread, and never relay a report you did not review.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The report_id from the worker-report message."
+    },
+    "note": {
+      "description": "Your review: what you checked and what the Orchestrator should know.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "report_id"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## The Host schedule service is installed
 
 ### `automation_create`
@@ -2804,4 +2835,4 @@ Parameters:
 
 ## Total
 
-53 distinct tools across 5 groups (60 registrations).
+54 distinct tools across 5 groups (61 registrations).

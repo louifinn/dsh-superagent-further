@@ -190,11 +190,13 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
             })) }) }
           const updated = host.engine.report(ticketId, report)
           const relay = reportRelay(updated, report)
-          if (relay) host.sessions.relay(relay.id, relay.text)
-          const notification = relay ? 'orchestrator' : 'internal_only'
-          return { result: { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }, updated }
+          const notification = relay ? 'lead' : 'internal_only'
+          return { result: { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }, updated, relay }
         })
         host.log?.info('report.recorded ticket=%s state=%s outcome=%s', ticketId, args.state, outcome.updated.ended?.outcome ?? 'none')
+        // Reports travel stepwise: the worker's report reaches its project Lead, which reviews it and relays it upward. No
+        // worker report is enqueued for the main Session directly (docs/010, issue #12).
+        if (outcome.relay) await host.sessions.lead.reportReceived(outcome.updated, outcome.relay)
         // Prompting the Lead is best-effort and outside the transaction: the report is already durable, and a Lead that
         // cannot be woken leaves the request waiting for the next reconciliation or Lead turn.
         await host.sessions.lead.reported(outcome.updated, { state: args.state, summary: args.summary }, requests)

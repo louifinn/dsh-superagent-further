@@ -127,3 +127,17 @@ export function reportRelay(ticket: Ticket, report: Pick<WorkerReport, 'state' |
   if (report.state === 'progress' && !report.answers) return undefined
   return resultRelay(ticket, report.state, report.summary, report.answers)
 }
+/**
+ * Builds the main-Session relay for a worker report a project Lead reviewed and forwarded. Reports travel stepwise
+ * (worker → Lead → Orchestrator), so the Orchestrator reads the Lead's relay: it carries the worker's original report
+ * and the Lead's note, and it is the only route by which report facts reach the Orchestrator (docs/010, issue #12).
+ */
+export function leadReportRelay(ticket: Ticket, reportId: string, original: string, note?: string): Relay {
+  // Embed the worker's report as data so the Orchestrator reads its fields, not an escaped JSON string.
+  const forwarded = ((): unknown => {
+    try { return JSON.parse(original) as unknown } catch { return original }
+  })()
+  const report = { kind: 'lead_report', ticket: brief(ticket), report_id: reportId, ...note ? { note } : {},
+    original: forwarded, read: `ticket/${ticket.id}/result` }
+  return { id: `lead-report:${reportId}`, text: JSON.stringify(report) }
+}
