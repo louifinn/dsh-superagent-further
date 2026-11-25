@@ -8,6 +8,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ### Added
 
+- Incidents can reach a person outside the panel (issue #19): with an alert chat configured in Execution → Incidents, a
+  new, reopened or resolved record at or above the alert severity is sent there once per incident and change, deduplicated
+  by incident and change and capped per UTC day, and the recovery message has its own switch. A failed send is logged and
+  retried by the next change; the daily digest now repeats up to five open incidents under “Needs attention” as a
+  low-frequency backstop.
 - A Lead escalation and a project request that reaches needs-attention now wake the Orchestrator
   instead of waiting for a pull (issue #16): the Engine announces `project-request.escalated`, the Runtime
   queues a durable `wake` prompt for the main Session naming `orchestrator_escalation_decide`, and

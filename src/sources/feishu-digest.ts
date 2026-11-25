@@ -76,7 +76,7 @@ const byProject = (tickets: readonly Ticket[]): [string, Ticket[]][] => {
  * stays one flat list, exactly as before projects existed.
  */
 export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonly<Record<string, string>> = {},
-  requests: readonly Request[] = []): string => {
+  requests: readonly Request[] = [], incidents: readonly { severity: string; title: string }[] = []): string => {
   const person = tickets.filter(ticket => ticketStage(ticket).stage === 'person')
   const working = tickets.length - person.length
   const speakChinese = person.length === 0
@@ -122,6 +122,13 @@ export const digestText = (tickets: readonly Ticket[], now: Date, names: Readonl
     }
     if (inFlight.length > SHOWN) lines.push(speakChinese ? `（其余 ${inFlight.length - SHOWN} 个请求见面板。）` : `(${inFlight.length - SHOWN} more are in the panel.)`)
   }
+  // A person still hears about the host's own findings here when every incident alert was missed (issue #19).
+  if (incidents.length > 0) {
+    lines.push(speakChinese ? `待处理故障 ${incidents.length} 条：` : `${incidents.length} incident${incidents.length === 1 ? ' needs' : 's need'} attention:`)
+    for (const incident of incidents.slice(0, SHOWN)) {
+      lines.push(speakChinese ? `· ${incident.severity}：${incident.title}` : `· ${incident.severity}: ${incident.title}`)
+    }
+  }
   lines.push(speakChinese ? '这条摘要每天一次；工单的实际状态以面板为准。' : 'This summary comes once a day; the panel has the current state.')
   return lines.join('\n')
 }
@@ -151,7 +158,7 @@ export async function digestTick(ctx: SourceContext, now = new Date()): Promise<
   }
   try {
     const names = Object.fromEntries((ctx.projects ?? []).map(({ id, name }) => [id, name]))
-    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now, names, ctx.requests ?? []))
+    await ctx.commands.lark(['im', '+messages-send', '--chat-id', chat, '--markdown', '-', '--idempotency-key', `digest-${day}`], undefined, digestText(ctx.tickets.open(), now, names, ctx.requests ?? [], ctx.state.get(KV.incidents.digest) ?? []))
     ctx.state.set(KV.feishu.digest, { day, at: now.toISOString() })
     ctx.report('digest', { state: 'ready', detail: 'Sent today', nextAt })
     return 'sent'

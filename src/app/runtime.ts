@@ -59,6 +59,7 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { reclaimWorktrees } from './worktrees.ts'
 import { SelfReports } from './self-reports.ts'
 import { Incidents } from './incidents.ts'
+import { Alerts } from './alerts.ts'
 import { Diagnosis, DIAGNOSIS_SCOPE, isDiagnosisSession, withoutDiagnosisSignals } from './diagnosis.ts'
 import { IncidentDetector, type IncidentSignal } from './incident-detectors.ts'
 import { Updates } from './updates.ts'
@@ -118,6 +119,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   readonly selfReports: SelfReports
   /** Deterministic incident records and evidence bundles (ADR-0004). */
   readonly incidents: Incidents
+  /** Sends new, reopened and resolved incidents to the operator's alert chat (issue #19). */
+  readonly alerts: Alerts
   /** Bounded, read-only diagnosis of high-severity incidents (ADR-0005). */
   readonly diagnosis: Diagnosis
   /** The supervisor-owned update pipeline as the panel sees it: read-only status plus a rollback request writer (ADR-0007). */
@@ -253,6 +256,17 @@ export class Runtime implements SourceHost, RuntimeHandle {
         health: board.claim('self-reports', { state: 'ready', detail: 'The Issue outlet is ready' }),
         record: message => this.log.warn('dsh-superagent-further: %s', message),
       })
+      // Incident alerts (issue #19): a configured Feishu chat hears about new, reopened and resolved records; the
+      // small snapshot below lets the daily digest repeat open incidents when an alert was missed.
+      this.alerts = new Alerts({ settings: () => store.settings(), commands, logs: this.logs,
+        state: { get: value => store.get(value), set: (value, next) => store.set(value, next) } })
+      const refreshIncidentDigest = (): void => {
+        const open = store.incidents.list({ status: 'all' })
+          .filter(incident => incident.status === 'detected' || incident.status === 'bundled' || incident.status === 'diagnosed')
+          .slice(0, 5)
+          .map(incident => ({ severity: incident.severity, title: incident.title }))
+        store.set(KV.incidents.digest, open)
+      }
       // Deterministic incident detection (ADR-0004): pure rules over events, the log stream and health
       // transitions; the records service owns the table, the cooldown and the evidence bundle. No model call, no fix.
       const incidentsHealth = board.claim('incidents', { state: 'ready', detail: 'Incident detection is ready' })
@@ -269,6 +283,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         health: incidentsHealth,
         record: message => this.logs.record('info', 'incidents', message),
         healthSnapshot: () => this.health,
+        alert: (incident, change) => { void this.alerts.notify(incident, change).then(refreshIncidentDigest) },
       })
       this.detachIncidentLogs = this.logs.observe((entry, at) => {
         // The diagnosis service's own lines are never detector input, so a diagnosis cannot feed itself (ADR-0005).
@@ -276,6 +291,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         this.detect(withoutDiagnosisSignals(this.detector.observeLog(entry, at)))
       })
       this.incidentsReady = true
+      refreshIncidentDigest()
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger), log: this.capture('executor') })

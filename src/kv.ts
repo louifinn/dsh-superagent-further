@@ -36,7 +36,15 @@ export const KV = {
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },
   /** Incidents: the diagnosis runs spent on one UTC day (`YYYY-MM-DD`), so the budget survives a restart (ADR-0005). */
-  incidents: { diagnoses: family<number, [day: string]>('incident-diagnoses:') },
+  incidents: {
+  diagnoses: family<number, [day: string]>('incident-diagnoses:'),
+  /** One key per incident and change so an incident alert is sent at most once (issue #19). */
+  alert: family<boolean, [incident: string, change: string]>('incident-alert:'),
+  /** Alert messages sent per UTC day, so a burst cannot page a person repeatedly (issue #19). */
+  alertDay: family<number, [day: string]>('incident-alert-day:'),
+  /** The open incidents the daily digest repeats as a low-frequency backstop (issue #19). */
+  digest: record<readonly { severity: string; title: string }[]>('incidents-digest'),
+},
   /** Schema 11 migration: legacy main-Session queues imported into the effect table. */
   queues: { relays: record<{ id: string; text: string }[]>('relay-queue'), unsubscribed: record<string[]>('subscription-results'),
     prompts: record<number | null>('prompt-notification'), settings: record<number | null>('settings-notification') },

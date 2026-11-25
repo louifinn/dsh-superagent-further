@@ -7,3 +7,6 @@ dist/
 
 # A screenshot of a real host shows the operator's workspace and account.
 docs/panel-*.png
+
+# Local agent probes and scratch logs (not part of the plugin)
+.agents/

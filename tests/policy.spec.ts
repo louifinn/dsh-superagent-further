@@ -258,7 +258,7 @@ describe('settings migration', () => {
       executor: { model: null, maxWorkers: 5, projectWorkers: 2, directory: '', prepare: '', blockedCommands: [], projects: [],
         worktreeKeepDays: 7, timeouts: { requestHours: 6, escalationHours: 4, attentionHours: 24 },
         logLevel: 'info', logRetentionDays: 7,
-        incidents: { enabled: true, autoDiagnose: true, dailyBudget: 2, diagnoseDailyBudget: 2, minimumSeverity: 'high' } },
+        incidents: { enabled: true, autoDiagnose: true, dailyBudget: 2, diagnoseDailyBudget: 2, minimumSeverity: 'high', alertChatId: '', alertMinimumSeverity: 'high', alertDailyLimit: 4, alertRecovery: true } },
       memory: MemoryConfigSchema.parse({}),
       language: LanguageConfigSchema.parse({}),
       workspace: { path: '' },

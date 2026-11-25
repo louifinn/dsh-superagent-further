@@ -145,6 +145,8 @@ export interface IncidentsHost {
   health?: Pick<HealthEntry, 'set'>
   /** Records one operational log line under the `incidents` scope. */
   record?(message: string): void
+  /** Alerts a person about a new, reopened or resolved incident (issue #19); absent in unit tests. */
+  alert?(incident: Incident, change: 'opened' | 'reopened' | 'resolved'): void
   now?(): Date
   version?: string | (() => string)
   createId?(): string
@@ -271,6 +273,7 @@ export class Incidents {
     }
     this.host.store.incidents.save(updated)
     this.host.record?.(`incident.reopened id=${existing.id} rule=${updated.rule} occurrences=${updated.occurrences}`)
+    this.host.alert?.(updated, 'reopened')
     return updated
   }
 
@@ -298,6 +301,7 @@ export class Incidents {
     if (bundle !== undefined) { base.evidence_dir = bundle; base.status = 'bundled' }
     this.host.store.incidents.save(base)
     this.host.record?.(`incident.recorded id=${id} rule=${base.rule} severity=${base.severity} occurrences=${base.occurrences}`)
+    this.host.alert?.(base, 'opened')
     return base
   }
 
@@ -308,6 +312,7 @@ export class Incidents {
     const updated: Incident = { ...existing, status: 'resolved', resolution: 'The condition cleared.', updated_at: at.toISOString() }
     this.host.store.incidents.save(updated)
     this.host.record?.(`incident.recovered id=${existing.id} rule=${existing.rule}`)
+    this.host.alert?.(updated, 'resolved')
     return updated
   }
 

@@ -196,6 +196,16 @@ export const IncidentsConfigSchema = z.object({
   dailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
   diagnoseDailyBudget: z.number().int().min(0).max(INCIDENT_DAILY_BUDGET_MAX).default(2),
   minimumSeverity: z.enum(INCIDENT_SEVERITIES).default('high'),
+  /**
+   * Where to alert a person about incidents (issue #19): a Feishu chat id; empty keeps alerts off. Alerts are separate
+   * from detection, so a quiet record can still reach the operator, and `alertRecovery` sends the all-clear too.
+   */
+  alertChatId: z.string().trim().max(200).default(''),
+  /// The severities an alert carries; `minimumSeverity` keeps low-severity conditions out of the record entirely.
+  alertMinimumSeverity: z.enum(INCIDENT_SEVERITIES).default('high'),
+  /// A hard cap on alert messages per UTC day; incident detection settings still cap new records themselves.
+  alertDailyLimit: z.number().int().min(0).max(48).default(4),
+  alertRecovery: z.boolean().default(true),
 }).strict()
 export type IncidentsConfig = z.infer<typeof IncidentsConfigSchema>
 /** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, blocked commands, and the registered projects. */

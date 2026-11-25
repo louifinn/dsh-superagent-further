@@ -120,4 +120,13 @@ describe('Feishu digest', () => {
     await expect(digestTick(failing.ctx, new Date(2026, 10, 7, 12, 6))).resolves.toBe('sent')
     expect(failing.lark).toHaveBeenCalledTimes(2)
   })
+
+  it('repeats open incidents as a low-frequency backstop', async () => {
+    expect(digestText([], noon(), {}, [], [{ severity: 'critical', title: 'The host is down' }]))
+      .toContain('1 incident needs attention')
+    const backstop = context()
+    backstop.state.set('incidents-digest', [{ severity: 'high', title: 'Source poll failures' }])
+    await expect(digestTick(backstop.ctx, new Date(2026, 10, 7, 12, 5))).resolves.toBe('sent')
+    expect(String(backstop.lark.mock.calls[0]![2])).toContain('Source poll failures')
+  })
 })

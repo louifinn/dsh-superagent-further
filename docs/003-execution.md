@@ -169,6 +169,8 @@ A persistent model failure uses the parent's model: the Executor uses the Lead's
 
 Recovery restores the flow of work; it does not change code, Policy, settings or a Mandate ([ADR 0004](adr/0004-deterministic-incident-detection.md)). A person's explicit stop or request to wait is never overridden by the ladder. Noise control may delay or group a failure, but it may not delete a live high-severity failure from the record or the notification path.
 
+Incident records are durable whether or not anyone is watching the panel. With an alert chat set (Execution → Incidents), a new, reopened or resolved record at or above the alert severity is sent to that chat once per incident and change, within the daily alert cap; a resolved record is sent only when recovery alerts are on. The daily digest repeats up to five open incidents under "Needs attention" as the low-frequency backstop, so an incident is never visible only on a screen nobody opened.
+
 ### Executor blocked or failed
 
 When an Executor Session reports `blocked` or `failed`, or fails to start or errors, which records `failed`, the Ticket takes no automatic Input.

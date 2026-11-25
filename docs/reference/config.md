@@ -237,7 +237,11 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
           "autoDiagnose": true,
           "dailyBudget": 2,
           "diagnoseDailyBudget": 2,
-          "minimumSeverity": "high"
+          "minimumSeverity": "high",
+          "alertChatId": "",
+          "alertMinimumSeverity": "high",
+          "alertDailyLimit": 4,
+          "alertRecovery": true
         }
       },
       "type": "object",
@@ -396,7 +400,11 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
             "autoDiagnose": true,
             "dailyBudget": 2,
             "diagnoseDailyBudget": 2,
-            "minimumSeverity": "high"
+            "minimumSeverity": "high",
+            "alertChatId": "",
+            "alertMinimumSeverity": "high",
+            "alertDailyLimit": 4,
+            "alertRecovery": true
           },
           "type": "object",
           "properties": {
@@ -429,6 +437,31 @@ The JSON Schema of the settings this plugin accepts, generated from `SettingsSch
                 "high",
                 "critical"
               ]
+            },
+            "alertChatId": {
+              "default": "",
+              "type": "string",
+              "maxLength": 200
+            },
+            "alertMinimumSeverity": {
+              "default": "high",
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            },
+            "alertDailyLimit": {
+              "default": 4,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 48
+            },
+            "alertRecovery": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "additionalProperties": false

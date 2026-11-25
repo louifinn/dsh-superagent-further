@@ -266,6 +266,24 @@ export function ExecutionSettings() {
                 value={severity}>{t(`incidentSeverity.${severity}` as never)}</option>)}
             </select>
           </Field>
+          <Field label={t('incidentAlertChat')} hint={t('incidentAlertChatHint')}>
+            <Input value={value.incidents.alertChatId} placeholder={t('incidentAlertChatEmpty')} spellCheck={false}
+              onChange={event => edit({ incidents: { ...value.incidents, alertChatId: event.target.value } })} />
+          </Field>
+          <Field label={t('incidentAlertMinimumSeverity')} hint={t('incidentAlertMinimumSeverityHint')}>
+            <select className="dt-select" value={value.incidents.alertMinimumSeverity}
+              onChange={event => edit({ incidents: { ...value.incidents,
+                alertMinimumSeverity: event.target.value as 'low' | 'medium' | 'high' | 'critical' } })}>
+              {(['low', 'medium', 'high', 'critical'] as const).map(severity => <option key={severity}
+                value={severity}>{t(`incidentSeverity.${severity}` as never)}</option>)}
+            </select>
+          </Field>
+          <Field label={t('incidentAlertDailyLimit')} hint={t('incidentAlertDailyLimitHint')}>
+            <Input type="number" min={0} max={48} required value={String(value.incidents.alertDailyLimit)}
+              onChange={event => edit({ incidents: { ...value.incidents, alertDailyLimit: numberOf(event.target.value) ?? 0 } })} />
+          </Field>
+          <ToggleField label={t('incidentAlertRecovery')} hint={t('incidentAlertRecoveryHint')} checked={value.incidents.alertRecovery}
+            onChange={alertRecovery => edit({ incidents: { ...value.incidents, alertRecovery } })} />
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
