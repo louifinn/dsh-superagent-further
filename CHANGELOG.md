@@ -6,6 +6,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+### Fixed
+- The runtime reports ready before restoring the Lead prompts a restart left unanswered: that durable, idempotent
+  backlog no longer blocks the supervisor's 30-second readiness bound, so a state directory with a large backlog can
+  start the updated plugin (issue #43).
+
 ## [0.5.0] - 2026-11-26
 
 ### Added

@@ -653,7 +653,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   private async initialize(): Promise<void> {
     // Register management HTTP routes before setup completes so operators can fix setup problems in the UI.
     this.disposers.push({ name: 'the management HTTP routes', dispose: registerHttp(this.ctx, this.httpHost()) })
-    if (!await this.setup.run(this.store.settings())) {
+    const setup = await this.setup.run(this.store.settings())
+    if (!setup) {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
     }
@@ -684,6 +685,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       await this.sessions.ensure(this.masterId, workspace, prepared.title, 'orchestrator')
     } catch (error) {
       throw hostedElsewhere(error, this.machine.stateDir, this.masterId)
+    } finally {
     }
     // Publish only after the new master Session exists: a crash before this point replays the same idempotent retirement and
     // reuses the same workspace-derived id on the next start, so no session is ever orphaned or deleted.
@@ -698,13 +700,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
     } catch (error) {
       this.log.warn('dsh-superagent-further could not ensure the Leads of the open tickets: %s', String(error))
     }
-    // A Lead turn that ended while the Host was down may have left requests or worker reports unanswered: prompt it for
-    // each one now, so a restart does not silently drop a request.
-    try {
-      await this.sessions.lead.reconcile()
-    } catch (error) {
-      this.log.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
-    }
+
     // An update that failed or died mid-way is a durable fact in the supervisor's history; the detector may never have seen
     // its log line (a crashed host writes `update.interrupted` only on the next boot, possibly before the observer attaches),
     // so the record is rebuilt here once the workspace exists to hold its evidence (ADR-0004, ADR-0007).
@@ -731,6 +727,18 @@ export class Runtime implements SourceHost, RuntimeHandle {
     this.logStartupSummary()
     void this.cleanupLoop()
     void this.watchdogLoop()
+    void this.resumeLeadPrompts()
+  }
+
+  /**
+   * Prompt every Lead for the requests and reports a restart left unanswered. This recovery is durable and idempotent, so it
+   * runs right after readiness instead of delaying it: on a real state directory the backlog took longer than the supervisor's
+   * 30-second ready bound and kept the updated plugin from starting (issue #43).
+   */
+  private async resumeLeadPrompts(): Promise<void> {
+    try { await this.sessions.lead.reconcile() } catch (error) {
+      this.log.warn('dsh-superagent-further lead reconciliation failed: %s', String(error))
+    }
   }
   /**
    * Send a person's reply on the root thread of an awaiting-approval project request to its Lead (docs/012 D7). The Lead

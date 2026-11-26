@@ -236,6 +236,8 @@ Assignments that are waiting, ready, blocked or failed stay as they are, unless 
 
 Sessions, directories, Subscriptions, pending messages and the stored work below survive a restart, and so does the record of which messages each Executor Session took into its history, which a step does once it claimed them and before its model call: a message taken by a turn the restart cut off counts as read once a Report or the end of a turn follows, while one a step claimed but a cancel or error cut off before the history counts as unread.
 
+The runtime reports ready before it prompts the Leads for the requests and Reports the restart left unanswered; that durable, idempotent backlog runs right after readiness, so a large backlog never delays the supervisor's start bound (issue #43).
+
 A retry or a restart gives the new Assignment, once its Lead starts it, again the messages delivered to the Assignment it replaces that its Executor Session did not take, which a cancel or a cut-off step may have dropped; a copy still waiting in the Session, kept by a restart or persisted across a crash, is taken out before the new Assignment's first message, so the new delivery is the only copy.
 ### Stored work
 
