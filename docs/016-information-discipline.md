@@ -316,6 +316,8 @@ a summary and this document differ, this document wins. Their relationship is:
 
 A deployment satisfies this document only when all of the following hold and are exercised by an acceptance baseline:
 
+The baseline is executable: `tests/propagation.spec.ts` rehearses a normal Ticket, same-level relays, a failure, a cross-project relay and a person's Directive over real Sessions and checks each promise below against the records it produced; `pnpm propagation:check` (part of `pnpm check`) fails when the P1–P12 matrix loses a required edge, path or promise, or when the model starts accepting a forbidden pair (issue #38).
+
 1. The must-know matrix exists and every class names its required levels, direction, deadline and channel.
 2. For each terminal event, a trace shows every required level received it, once, in the correct direction and within
    its deadline; a delivery failure is recorded and escalated.

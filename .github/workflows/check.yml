@@ -49,6 +49,9 @@ jobs:
 
       - run: pnpm check
 
+      # `pnpm check` already runs this gate; the explicit step names the rehearsal matrix in the job log.
+      - run: pnpm propagation:check
+
       # Report coverage without gating the release; the summary lands in the job log.
       - run: pnpm test:coverage
         if: matrix.node == '24.x'

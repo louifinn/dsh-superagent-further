@@ -43,6 +43,11 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   must carry a `clean` or `blocked` verdict and a coverage statement, a blocked verdict keeps the Ticket open, and the
   scope, verdict and coverage appear on cards, notices and the result; a change that matched the review rule, or a
   review without a standard, is refused with the correction (issue #34, ADR-0012).
+- The docs/016 acceptance baseline is a propagation rehearsal: `tests/propagation.spec.ts` drives real Sessions through
+  a normal Ticket, same-level relays, a failure, a cross-project relay and a person's Directive, then checks every
+  P1–P12 promise for direction, duplicates, skipped edges, provenance and timeliness; `scripts/check-propagation.mjs`
+  (`pnpm propagation:check`, also run by `pnpm check` and CI) fails when a required edge, path, promise or forbidden
+  pair goes missing, so the baseline cannot rot into documentation (issue #38).
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
   and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).
