@@ -5,7 +5,7 @@ import { usePoll } from './api.ts'
 import { Button, Icon, Input, SegmentedControl, Tag, type TagTone } from './controls.tsx'
 import { usePanel } from './provider.tsx'
 import { when } from './text.ts'
-import { Hint, LoadMore, LoadState, Section } from './widgets.tsx'
+import { ConfirmButton, Hint, LoadMore, LoadState, Section } from './widgets.tsx'
 
 type LogsView = ApiResponse<'GET logs'>
 type Entry = LogsView['entries'][number]
@@ -48,10 +48,12 @@ export function LogsPage({ query }: { query?: { q?: string } }) {
   const [search, setSearch] = useState(query?.q ?? '')
   const [limit, setLimit] = useState(PAGE)
   const [copied, setCopied] = useState(false)
+  // Bumped after a drop so the table re-reads the ring: the entry stays as the record of what happened.
+  const [nonce, setNonce] = useState(0)
   const trimmed = scope.trim()
   const needle = search.trim()
   const { data, error } = usePoll(() => call('GET logs',
-    { query: { level, scope: trimmed || undefined, q: needle || undefined, limit } }), [level, trimmed, needle, limit])
+    { query: { level, scope: trimmed || undefined, q: needle || undefined, limit } }), [level, trimmed, needle, limit, nonce])
   const entries = data?.entries ?? []
   const more = data !== undefined && entries.length >= limit && limit < RING
   const filtering = level !== 'all' || !!trimmed || !!needle
@@ -77,13 +79,20 @@ export function LogsPage({ query }: { query?: { q?: string } }) {
     <LoadState error={error} loading={!data} />
     {data && (entries.length ? <>
       <table className="dt-table dt-logs" data-logs>
-        <thead><tr><th>{t('logsWhen')}</th><th>{t('logsLevel')}</th><th>{t('logsScope')}</th><th>{t('logsMessage')}</th></tr></thead>
-        <tbody>{entries.map((entry, index) => <tr key={`${entry.at}:${index}`}>
-          <td className="dt-nowrap">{when(entry.at, t('lang'))}</td>
-          <td><Tag tone={tone(entry.level)}>{levelText(entry.level, t)}</Tag></td>
-          <td className="dt-mono">{entry.scope}</td>
-          <td className="dt-mono dt-log-message">{entry.message}</td>
-        </tr>)}</tbody>
+        <thead><tr><th>{t('logsWhen')}</th><th>{t('logsLevel')}</th><th>{t('logsScope')}</th><th>{t('logsMessage')}</th><th>{t('logsActions')}</th></tr></thead>
+        <tbody>{entries.map((entry, index) => {
+          // An entry that names a reply it could not deliver offers the one remedy a person can choose: drop it.
+          const reply = typeof entry.data?.reply === 'string' ? entry.data.reply : undefined
+          return <tr key={`${entry.at}:${index}`}>
+            <td className="dt-nowrap">{when(entry.at, t('lang'))}</td>
+            <td><Tag tone={tone(entry.level)}>{levelText(entry.level, t)}</Tag></td>
+            <td className="dt-mono">{entry.scope}</td>
+            <td className="dt-mono dt-log-message">{entry.message}</td>
+            <td className="dt-nowrap">{reply && <ConfirmButton variant="outline" icon="dismiss" label={t('dropReply')}
+              title={t('dropReply')} message={t('dropReplyConfirm')}
+              onConfirm={async () => { await call('POST replies/:id/drop', { id: reply }); setNonce(n => n + 1) }} />}</td>
+          </tr>
+        })}</tbody>
       </table>
       {more && <LoadMore onMore={() => setLimit(Math.min(limit + PAGE, RING))} />}
     </> : <Hint>{filtering ? t('logsNoMatch') : t('logsEmpty')}</Hint>)}

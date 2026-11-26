@@ -7,6 +7,14 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 ## [Unreleased]
 
 ### Fixed
+- A reply that can never be delivered stops being a permanent failure: the panel's Overview and Logs pages offer one
+  Drop action on the reply, `POST replies/:id/drop` settles its receipt as `operatorDropped` and cancels the queued
+  effect, and the decision is audited as `reply.drop`. Only a person can drop a message; no model tool exists for it
+  (issue #45).
+- A diagnosis whose answer was prose rather than the strict JSON document asked for no longer presents the model's own
+  reasoning as the root cause: parsing now scans every balanced `{...}` run so a document that follows narration is still
+  found, and an answer with no such object states that it contains no JSON object while its text is kept in `raw`
+  (issue #46).
 - Every subagent activation now carries the parent, the depth, the preset, the directory and the prompt where DSH reads
   them — on the spec itself. They were nested under a `request` wrapper that DSH does not read, so each arrived as
   `undefined` and every worker, reviewer and diagnostician start failed inside DSH with a `TypeError` before the child

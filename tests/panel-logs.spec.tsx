@@ -23,6 +23,24 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it('offers the drop action on a log line that names a reply it could not deliver', async () => {
+  server.logs = [
+    { at: '2026-11-26T08:00:00.000Z', level: 'warn' as const, scope: 'outbox',
+      message: 'reply delivery failed reply=r1: IM message has 277 words; maximum is 100', data: { reply: 'r1' } },
+    { at: '2026-11-26T08:00:05.000Z', level: 'warn' as const, scope: 'feishu', message: 'slow round' },
+  ]
+  await mount()
+  await click(tab(zh['tab.logs']))
+  const rows = all('[data-logs] tbody tr')
+  expect(rows).toHaveLength(2)
+  // Only the line that names a reply offers the action; a plain warning has nothing to drop.
+  expect(rows[0]?.querySelector('button')?.textContent).toBe(zh.dropReply)
+  expect(rows[1]?.querySelector('button')).toBeNull()
+  await click(find(zh.dropReply))
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'replies/r1/drop')).toMatchObject({ method: 'POST' })
+})
+
 it('shows the Host log and filters it by level and scope', async () => {
   server.logs = entries
   await mount()

@@ -75,8 +75,11 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
    `bundled → diagnosed` with `transitionIncident` and stores one JSON document in the existing `incident.diagnosis`
    column: `rootCause`, `evidence`, `hypotheses`, `fixPlan`, `confidence`, `target`, `parsed` and, for an unparseable
    answer, `raw`. `parseIncidentDiagnosis` validates it on read, and `GET incidents/<id>` exposes the parsed view. An
-   unparseable answer is kept as a `low` confidence diagnosis with `target: none` — the evidence-and-raw text stays, and
-   the run is not a failure. Parsing and validation never create a second model call.
+   unparseable answer is kept as a `low` confidence diagnosis with `target: none` — the raw text stays, and the run is not
+   a failure. Parsing scans every balanced `{...}` run, so a document that follows the model's own narration is still
+   found; two or more candidates are tried in order and the first that validates wins. The model's reasoning is never
+   presented as the answer: when no candidate validates, `rootCause` states that the answer held no JSON object and the
+   narration is kept in `raw` alone (issue #46). Parsing and validation never create a second model call.
 
 7. **Routing reuses the two outlets and runs once per incident.** After a successful diagnosis the service routes by
    target only when the *current* record is still `diagnosed` and carries a non-empty parsed diagnosis, and it is

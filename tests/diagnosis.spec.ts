@@ -214,11 +214,30 @@ describe('diagnosis dispatch', () => {
     const stored = JSON.parse(result.incident.diagnosis!) as Record<string, unknown>
     expect(stored.parsed).toBe(false)
     expect(stored.confidence).toBe('low')
-    expect(stored.rootCause).toContain('stuck Feishu client')
+    // The model's own reasoning is kept as the raw answer and never presented as the root cause it never stated.
+    expect(stored.rootCause).toBe('The answer held no JSON object, so it states no root cause.')
+    expect(stored.raw).toContain('stuck Feishu client')
     expect(stored.target).toEqual({ kind: 'none' })
     expect(result.incident.resolution).toBe('operational')
     expect(h.requests).toHaveLength(0)
     expect(h.raises).toHaveLength(0)
+  })
+
+  it('finds the document when the answer narrates first, and never reads a narrated conclusion as the root cause', async () => {
+    const h = harness()
+    const incident = h.incidents.record(candidate())!
+    const pending = h.diagnosis.diagnose(incident.id)
+    await vi.waitFor(() => expect(h.starts).toHaveLength(1))
+    // A real answer opened with deliberation, carried a first object that is not the document, then the document itself.
+    answer(h, 0, 'Let me decide on the final evidence list first.\n\n{"note":"still thinking","steps":3}\n\n'
+      + JSON.stringify(document(), null, 2) + '\n\nThat is my conclusion.')
+    const result = await pending
+    expect(result.status).toBe('diagnosed')
+    if (result.status !== 'diagnosed') throw new Error('unreachable')
+    const stored = JSON.parse(result.incident.diagnosis!) as Record<string, unknown>
+    expect(stored.parsed).toBe(true)
+    expect(stored.rootCause).toBe('Reply delivery times out because the outbox retries without a bound.')
+    expect(stored.raw).toBeUndefined()
   })
 
   it('bounds the wait, disposes the activation, reports health and leaves the record bundled', async () => {

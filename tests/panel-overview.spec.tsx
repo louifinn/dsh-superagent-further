@@ -250,6 +250,15 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
 })
 
+it('drops a reply that cannot be delivered once a person confirms it', async () => {
+  server.failing = [{ id: 'r1', channel: { source: 'feishu', thread: 'feishu:oc_1', address: { chat: 'oc_1' } },
+    text: '已修复', attempts: 6, error: 'IM message has 277 words; maximum is 100' }]
+  await mount()
+  await click(find(zh.dropReply, '.dt-cards button'))
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'replies/r1/drop')).toMatchObject({ method: 'POST' })
+})
+
 it('shows a failed file delivery with the Source\'s reason and where it was meant to go', async () => {
   server.deliveryFailures = [{ path: 'docs/report.md', chat: '飞书团队群', reason: 'file exceeds the 20 MB upload limit',
     at: '2026-11-11T00:00:00.000Z' }]

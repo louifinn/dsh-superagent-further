@@ -125,21 +125,44 @@ function answerText(value: unknown): string | undefined {
   return undefined
 }
 
+/** The root cause a stored diagnosis states when the model answered with prose instead of the document asked for. */
+const UNSTATED = 'The answer held no JSON object, so it states no root cause.'
+
 /**
- * The diagnosis in a model answer: the first `{...}` object that parses as one, tolerating a Markdown fence. An answer
- * that holds none is kept verbatim at low confidence with no target, so a person still reads what the model said.
+ * Every balanced `{...}` run in a text, outermost first, skipping braces that sit inside a JSON string. An answer often
+ * narrates before it concludes, and slicing from the first brace to the last would then span both and parse as neither.
+ */
+function objects(text: string): string[] {
+  const found: string[] = []
+  let depth = 0, start = -1, quoted = false, escaped = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!
+    if (quoted) { if (escaped) escaped = false; else if (char === '\\') escaped = true; else if (char === '"') quoted = false; continue }
+    if (char === '"') { quoted = true; continue }
+    if (char === '{') { if (depth === 0) start = index; depth += 1; continue }
+    if (char !== '}' || depth === 0) continue
+    depth -= 1
+    if (depth === 0 && start >= 0) { found.push(text.slice(start, index + 1)); start = -1 }
+  }
+  return found
+}
+
+/**
+ * The diagnosis in a model answer: the first complete `{...}` object that parses as the document asked for, tolerating a
+ * Markdown fence and the model's own narration around it. An answer that holds none keeps that text as `raw` at low
+ * confidence with no target, and states no root cause: the model's reasoning is evidence of the answer, never the answer.
  */
 function readDiagnosis(answer: string): IncidentDiagnosis {
   let body = answer.trim()
   const fenced = /```(?:json)?\s*(?<body>[\s\S]*?)```/i.exec(body)
   if (fenced?.groups?.body !== undefined) body = fenced.groups.body.trim()
-  const start = body.indexOf('{'), end = body.lastIndexOf('}')
-  const document = start >= 0 && end > start ? body.slice(start, end + 1) : body
-  const parsed = parseIncidentDiagnosis(document) ?? parseIncidentDiagnosis(body)
-  if (parsed !== null) return parsed
+  for (const candidate of [...objects(body), ...objects(answer.trim())]) {
+    const parsed = parseIncidentDiagnosis(candidate)
+    if (parsed !== null) return parsed
+  }
   const raw = answer.trim()
-  return { rootCause: project(field('diagnosis.rootCause'), raw).inline, evidence: [], hypotheses: [], fixPlan: '', confidence: 'low',
-    target: { kind: 'none' }, parsed: false, raw }
+  return { rootCause: UNSTATED, evidence: [], hypotheses: [], fixPlan: '', confidence: 'low', target: { kind: 'none' },
+    parsed: false, raw: project(field('diagnosis.rootCause'), raw).inline }
 }
 
 /** The workspace-relative evidence path; a self-report refuses absolute paths, so the bundle is named this way. */

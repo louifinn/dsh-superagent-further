@@ -4,7 +4,7 @@ import type { Commands } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Later, type Effects } from './effects.ts'
-import type { CaptureLogs } from './logs.ts'
+import type { CaptureLogs, LogLevel } from './logs.ts'
 import type { Store } from './store.ts'
 
 export interface OutboxHost {
@@ -15,6 +15,11 @@ export interface OutboxHost {
   paused(): boolean
   /** A capture logger scoped to outbox delivery; absent in tests that construct the Outbox without the Runtime. */
   readonly log?: CaptureLogs
+  /**
+   * Records one entry that carries a structured field besides its text (the reply it names), so the Logs tab can offer the
+   * drop action on the row itself. The Runtime points this at the ring plus the Host console, without capturing twice.
+   */
+  readonly record?: (level: LogLevel, scope: string, message: string, data: Record<string, unknown>) => void
 }
 
 /**
@@ -40,6 +45,22 @@ export class Outbox implements OutboxPort {
     const { store, effects } = this.host
     this.warned.delete(id)
     store.atomic(() => { if (store.receipts.withdraw(id)) effects.cancel('reply', id) })
+  }
+  /**
+   * Drops one queued message a person decided not to send, which is the only way out of a reply that can never succeed (a
+   * too-long answer, a channel that rejects its format). Nothing else gives up on a message on its own.
+   * @returns whether a message with this id was still pending; an unknown or settled id changes nothing.
+   */
+  drop(id: string): boolean {
+    const { store, effects } = this.host
+    const receipt = store.receipts.get(id)
+    if (receipt === undefined || receipt.status !== 'pending') return false
+    this.warned.delete(id)
+    store.atomic(() => { store.receipts.settle(receipt, 'operatorDropped'); effects.cancel('reply', id) })
+    const message = `reply dropped reply=${id} by=operator`
+    if (this.host.record) this.host.record('warn', 'outbox', message, { reply: id })
+    else this.host.log?.warn(message)
+    return true
   }
   sent(): Promise<void> { return this.host.effects.idle('reply') }
   private async deliver(id: string): Promise<void> {
@@ -69,6 +90,8 @@ export class Outbox implements OutboxPort {
     if (this.warned.has(id)) return
     this.warned.add(id)
     const detail = String(error).replace(/\s+/g, ' ').trim().slice(0, 160)
-    this.host.log?.warn(`reply delivery failed reply=${id}: ${detail}`)
+    const message = `reply delivery failed reply=${id}: ${detail}`
+    if (this.host.record) this.host.record('warn', 'outbox', message, { reply: id })
+    else this.host.log?.warn(message)
   }
 }

@@ -319,7 +319,13 @@ export class Runtime implements SourceHost, RuntimeHandle {
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
-      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(), log: this.capture('outbox') })
+      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(), log: this.capture('outbox'),
+    // One entry, one place: the ring keeps the structured field the Logs tab acts on, and the Host console still prints it.
+    record: (level, scope, message, data) => {
+      this.logs.record(level, scope, message, data)
+      const print = host.logger?.[level]
+      if (typeof print === 'function') print.call(host.logger, message)
+    } })
       this.userNotices = new UserNotices(store, effects, {
         masterId,
         prompt: (sessionId, requestId, text, mode) => sessions.prompt(sessionId, requestId, text, mode),
@@ -1119,6 +1125,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, logs: this.logs,
+      outbox: this.outbox,
       automations: this.automations,
       agentErrors: this.agentErrors,
       selfReports: this.selfReports,

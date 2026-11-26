@@ -53,6 +53,8 @@ export interface Api {
   'POST triggers/:id/requeue': { response: { queued: boolean } }
   'GET decisions': { query?: Paged & { kind?: string; window?: '24h' }; response: DecisionListView }
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
+  /** Drop one queued message a person will not send: the only way out of a reply that can never succeed. */
+  'POST replies/:id/drop': { response: { reply: string; status: 'dropped' } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
   /** The Execution tab's Workers block: open Tickets, their worker Sessions, Assignment state and shell jobs. */

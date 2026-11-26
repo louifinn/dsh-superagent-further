@@ -21,6 +21,7 @@ import { UserError, latestAssignment, runningAssignment, type EngineForPeople, t
 import type { Deployment, Machine } from '../deployment.ts'
 import { workerSessionId, type DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
+import type { Outbox } from './outbox.ts'
 import type { EscalationDecisionInput, EscalationDecisionResult } from './escalations.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
@@ -57,6 +58,8 @@ export interface HttpHost {
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
   readonly settings: Pick<Settings, 'view' | 'save' | 'restore' | 'pause' | 'sync' | 'refreshLabels' | 'proposals' | 'proposal' | 'applyProposal' | 'rejectProposal'>
   readonly engine: EngineForPeople
+  /** The outbound queue, so a person can drop a message that can never be delivered. */
+  readonly outbox: Pick<Outbox, 'drop'>
   /** Decide one escalated project request and deliver its mandatory reply to the Lead. */
   decideEscalation(input: EscalationDecisionInput): Promise<EscalationDecisionResult>
   readonly executor: Pick<DshExecutor, 'activeCount' | 'jobsSnapshot'>
@@ -313,6 +316,13 @@ function routes(runtime: HttpHost): Routes {
       return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since)
     },
     'POST decisions/:id/dismiss': ({ params }) => { runtime.engine.dismiss(params.id); return { dismissed: true } },
+    // A reply that cannot be delivered (too long for the channel, rejected by it) waits forever otherwise; a person may
+    // drop it here and the reply health claim recovers. No model tool reaches this: only the panel.
+    'POST replies/:id/drop': ({ params }) => {
+      if (!runtime.outbox.drop(params.id)) throw new RouteError(404, 'Reply not found, or it is no longer waiting')
+      audit('reply.drop', { reply: params.id })
+      return { reply: params.id, status: 'dropped' as const }
+    },
     'GET tickets': ({ query }) => {
       const { state, offset, limit } = TicketsQuery.parse(query)
       return ticketList(views(runtime), state, offset, limit)

@@ -55,9 +55,14 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
       </>)
     case 'delivery-failure': return row(t('problemDeliveryFile', { path: problem.path }), raw(problem.reason), undefined,
       t('problemDeliveryChat', { chat: problem.chat, at: when(problem.at, t('lang')) }))
+    // A reply that keeps failing is often one that can never succeed (a too-long answer, a channel that rejects its
+    // format); the only way out is to drop it, and that is a person's decision, never the model's.
     case 'outgoing': return row(t('problemReply', { source: valueLabel(t, 'source', problem.outgoing.channel.source),
       attempts: problem.outgoing.attempts }),
-      raw(problem.outgoing.error), undefined)
+      raw(problem.outgoing.error), undefined, undefined,
+      <ConfirmButton variant="outline" icon="dismiss" label={t('dropReply')} title={t('dropReply')}
+        message={t('dropReplyConfirm')}
+        onConfirm={async () => { await call('POST replies/:id/drop', { id: problem.outgoing.id }); await onChanged() }} />)
   }
 }
 

@@ -180,6 +180,23 @@ it('answers only a same-origin request from the panel on the loopback address', 
   expect(() => serve({}, '0.0.0.0')).toThrow('Orchestrator management requires a loopback Web server')
 })
 
+it('drops a queued reply a person gave up on, and reports one that is not waiting', async () => {
+  const dropped: string[] = []
+  const audited: unknown[] = []
+  const call = serve({
+    outbox: { drop: (id: string) => { dropped.push(id); return id === 'r1' } },
+    logs: { record: (level: string, scope: string, message: string, data: Record<string, unknown>) => {
+      audited.push({ level, scope, message, data }) } },
+  })
+  expect(await call('POST', 'replies/r1/drop')).toMatchObject({ status: 200, body: { reply: 'r1', status: 'dropped' } })
+  expect(dropped).toEqual(['r1'])
+  expect(audited).toContainEqual(expect.objectContaining({ scope: 'audit', data: { actor: 'operator', action: 'reply.drop',
+    reply: 'r1' } }))
+  // An id that is unknown or no longer waiting is a 404, and nothing is audited for it.
+  expect(await call('POST', 'replies/r2/drop')).toMatchObject({ status: 404, body: { error: 'Reply not found, or it is no longer waiting' } })
+  expect(audited).toHaveLength(1)
+})
+
 it('answers a prompt save that lost a race with 409, and a settings body over 128 KiB with 400', async () => {
   const saves: unknown[] = []
   const call = serve({

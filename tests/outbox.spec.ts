@@ -40,3 +40,24 @@ it('keeps a message for a Source that is not installed waiting, and sends it onc
   await at(5000)
   expect([h.runtime.outbox.status('waiting'), sent.map(message => message.id)]).toEqual(['sent', ['waiting']])
 })
+
+it('drops a reply a person gave up on, so it stops retrying and stops being a problem', async () => {
+  let calls = 0
+  const probe: SourceKind<Record<string, never>> = { kind: 'probe', title: { zh: '探针', en: 'Probe' }, description: { zh: '', en: '' }, health: [],
+    schema: z.object({}).strict(), fields: [],
+    channel: { send: async () => { calls += 1; throw new Error('IM message has 277 words; maximum is 100') },
+      link: () => ({ url: '', label: { zh: '探针', en: 'Probe' } }) } }
+  h.runtime.sources.register(probe)
+  h.runtime.outbox.send({ id: 'doomed', channel: { source: 'probe', thread: 'probe:1', address: {} }, text: 'Too long', kind: 'reply' })
+  await h.runtime.pump(); await h.runtime.sendReplies()
+  expect([h.runtime.outbox.status('doomed'), calls]).toEqual(['pending', 1])
+  // A person decides not to send it: the receipt settles, the queued effect is cancelled, and a later pass sends nothing.
+  expect(h.runtime.outbox.drop('doomed')).toBe(true)
+  expect(h.runtime.outbox.status('doomed')).toBe('dropped')
+  expect(h.runtime.store.receipts.get('doomed')?.dropped?.reason).toBe('operatorDropped')
+  expect(h.runtime.outbox.drop('doomed')).toBe(false)
+  await h.runtime.pump(); await at(6000)
+  expect([calls, h.runtime.outbox.status('doomed')]).toEqual([1, 'dropped'])
+  // The decision leaves a durable line naming the reply, which is what the Logs page acts on.
+  expect(h.runtime.logs.list({})).toContainEqual(expect.objectContaining({ scope: 'outbox', data: { reply: 'doomed' } }))
+})
