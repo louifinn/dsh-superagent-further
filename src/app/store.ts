@@ -11,6 +11,7 @@ import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave }
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
   migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, migrateTo26, tooOld } from './migration.ts'
 import { IncidentRecords } from './incidents.ts'
+import { RequestLinks } from './request-links.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { ProjectRequests } from './project-requests.ts'
@@ -87,6 +88,8 @@ export class Store implements Repositories {
   readonly selfReports: SelfReportRecords
   /** Deterministic incidents and their occurrences (ADR-0004, schema 25). */
   readonly incidents: IncidentRecords
+  /** The auditable same-need links between Requests (issue #32, schema 26). */
+  readonly requestLinks: RequestLinks
   /** Facts, decisions, preferences and lessons that outlive a Session and are recalled by tools and the prompt. */
   readonly memories: Memories
   /** Tier-B settings proposals awaiting the operator's approval and the decisions already taken (docs/011 A5.2). */
@@ -105,6 +108,7 @@ export class Store implements Repositories {
     this.projectRequests = new ProjectRequests(this.db)
     this.selfReports = new SelfReportRecords(this.db)
     this.incidents = new IncidentRecords(this.db)
+    this.requestLinks = new RequestLinks(this.db)
     this.memories = new Memories(this.db, () => this.settings().memory)
     this.proposals = new Proposals(this.db)
     this.automations = new AutomationRecords(this.db)

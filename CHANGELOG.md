@@ -11,6 +11,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 - High and critical incident conditions bypass the daily record budget, and a detection the budget refuses at or above
   the operator's alert threshold is held in `incident_notification` and retried through the alert chat by the watchdog
   (issue #28, ADR-0010, schema 26).
+- A person or the Orchestrator may explicitly mark two or more open Requests as the same need: the group carries an
+  auditable `request_link` row per Request, `orchestrator_correlate` makes the mark only on an explicit decision (never
+  from similar titles or text), each member then reports no result of its own, and the group reports one combined
+  result when every member has ended (issue #32, ADR-0009 decision 8, schema 26).
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
   and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).

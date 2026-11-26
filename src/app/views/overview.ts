@@ -15,7 +15,10 @@ export interface LeadRow { project: string; name: string; session: string; statu
   /** Open project requests pending the Lead's reply, and how many were raised by an automation delivery. */
   projectRequests: { pending: number; automated: number } }
 /** One open Request in the panel: the accepted ask and the Tickets delivering it, so a cross-project request reads as one row. */
-export interface RequestRow { id: string; title: string; createdAt: string; tickets: { id: string; title: string; project: string; stage: string }[] }
+export interface RequestRow { id: string; title: string; createdAt: string;
+  /** Its explicit same-need group (issue #32), with how many open Requests share it and who marked it. */
+  correlation?: { group: string; members: number; by: 'orchestrator' | 'human' };
+  tickets: { id: string; title: string; project: string; stage: string }[] }
 /** One file delivery `Runtime.sendFile` could not complete: what was sent where, the Source's reason, and when. */
 export interface DeliveryFailure { path: string; chat: string; reason: string; at: string }
 /** One observe-mode self report awaiting a person: its title, target repository, evidence preview and age (docs/014 D5). */
@@ -92,8 +95,11 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   ]
   const open = store.tickets.open().sort(newestFirst)
   // One row per open Request, naming the Tickets that deliver it; a Request with one Ticket still reads as one row.
-  const openRequests = store.requests.list().filter(request => !request.ended).map(request => ({
+  const allRequests = store.requests.list()
+  const openRequests = allRequests.filter(request => !request.ended).map(request => ({
     id: request.id, title: request.title, createdAt: request.createdAt,
+    ...request.correlation === undefined ? {} : { correlation: { group: request.correlation.group, by: request.correlation.by,
+      members: allRequests.filter(item => !item.ended && item.correlation?.group === request.correlation!.group).length } },
     tickets: request.ticketIds.flatMap(id => {
       const ticket = store.tickets.get(id)
       return ticket ? [{ id: ticket.id, title: ticket.title, project: ticket.project ?? '', stage: ticketStage(ticket).stage }] : []

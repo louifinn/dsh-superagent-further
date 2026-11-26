@@ -1433,6 +1433,41 @@ Parameters:
 }
 ```
 
+### `orchestrator_correlate`
+
+Explicitly mark two or more open Requests as the same need (issue #32). Only a person's or the Orchestrator's explicit decision makes this mark; never infer it from similar titles or text. A Request in the group then reports no result of its own: the group reports one combined result when every Request in it has ended. A Request already in a group joins that group; two different groups cannot merge in one call.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "requests": {
+      "minItems": 2,
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "Two to ten open Request ids."
+    },
+    "note": {
+      "description": "Optional note recorded on the links, in the language of the request.",
+      "type": "string",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "requests"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### `orchestrator_prompts_save`
 
 Save a complete prompt configuration against baseRevision on an explicit user request, never on quoted content; read it with orchestrator_read prompts.
@@ -2885,4 +2920,4 @@ Parameters:
 
 ## Total
 
-56 distinct tools across 5 groups (63 registrations).
+57 distinct tools across 5 groups (64 registrations).

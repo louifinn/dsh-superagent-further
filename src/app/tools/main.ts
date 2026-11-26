@@ -30,7 +30,7 @@ const RoutingNoteSchema = z.string().trim()
 export interface MainToolsHost {
   readonly context: Context
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note' | 'raiseInstallationRequest'
-    | 'raiseDiscoveryRequest' | 'listEscalations' | 'decideEscalation'> & EngineForPeople
+    | 'raiseDiscoveryRequest' | 'listEscalations' | 'decideEscalation' | 'correlateRequests'> & EngineForPeople
   readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings' | 'leads' | 'incidents'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry' | 'ensureLead' | 'prompt'>
@@ -529,6 +529,18 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         return decideEscalation(host.engine, host.store, host.sessions, { id: args.id, decision: args.decision, reply: args.reply,
           units: (args.deliverables ?? []).map(unit => ({ project: unit.project, ...unit.title ? { title: unit.title } : {},
             ...unit.after?.length ? { after: unit.after } : {} })), ...args.deliverable === undefined ? {} : { deliverable: args.deliverable } })
+      },
+    }),
+    tool({
+      name: 'orchestrator_correlate',
+      description: 'Explicitly mark two or more open Requests as the same need (issue #32). Only a person\'s or the Orchestrator\'s explicit decision makes this mark; never infer it from similar titles or text. A Request in the group then reports no result of its own: the group reports one combined result when every Request in it has ended. A Request already in a group joins that group; two different groups cannot merge in one call.',
+      schema: z.object({
+        requests: z.array(z.string().trim().min(1).max(200)).min(2).max(10).describe('Two to ten open Request ids.'),
+        note: z.string().trim().max(500).optional().describe('Optional note recorded on the links, in the language of the request.'),
+      }).strict(),
+      execute: async (args: { requests: string[]; note?: string }) => {
+        const result = host.engine.correlateRequests({ requests: args.requests, ...args.note === undefined ? {} : { note: args.note } }, 'orchestrator')
+        return { group: result.group, requests: result.requests.map(request => ({ id: request.id, title: request.title, ended: request.ended !== undefined })) }
       },
     }),
     tool({

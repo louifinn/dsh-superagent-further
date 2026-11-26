@@ -137,7 +137,7 @@ export const SURFACES: Record<RoleId, Surface> = {
       'orchestrator_eval_read', 'orchestrator_eval_decide', 'orchestrator_reply', 'orchestrator_thread_unsubscribe',
       'orchestrator_settings_save', 'orchestrator_settings_propose', 'orchestrator_policy_sync', 'orchestrator_label',
       'orchestrator_send_file', 'orchestrator_request_create', 'orchestrator_issue_create', 'orchestrator_incident',
-      'orchestrator_escalations', 'orchestrator_escalation_decide', 'orchestrator_prompts_save', 'automation_create',
+      'orchestrator_escalations', 'orchestrator_escalation_decide', 'orchestrator_correlate', 'orchestrator_prompts_save', 'automation_create',
       'automation_list', 'automation_view', 'automation_edit', 'automation_run', 'automation_delete', 'memory_write',
       'memory_search', 'memory_forget'],
     reads: RESOURCE_NAMES,

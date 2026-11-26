@@ -699,3 +699,17 @@ it('asks the root thread to approve an architecture design and creates the imple
     .some(call => call.text.includes('Approved; implement the staged plan.'))).toBe(true)
 })
 
+
+it('correlates open Requests only through the explicit tool, and refuses a lone id', async () => {
+  expect(h.tools.get(h.runtime.masterId)!.has('orchestrator_correlate')).toBe(true)
+  await h.acceptedTicket(feishu('corr-1', '@bot 修一下回归'))
+  await h.acceptedTicket(feishu('corr-2', '@bot 修另一个回归'))
+  const [first, second] = h.runtime.store.requests.list()
+  const result = await h.runTool(h.runtime.masterId, 'orchestrator_correlate', { requests: [first!.id, second!.id], note: 'same need' }) as
+    { group: string; requests: { id: string; title: string; ended: boolean }[] }
+  expect(result.requests.map(item => item.id)).toEqual([first!.id, second!.id])
+  expect(h.runtime.store.requests.get(first!.id)!.correlation).toMatchObject({ group: result.group, by: 'orchestrator', note: 'same need' })
+  // The schema refuses a lone id before the Engine is asked, and an unknown id is refused by the Engine.
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_correlate', { requests: [first!.id] })).rejects.toThrow('Too small')
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_correlate', { requests: [first!.id, 'nope'] })).rejects.toThrow('Unknown request')
+})

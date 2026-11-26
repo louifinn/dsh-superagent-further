@@ -47,6 +47,41 @@ export function requestResultNotices(
   }))
 }
 
+/**
+ * Builds the one result notice of an explicitly correlated group (issue #32, ADR-0009 decision 8): every member Request of
+ * the same need reports here, once, instead of each member reporting its own. Channels are the distinct non-GitHub channels
+ * of the members; the text names each member and every Ticket's outcome, in the language of the first request.
+ */
+export function correlatedResultNotices(
+  group: string, requests: readonly Request[], requestTextOf: (request: Request) => string,
+  ticketOf: (id: string) => Ticket | undefined, repository: string,
+): OutboundMessage[] {
+  const ended = requests.filter(request => request.ended !== undefined)
+  if (ended.length !== requests.length) return []
+  const text = requestTextOf(requests[0]!)
+  const chinese = /\p{Script=Han}/u.test(text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)
+  const head = chinese
+    ? `${requests.length} 个请求属于同一需求（关联组 ${group}）：`
+    : `${requests.length} Requests were marked as the same need (group ${group}):`
+  const blocks = requests.map(request => {
+    const outcome = request.ended!.outcome
+    const spoken = chinese
+      ? ({ done: '已完成', partial: '部分完成', stopped: '已停止' } as const)[outcome]
+      : ({ done: 'is done', partial: 'is partly done', stopped: 'stopped' } as const)[outcome]
+    const tickets = request.ticketIds.flatMap(id => { const ticket = ticketOf(id); return ticket ? [ticket] : [] })
+    return [`- ${chinese ? `「${request.title}」` : `"${request.title}"`} ${spoken}`, ...tickets.map(ticket => ticketLine(ticket, chinese, repository))].join('\n')
+  })
+  const body = [head, ...blocks].join('\n')
+  const seen = new Set<string>()
+  const channels = requests.flatMap(request => request.channels).filter(channel => {
+    if (channel.source === SOURCE) return false
+    const id = `${channel.source}:${channel.thread}:${JSON.stringify(channel.address)}`
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+  return channels.map(channel => ({ id: key('request-group-result', group, channel.source, JSON.stringify(channel.address)), channel, text: body, kind: 'notice' as const }))
+}
 /** One report line naming a Ticket, the pull request it delivered, and its outcome. */
 function ticketLine(ticket: Ticket, chinese: boolean, repository: string): string {
   const pull = closedPull(ticket)

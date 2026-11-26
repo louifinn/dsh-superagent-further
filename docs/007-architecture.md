@@ -397,6 +397,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/errors.ts` | `UserError` and `USER_ERRORS` |
 | `src/core/reasons.ts` | `Reason`, `REASONS` and `reasonText`: why the core recorded a Decision or set a Trigger aside, by code |
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
+| `src/core/correlation.ts` | `RequestLink` and `RequestLinksRepository`: the explicit same-need groups of Requests (issue #32, ADR-0009 decision 8), with one audit row per Request |
+| `src/app/request-links.ts` | `RequestLinks`: the `request_link` rows of the Store, keyed by group and Request |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop; the consumer of `project-request.completed` that reports a root request's chain; the consumer of `project-request.approval-requested` that asks the root Channel to approve a design; and the router of a human root-thread reply to the project's Lead |
@@ -538,7 +540,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | --- | --- |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes with their `report`/`human`/`merge`/`eval` end causes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/engine.spec.ts` | The explicit always-reply (docs/012 D8): one notice in the person's language when a whitelisted mention or direct message is ignored, unavailable or stopped, its idempotent id, the negatives, the answer the main Session already sent keeping the notice from repeating it, and the `project-request.completed` event of a completed request |
-| `tests/request-notices.spec.ts` | Result and aggregate notices: one request-result notice per non-GitHub Channel naming every Ticket and its pull request, and a root project request's one aggregate report through its origin Channels naming every Ticket and derived request, in the request's language |
+| `tests/request-notices.spec.ts` | Result and aggregate notices: one request-result notice per non-GitHub Channel naming every Ticket and its pull request, a root project request's one aggregate report through its origin Channels naming every Ticket and derived request, in the request's language, and one correlated-group result once every member ended (issue #32) |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/projects.spec.ts` | Project validation: absolute workspaces, unique IDs and workspaces, and that a tool-originated save cannot change the list |
 | `tests/lead-dispatch.spec.ts` | The activation request of a Lead-hosted executor: a worker's `caller` delivery and a reviewer's `parent` delivery, and the activations a host holds, settles and disposes |

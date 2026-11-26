@@ -1751,3 +1751,32 @@ describe('review gate', () => {
     expect(other.repo.tickets.get(second)!.ended).toMatchObject({ outcome: 'merged' })
   })
 })
+describe('explicit request correlation (issue #32)', () => {
+  it('marks two open Requests as one need, idempotently, and refuses a cross-group mark', () => {
+    const h = harness()
+    accepted(h)
+    accepted(h, '2', 't2')
+    const [first, second] = h.repo.requests.list()
+    expect(first).toBeDefined()
+    const result = h.engine.correlateRequests({ requests: [first!.id, second!.id], note: 'same need' })
+    expect(result.group).toMatch(/^[0-9a-f]{32}$/)
+    expect(h.repo.requests.get(first!.id)!.correlation).toEqual({ group: result.group, marked_at: expect.any(String), by: 'orchestrator', note: 'same need' })
+    expect(h.repo.requests.get(second!.id)!.correlation?.group).toBe(result.group)
+    // The same explicit mark is idempotent and keeps the members.
+    expect(h.engine.correlateRequests({ requests: [second!.id, first!.id] }).group).toBe(result.group)
+    // A lone Request is not a correlation.
+    expect(() => h.engine.correlateRequests({ requests: [first!.id] })).toThrow('A correlation links')
+    // A Request already in one group cannot join a second one.
+    accepted(h, '3', 't3')
+    accepted(h, '4', 't4')
+    expect(h.repo.requests.list()).toHaveLength(4)
+    expect(h.repo.requests.list()).toHaveLength(4)
+    const others = h.repo.requests.list().filter(request => request.correlation === undefined)
+    expect(others).toHaveLength(2)
+    const third = others[0]!, fourth = others[1]!
+    h.engine.correlateRequests({ requests: [third.id, fourth.id] })
+    expect(() => h.engine.correlateRequests({ requests: [first!.id, third.id] })).toThrow('already belong to different correlation groups')
+    // An unknown id is refused instead of silently skipped.
+    expect(() => h.engine.correlateRequests({ requests: [first!.id, 'nope'] })).toThrow('Unknown request')
+  })
+})

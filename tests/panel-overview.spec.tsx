@@ -53,7 +53,8 @@ it('shows one row per registered project with its Lead Session, executors, waiti
 })
 
 it('shows one row per open Request and lists its Tickets behind a toggle', async () => {
-  server.asks = [{ id: 'ask-1', title: '两个项目', createdAt: '2026-09-23T00:00:00Z', tickets: [
+  server.asks = [{ id: 'ask-1', title: '两个项目', createdAt: '2026-09-23T00:00:00Z',
+    correlation: { group: 'group-1', members: 2, by: 'orchestrator' }, tickets: [
     { id: 't71', title: '在 App 加文件', project: 'app', stage: 'working' },
     { id: 't72', title: '在 Lib 加文件', project: 'lib', stage: 'person' }] }]
   await mount()
@@ -63,6 +64,9 @@ it('shows one row per open Request and lists its Tickets behind a toggle', async
   expect(row.textContent).toContain('两个项目')
   expect(row.textContent).toContain(zh.requestTicketsLabel)
   expect(row.textContent).toContain('2')
+  // The explicit same-need mark reads as a group of the Requests that share it (issue #32).
+  expect(row.textContent).toContain(zh.requestCorrelationLabel)
+  expect(row.textContent).toContain('2 个请求')
   // The Tickets stay hidden until the Request row opens.
   expect(row.querySelector('.dt-request-tickets')).toBeNull()
   await click(row.querySelector<HTMLElement>('.dt-open')!)

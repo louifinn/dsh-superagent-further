@@ -70,6 +70,8 @@ function RequestEntry({ request }: { request: ApiResponse<'GET overview'>['reque
       <div className="dt-att-what"><button type="button" className="dt-open dt-open-wrap" aria-expanded={open}
         onClick={() => setOpen(!open)}>{request.title}</button></div>
       <div className="dt-row-meta">
+        {request.correlation !== undefined && <LabelValue label={t('requestCorrelationLabel')}
+          value={t('requestCorrelationMembers', { members: String(request.correlation.members) })} />}
         <LabelValue label={t('requestTicketsLabel')} value={String(request.tickets.length)} />
         <Button variant="ghost" size="sm" icon={<Icon name="history" size={14} />} data-request-logs={request.id}
           onClick={() => navigate({ page: 'logs', query: { q: `request=${request.id}` } })}>{t('logsForRequest')}</Button>

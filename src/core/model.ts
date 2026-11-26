@@ -352,8 +352,21 @@ export interface Request {
   /** The Tickets that deliver it, oldest first. */
   ticketIds: string[]
   createdAt: string
+  /**
+   * An explicit same-need mark (issue #32, decision 8 of ADR-0009): two or more open Requests the Orchestrator (or a
+   * person) linked. The group reports one result instead of one per Request, and the work is delivered once. The mark is
+   * never inferred from similarity.
+   */
+  correlation?: RequestCorrelation
   /** When, by whom, and how it ended; absent while it is open. */
   ended?: { at: string; by: TicketEndBy; outcome: 'done' | 'partial' | 'stopped'; reason?: string }
+}
+/** The same-need mark two Requests carry: its group, who linked them, when and an optional note. */
+export interface RequestCorrelation {
+  group: string
+  marked_at: string
+  by: 'orchestrator' | 'human'
+  note?: string
 }
 export type ProjectRequestKind = 'work' | 'architecture' | 'escalation'
 /**

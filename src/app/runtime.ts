@@ -36,7 +36,7 @@ import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices, pullEndReceipt } from '../sources/github-pull.ts'
-import { projectApprovalChannels, projectApprovalNotices, projectResultChannels, projectResultNotices, requestResultNotices }
+import { correlatedResultNotices, projectApprovalChannels, projectApprovalNotices, projectResultChannels, projectResultNotices, requestResultNotices }
   from './request-notices.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Automations, type ScheduleService } from './automations.ts'
@@ -337,9 +337,22 @@ export class Runtime implements SourceHost, RuntimeHandle {
             const rootOfProjectRequest = request !== undefined && store.projectRequests.list().some(item =>
               item.root?.request_id === request.id && item.root.project_request_id === undefined)
             if (request && !rootOfProjectRequest) {
-              const first = store.tickets.get(request.ticketIds[0] ?? '')
-              const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
-              for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+              const group = request.correlation?.group
+              if (group !== undefined) {
+                // An explicitly correlated group reports once, when every member ended (issue #32); a member that ends
+                // first stays silent so a person reads one result for the same need.
+                const members = store.requests.list().filter(item => item.correlation?.group === group)
+                if (members.every(item => item.ended !== undefined)) {
+                  for (const message of correlatedResultNotices(group, members, item => {
+                    const ticket = store.tickets.get(item.ticketIds[0] ?? '')
+                    return ticket ? store.triggers.get(ticket.origin.triggerId)?.text ?? '' : ''
+                  }, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+                }
+              } else {
+                const first = store.tickets.get(request.ticketIds[0] ?? '')
+                const text = first ? store.triggers.get(first.origin.triggerId)?.text ?? '' : ''
+                for (const message of requestResultNotices(request, text, id => store.tickets.get(id), setup.deployment.repository)) outbox.send(message)
+              }
             }
           }
           // Always answer a Session submission: an independent DSH Session sees every outcome, including the ones that

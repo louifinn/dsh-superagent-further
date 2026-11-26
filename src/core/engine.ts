@@ -53,6 +53,20 @@ export interface DiscoveryRequestInput {
   deliverable?: Deliverable
 }
 
+/** What the Orchestrator (or a person) marks when several open Requests are the same need (issue #32). */
+export interface CorrelationInput {
+  /** Two to ten Request ids; at least two different open Requests. */
+  requests: readonly string[]
+  note?: string
+}
+
+/** What the mark returns: the group every member now carries, who marked it, and the updated Requests. */
+export interface CorrelationResult {
+  group: string
+  by: 'orchestrator' | 'human'
+  requests: Request[]
+}
+
 /** What the Orchestrator records when it disposes a project Lead's escalated request (docs/012 D13). */
 export interface EscalationDecisionInput {
   /** One Ticket per unit, in order; every unit names a registered project. */
@@ -328,6 +342,45 @@ export class Engine {
         deliverables: units, project: units[0]!.project, ...input.deliverable ? { deliverable: input.deliverable } : {},
       }
       return this.tickets.createLead(decisionId, mandate, outcome, at)
+    })
+  }
+  /**
+   * Explicitly mark two or more open Requests as the same need (issue #32, ADR-0009 decision 8): the group reports one
+   * result, and a member Request does not report its own. The mark is only an explicit operator decision — titles and text
+   * are never compared for similarity. A Request already in a group joins that group; two different groups cannot merge in
+   * one call.
+   */
+  correlateRequests(input: CorrelationInput, by: 'orchestrator' | 'human' = 'orchestrator'): CorrelationResult {
+    return this.repo.atomic(() => {
+      const ids = [...new Set(input.requests.map(id => id.trim()).filter(Boolean))]
+      if (ids.length < 2 || ids.length > 10) throw new UserError('invalidCorrelation')
+      const links = this.repo.requestLinks
+      const requests = ids.map(id => {
+        const request = this.repo.requests.get(id)
+        if (!request) throw new UserError('unknownRequest', { request: id })
+        return request
+      })
+      if (requests.some(request => request.ended !== undefined)) throw new UserError('correlatedEnded')
+      const declared = [...new Set(requests.flatMap(request => {
+        const group = request.correlation?.group ?? links?.groupOf(request.id)
+        return group === undefined ? [] : [group]
+      }))]
+      if (declared.length > 1) throw new UserError('correlationConflict')
+      const at = this.now()
+      const note = input.note?.trim() || undefined
+      const group = declared[0] ?? key('request-group', ids[0]!, String(ids.length), at)
+      let changed = false
+      const updated = requests.map((request): Request => {
+        if (request.correlation?.group === group) return request
+        const correlation = { group, marked_at: at, by, ...note === undefined ? {} : { note } }
+        const next: Request = { ...request, correlation }
+        this.repo.requests.save(next)
+        links?.save({ id: key('request-link', group, request.id), group, request: request.id, at, by, ...note === undefined ? {} : { note } })
+        changed = true
+        return next
+      })
+      if (changed) this.options.emit?.({ type: 'request.correlated', at, data: { group, requestIds: updated.map(request => request.id) } })
+      return { group, by, requests: updated }
     })
   }
   /**
@@ -832,7 +885,7 @@ export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadCl
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'
   | 'listProjectRequests' | 'replyProjectRequest' | 'disposeProjectRequest' | 'completeProjectRequest' | 'raiseInstallationRequest' | 'raiseDiscoveryRequest'
-  | 'listEscalations' | 'decideEscalation'>
+  | 'listEscalations' | 'decideEscalation' | 'correlateRequests'>
 /** What people ask of the Engine, through the panel or the main Session. */
 export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
 /** What Settings tells the Engine. */

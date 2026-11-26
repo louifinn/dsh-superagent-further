@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { key, type ChannelRef, type Mandate, type ProjectRequest, type Request, type Ticket } from '../src/core/index.ts'
-import { projectResultChannels, projectResultNotices, requestResultNotices } from '../src/app/request-notices.ts'
+import { correlatedResultNotices, projectResultChannels, projectResultNotices, requestResultNotices } from '../src/app/request-notices.ts'
 
 const feishu = (message: string): ChannelRef => ({ source: 'feishu', thread: 'feishu:oc_team:om_1', address: { chatId: 'oc_team', messageId: message } })
 const github: ChannelRef = { source: 'github', thread: 'github:acme/widgets#7', address: { number: '7' } }
@@ -107,4 +107,30 @@ it('keeps GitHub-only and empty origin Channels out of the report', () => {
   const root = project({ root: { request_id: 'request-1', trigger_id: 'trigger-1', thread_key: 'github:acme/widgets#7' } })
   expect(projectResultChannels(root, () => request({ channels: [github] }), () => undefined)).toEqual([])
   expect(projectResultNotices(root, [], () => undefined, () => undefined, 'acme/widgets')).toEqual([])
+})
+
+it('reports an explicitly correlated group once, after every member ended, on the Channels they share', () => {
+  const tickets = [
+    ticket('t1', { title: '回归修复', project: 'app', ended: { at: '2026-11-10T09:20:00.000Z', by: 'executor', cause: 'merge', outcome: 'merged' },
+      follows: [{ thread: 'github:acme/widgets#12', own: true, closed: { at: '2026-11-10T09:20:00.000Z', outcome: 'merged' } }] }),
+    ticket('t2', { title: 'Documentation', ended: { at: '2026-11-10T09:21:00.000Z', by: 'executor', cause: 'merge', outcome: 'closed' } }),
+    ticket('t3', { title: 'Docs', ended: { at: '2026-11-10T09:22:00.000Z', by: 'executor', cause: 'report', outcome: 'completed' } }),
+  ]
+  const ticketOf = (id: string) => tickets.find(item => item.id === id)
+  const members = [request(), request({ id: 'request-2', title: '补充文档', ticketIds: ['t3'],
+    channels: [feishu('om_1'), github], ended: { at: '2026-11-10T09:40:00.000Z', by: 'executor', outcome: 'done' } })]
+  const notices = correlatedResultNotices('group-1', members, item => item.title, ticketOf, 'acme/widgets')
+  // GitHub is where each Request is reported; the one shared Feishu Channel gets one combined notice.
+  expect(notices).toHaveLength(1)
+  expect(notices[0]).toMatchObject({ id: key('request-group-result', 'group-1', 'feishu', JSON.stringify(feishu('om_1').address)), channel: feishu('om_1'), kind: 'notice' })
+  expect(notices[0]!.text).toBe([
+    '2 个请求属于同一需求（关联组 group-1）：',
+    '- 「修复回归」 已完成',
+    '- app: [PR #12](https://github.com/acme/widgets/pull/12) 已合并',
+    '- 部署仓库: Documentation 已关闭',
+    '- 「补充文档」 已完成',
+    '- 部署仓库: Docs 已完成',
+  ].join('\n'))
+  // A group with one member still open sends nothing; the last ending is what reports it.
+  expect(correlatedResultNotices('group-1', [request(), request({ id: 'request-2', ended: undefined })], () => 'x', ticketOf, 'acme/widgets')).toEqual([])
 })

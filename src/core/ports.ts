@@ -115,6 +115,8 @@ export interface DomainEvents {
   'ticket.ended': { ticketId: string; by: TicketEndBy; cause: TicketEndCause; outcome: TicketOutcome; reason?: string }
   /** A Request all of whose Tickets ended; the one place its result is reported. */
   'request.ended': { requestId: string; by: 'human' | 'executor'; outcome: 'done' | 'partial' | 'stopped' }
+  /** Two or more open Requests were explicitly marked as the same need (issue #32, ADR-0009 decision 8). */
+  'request.correlated': { group: string; requestIds: string[] }
   'assignment.started': { ticketId: string; assignmentId: string }
   'assignment.ended': { ticketId: string; assignmentId: string; reason: string }
   'thread.subscribed': { threadKey: string; ticketId: string }
@@ -165,6 +167,8 @@ export interface Repositories {
     save(request: Request): void
     list(): Request[]
   }
+  /** Absent from repositories opened before schema 26, such as `MemoryRepositories`; the audit trail is skipped there. */
+  requestLinks?: import('./correlation.ts').RequestLinksRepository
   /** Absent from repositories opened before schema 21, such as `MemoryRepositories`; project-request commands refuse there. */
   projectRequests?: ProjectRequestRepository
   /** Absent from repositories opened before schema 24, such as `MemoryRepositories`; the Issue outlet refuses there. */

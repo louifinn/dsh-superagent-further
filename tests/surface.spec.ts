@@ -36,7 +36,7 @@ describe('mounted surface', () => {
     const worker = [...host.tools.get(`worker-${ticket.id}`)!.keys()].sort()
     expect({ main, lead, worker }).toEqual({
       // The main Session: routing and evaluation, communication, configuration, memory, and the raise/escalation channels.
-      main: ['memory_forget', 'memory_search', 'memory_write', 'orchestrator_escalation_decide', 'orchestrator_escalations',
+      main: ['memory_forget', 'memory_search', 'memory_write', 'orchestrator_correlate', 'orchestrator_escalation_decide', 'orchestrator_escalations',
         'orchestrator_eval', 'orchestrator_eval_decide', 'orchestrator_eval_read', 'orchestrator_incident', 'orchestrator_issue_create', 'orchestrator_label',
         'orchestrator_lead_instruction', 'orchestrator_policy_sync',
         'orchestrator_prompts_save', 'orchestrator_read', 'orchestrator_reply', 'orchestrator_request_create', 'orchestrator_route',

@@ -189,6 +189,18 @@ not also noticed on its own Channel: the Request's single result notice says it 
 change visible to the people who did the work without waking a worker on its own: a worker Session only runs when its
 Lead sends it something.
 
+## Explicit same-need groups
+
+Two open Requests may be the same need, such as one bug reported against two repositories. The Orchestrator, or a
+person through it, may mark them with `orchestrator_correlate(requests: [...], note?)`. The mark is always explicit:
+nothing compares titles or text, and a call naming fewer than two different open Requests, an ended Request, or
+Requests already in two different groups is refused. Each member records the group on its `correlation` field and one
+auditable row in `request_link` (schema 26).
+
+Members do not deliver the same facts twice: a member whose Tickets end reports no result notice of its own, and when
+the last member ends the group sends one combined result per shared non-GitHub Channel (docs/003). The group lives on
+the Requests, so a restart keeps it; the panel's Request row names the group and how many open Requests share it.
+
 ## Dispatch reaches the Lead
 
 The other direction runs on the same durable channel. `Tickets` no longer starts an Executor: the
