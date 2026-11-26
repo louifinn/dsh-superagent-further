@@ -15,6 +15,10 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   auditable `request_link` row per Request, `orchestrator_correlate` makes the mark only on an explicit decision (never
   from similar titles or text), each member then reports no result of its own, and the group reports one combined
   result when every member has ended (issue #32, ADR-0009 decision 8, schema 26).
+- A refused project-scoped read of another project's object is recorded in the schema 26 `audit_boundary` table with
+  the caller's role, the resource and its project, and mirrored into the `boundary` operational log scope, so a
+  tool-layer boundary crossing is discoverable from the panel; the boundary is operational, not isolation (issue #37,
+  ADR-0011, schema 26).
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
   and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).

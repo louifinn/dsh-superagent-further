@@ -40,7 +40,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
   return [
     readTool('Read one page of a resource of this ticket that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
-      SURFACES.worker.reads, (resource, offset, limit, signal) => readResource(host.resources, resource, offset, limit, { ticketId }, signal)),
+      SURFACES.worker.reads, (resource, offset, limit, signal) => readResource(host.resources, resource, offset, limit, { ticketId,
+        actor: { role: 'worker', ...ticket.project === undefined ? {} : { project: ticket.project } } }, signal)),
     tool({
       name: 'orchestrator_ack',
       description: 'Acknowledge one original human request before substantial work, as the replies section says; it posts as a reply to that message.',

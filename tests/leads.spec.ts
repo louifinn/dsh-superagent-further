@@ -260,6 +260,9 @@ describe('dispatch through the project Lead (issue #12)', () => {
       await host.runtime.sessions.ensureLead('lib', join(host.directory, 'lib'), 'Project Lib')
       await expect(host.runTool('lead-lib', 'orchestrator_read', { resource: `ticket/${ticket.id}` }))
         .rejects.toThrow(/inaccessible/)
+      // The boundary is operational, not a sandbox: a refused read is still recorded where an operator can find it (#37).
+      const refused = host.runtime.store.boundary.list({ outcome: 'refused' })
+      expect(refused.find(entry => entry.resource === `ticket/${ticket.id}`)).toMatchObject({ role: 'lead', outcome: 'refused', project: 'lib' })
     } finally { await host.stop() }
   })
 })

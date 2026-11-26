@@ -13,7 +13,7 @@ import { SettingsSchema } from '../src/policy.ts'
 
 let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'orchestrator-store-')) })
-afterEach(() => { rmSync(directory, { recursive: true, force: true }) })
+afterEach(() => { rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }) })
 
 it('refuses databases newer than this build and rolls back failed atomic work', () => {
   const path = join(directory, 'orchestrator.sqlite')
@@ -302,5 +302,23 @@ it('stores project requests by project and status, in order and across a reopen'
   const reopened = new Store(path)
   expect([reopened.projectRequests.list('b').map(item => item.id), reopened.projectRequests.get('prq-1')?.status])
     .toEqual([['prq-3'], 'pending'])
+  reopened.close()
+})
+
+it('records a refused boundary read where an operator can list it still after a restart', () => {
+  const path = join(directory, 'orchestrator.sqlite')
+  const store = new Store(path)
+  const sink = vi.fn()
+  store.boundary.sink = sink
+  const at = '2026-11-26T00:00:00.000Z'
+  store.boundary.record({ at, role: 'lead', action: 'read', resource: 'ticket/t1', project: 'other', outcome: 'refused', detail: 'another project' })
+  store.boundary.record({ at, role: 'orchestrator', action: 'read', resource: 'tickets', project: null, outcome: 'allowed', detail: '' })
+  expect(sink).toHaveBeenCalledTimes(2)
+  expect(store.boundary.count()).toBe(2)
+  expect(store.boundary.list({ outcome: 'refused' })).toMatchObject([{ role: 'lead', action: 'read', resource: 'ticket/t1', project: 'other', outcome: 'refused' }])
+  store.close()
+  // A boundary record is durable: the next Host opens the same rows, and its default sink does not throw (#37).
+  const reopened = new Store(path)
+  expect(reopened.boundary.list().map(entry => entry.outcome)).toEqual(['allowed', 'refused'])
   reopened.close()
 })

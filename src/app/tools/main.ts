@@ -220,7 +220,7 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
   const resources: MainResourceHost = { ...host.resources, sessions: host.sessions, settings: host.settings }
   return [
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
-      RESOURCE_NAMES, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
+      RESOURCE_NAMES, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, { actor: { role: 'orchestrator' } }, signal)),
     routeTool(host),
     tool({
       name: 'orchestrator_lead_instruction',

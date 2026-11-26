@@ -27,6 +27,11 @@ date with you.
   (ADR-0008: the Orchestrator has no direct tool into a worker Session, and a worker's report is a durable Lead message
   mirrored read-only to the Orchestrator) are not isolation. Treat the Host as single-operator and run only trusted
   agents on it; do not use the worker sandbox as a tenant boundary.
+- **Boundary crossings are audited, not prevented.** A Lead's project-scoped read of another project's ticket, thread or
+  trigger is refused and recorded in the schema 26 `audit_boundary` table (role, action, resource, project, outcome, a
+  short detail); the Runtime also mirrors each row into the `boundary` log scope, so the crossing is discoverable from
+  the panel. A worker with shell access can still read the database directly (ADR-0011): the audit is detection, not
+  isolation. Only run agents whose code you would run as your own user.
 - **State is local.** `orchestrator.sqlite` and the worktrees live under the profile's state directory; the plugin sends to the
   network only through the configured Sources (GitHub, Feishu) and the model provider.
 

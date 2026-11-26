@@ -204,6 +204,9 @@ export class Runtime implements SourceHost, RuntimeHandle {
     try {
       const report = (error: unknown) => { this.log.warn('dsh-superagent-further: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
+    // A refused boundary read also reaches the operational log (scope boundary) for the panel (issue #37).
+    store.boundary.sink = entry => this.logs.record('warn', 'boundary', entry.role + ' ' + entry.outcome + ' read ' + entry.resource
+      + (entry.project === null ? '' : ' project=' + entry.project) + ': ' + this.short(entry.detail))
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart: () => host.restart(), log: this.capture('setup') })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
@@ -240,6 +243,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
+        boundary: store.boundary,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
       this.alerts = new Alerts({ settings: () => store.settings(), commands, logs: this.logs,
@@ -254,7 +258,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         recordAgentError: input => this.agentErrors.record(input),
         onAgentError: record => { void this.notifyAgentError(record) },
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent),
-        readProject: (project, resource, offset, limit, signal) => readResource(resources, resource, offset, limit, { projectId: project }, signal) })
+        readProject: (project, resource, offset, limit, signal) => readResource(resources, resource, offset, limit, { projectId: project, actor: { role: 'lead', project } }, signal) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, values: host.values, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })

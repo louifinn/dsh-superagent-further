@@ -10,6 +10,7 @@ import { ASSIGNMENTS, INPUTS, assignmentLine, decisionCard, decisionDetails, inp
   ticketDetails, triggerCard, type TicketThread } from './cards.ts'
 import { threadTitle } from './views/records.ts'
 import { field, project } from './projection.ts'
+import type { BoundaryAudit } from './boundary.ts'
 import { transcriptEntry } from './context.ts'
 import { builtInParts, defaultPrompts } from './prompts.ts'
 import type { Context } from '@deepseek-ai/cordis'
@@ -63,6 +64,8 @@ export const resourceGrammar = (reads: readonly string[]): string => RESOURCES.f
 
 export interface ResourceHost {
   readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus'>
+  /** The boundary audit for a refused read attempt (issue #37); absent in a fixture host. */
+  readonly boundary?: BoundaryAudit
   readonly pages: TextCache
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'skills' | 'defaultChanged'>
   readonly commands: Commands
@@ -333,9 +336,19 @@ function projectResource(host: ResourceHost, name: string, projectId: string): v
 }
 
 export async function readResource(host: ResourceHost, resource: string, offset: number, limit: number | undefined,
-  scope: { ticketId?: string; projectId?: string } | undefined, signal?: AbortSignal) {
+  scope: { ticketId?: string; projectId?: string; actor?: { role: 'orchestrator' | 'worker' | 'lead' | 'reviewer'; project?: string } }
+    | undefined, signal?: AbortSignal) {
   const name = resource.replace(/^event\//, 'trigger/').replace(/^task\//, 'ticket/').replace(/^observation\//, 'decision/')
-  if (scope?.projectId !== undefined) projectResource(host, name, scope.projectId)
+  if (scope?.projectId !== undefined) {
+    try {
+      projectResource(host, name, scope.projectId)
+    } catch (error) {
+      // A project-scoped read of another project's object is a boundary crossing: record it before the refusal (issue #37).
+      host.boundary?.record({ at: new Date().toISOString(), role: scope.actor?.role ?? 'unknown', action: 'read', resource: name,
+        project: scope.projectId, outcome: 'refused', detail: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
   const route = ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route)
   if (!route) throw new Error('Unknown context resource')
   const ticketId = scope?.ticketId
