@@ -786,7 +786,7 @@ it('migrates a schema 23 database to the current schema by creating the empty se
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(26)
+    expect(SCHEMA_VERSION).toBe(27)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.selfReports.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -815,7 +815,7 @@ it('migrates a schema 24 database to 25 by creating the empty incident table and
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(26)
+    expect(SCHEMA_VERSION).toBe(27)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.incidents.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -834,7 +834,7 @@ it('migrates a schema 24 database to 25 by creating the empty incident table and
   } finally { store.close() }
 })
 
-it('migrates a schema 25 database to 26 by creating the empty Batch A tables and keeping the records', () => {
+it('migrates a schema 25 database to the current schema by creating the empty Batch A tables and keeping the records', () => {
   const path = join(directory, 'batch-a.sqlite')
   const at = '2026-11-10T09:00:00.000Z'
   const seeded = new Store(path)
@@ -894,5 +894,28 @@ it('backfills why every ended Ticket ended when migrating to schema 23 and prese
     expect(ended('t5')).toEqual({ at, by: 'executor', outcome: 'dropped', cause: 'report' })
     expect(ended('t6')).toEqual({ at, by: 'human', outcome: 'stopped', cause: 'eval' })
     expect(ended('t7')).toBeUndefined()
+  } finally { store.close() }
+})
+
+it('migrates a schema 26 database to 27 by recording every durable Lead message', () => {
+  const path = join(directory, 'information.sqlite')
+  const seeded = new Store(path)
+  const assignment = seeded.leads.send({ project: 'default', kind: 'assignment', from: 'orchestrator', to: 'lead',
+    requestId: 'lead-assignment:a1', ticketId: 't1', body: 'Start Assignment a1.' })
+  seeded.leads.send({ project: 'default', kind: 'fact', from: 'orchestrator', to: 'lead',
+    requestId: 'lead-fact:a1:status:t1:2026-11-26T00:00:00Z', ticketId: 't1', body: 'Release the status request.' })
+  // A schema 26 database had no information table: the Store creates it before migrateTo27 runs and the step backfills one
+  // record per durable message, so the two rows a redelivery would create stay one source.
+  seeded.db.exec('DELETE FROM information')
+  seeded.db.prepare("UPDATE kv SET value='26' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    const records = store.information.all()
+    expect(records).toHaveLength(2)
+    const fact = records.find(record => record.kind === 'fact')!
+    expect(fact).toMatchObject({ parent: assignment.id, root: assignment.id, hops: 1, direction: 'down', oneShot: true })
+    expect(records.find(record => record.kind === 'assignment')).toMatchObject({ hops: 0, direction: 'down', oneShot: true })
   } finally { store.close() }
 })

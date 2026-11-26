@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (ADR-0004), which the Store creates before this runs; schema 26 adds the Batch A tables for the information-discipline program — the held incident-notice queue, request correlation links and the boundary audit trail (ADR-0010, ADR-0011) — which the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (ADR-0004), which the Store creates before this runs; schema 26 adds the Batch A tables for the information-discipline program — the held incident-notice queue, request correlation links and the boundary audit trail (ADR-0010, ADR-0011) — which the Store creates before this runs; schema 27 adds the authoritative `information` record for every cross-role message (issue #13, ADR-0009 decision 1), which the Store creates before this runs, and backfills it from the durable Lead messages.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -19,8 +19,9 @@ import { promptsNotice, settingsNotice, subscriptionNotice } from './notices.ts'
 import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
+import { factParentDedupe, informationOf } from './information.ts'
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -274,6 +275,19 @@ export function migrateTo25(_store: Store): void {}
  * Batch A record rewrite.
  */
 export function migrateTo26(_store: Store): void {}
+/**
+ * Schema 27 records every durable cross-role message as one authoritative information record before delivery (issue #13,
+ * ADR-0009 decision 1, docs/016 P1–P5). The Store creates the `information` table before this runs; this step backfills one
+ * record per existing `lead_message`, deriving a fact's origin chain from the assignment message it answers. Re-running it
+ * is a no-op because the record's dedupe key is the durable message's recipient and request id.
+ */
+export function migrateTo27(store: Store): void {
+  for (const message of store.leads.all()) {
+    const parentRequest = factParentDedupe(message)
+    const parent = parentRequest === undefined ? undefined : store.information.byDedupe(parentRequest)
+    store.information.send(informationOf(message, parent), message.at)
+  }
+}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

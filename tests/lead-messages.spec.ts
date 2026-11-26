@@ -32,8 +32,8 @@ describe('Lead messages', () => {
       expect(again.id).toBe(sent.id)
       expect(again.body).toBe('Start the Ticket in app.')
       // A different recipient keeps its own record for the same request, and so does a different request.
-      const other = store.leads.send({ project: 'app', kind: 'assignment', from: 'orchestrator', to: 'orchestrator', requestId: 'ticket-1',
-        body: 'Not the Lead.' })
+      const other = store.leads.send({ project: 'app', kind: 'notice', from: 'lead', to: 'person', requestId: 'ticket-1',
+        body: 'Not the Orchestrator.' })
       expect(other.id).not.toBe(sent.id)
       const next = store.leads.send({ project: 'app', kind: 'report', from: 'lead', to: 'orchestrator', requestId: 'report-1',
         body: 'The Ticket is settled.' })

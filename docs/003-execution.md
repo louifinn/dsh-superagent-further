@@ -29,6 +29,8 @@ An `idle` Ticket has finished its turn without an outstanding question. A Trigge
 - **A person's direct word is a Directive** ([002](002-authorization.md)). It is authoritative for the work it names, effective once, and is passed upward by the addressed level as well as downward to the branches it changes.
 - **One fact, one record, one direction.** A retry or a second channel does not create a second source; a forwarded fact keeps its original text and provenance. The direction is fixed by the fact's origin, and a fact is not sent back the way it came.
 
+Every durable cross-role message is written as an authoritative information record before it is delivered ([016](016-information-discipline.md) P1–P5, issue #13). A record carries its kind, direction, source and target role, audience, root, parent and hop count, a one-shot flag, the payload, and the times it was delivered and acknowledged; a grant of a waiting Input points its parent at the assignment it answers. The record's dedupe key is the recipient and request id, so a retry or a second channel finds the same record rather than a second source. The Orchestrator reads the records through the `information` read resource, and `GET information` pages the same rows for the panel.
+
 ## The Executor
 
 Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the configured execution root, which defaults to `<stateDir>/work`, in a `<project>` subdirectory when the Ticket names a registered project.

@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
+import { Information, factParentDedupe, informationOf } from './information.ts'
 
 /** Who a record is from or to: the Orchestrator, a project's Lead, its Executor, or a person. */
 export type LeadParty = 'orchestrator' | 'lead' | 'executor' | 'person'
@@ -68,7 +69,7 @@ interface Row { id: string; value: string }
  * and exposes it as `store.leads`; all writes are single statements, so a caller's surrounding transaction can include them.
  */
 export class LeadMessages {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync, private readonly information?: Information) {}
   private parse(row: Row | undefined): LeadMessage | undefined {
     return row === undefined ? undefined : LeadMessageSchema.parse(JSON.parse(row.value))
   }
@@ -77,6 +78,13 @@ export class LeadMessages {
     const existing = this.getByRequest(input.to, input.requestId)
     if (existing) return existing
     const message: LeadMessage = { ...input, id: randomUUID(), at }
+    // The authoritative record is written before the message: a lost delivery still leaves one source of the fact
+    // (docs/016 P1, issue #13), and a redelivery of the same request finds it by its dedupe key.
+    if (this.information) {
+      const request = factParentDedupe(message)
+      const parent = request === undefined ? undefined : this.information.byDedupe(request)
+      this.information.send(informationOf(message, parent), at)
+    }
     this.db.prepare('INSERT INTO lead_message (id, project, recipient, request, at, value) VALUES (?, ?, ?, ?, ?, ?)')
       .run(message.id, message.project, message.to, message.requestId, message.at, JSON.stringify(message))
     return message
@@ -101,13 +109,20 @@ export class LeadMessages {
       .map(row => this.parse(row as unknown as Row)!)
       .filter(message => project === undefined || message.project === project)
   }
+  /** Returns every message oldest first, for the schema 27 backfill and audits. */
+  all(): LeadMessage[] {
+    return this.db.prepare('SELECT id, value FROM lead_message ORDER BY rowid').all()
+      .map(row => this.parse(row as unknown as Row)!)
+  }
   /** Records that the recipient's Session took the message; a later delivery attempt is a no-op. */
   deliver(id: string, at = new Date().toISOString()): void {
     this.update(id, message => message.deliveredAt === undefined ? { ...message, deliveredAt: at } : message)
+    this.information?.markDelivered(id, at)
   }
   /** Records that the recipient's answer arrived; a later acknowledgement is a no-op. */
   ack(id: string, at = new Date().toISOString()): void {
     this.update(id, message => message.ackAt === undefined ? { ...message, ackAt: at } : message)
+    this.information?.markAck(id, at)
   }
   private update(id: string, change: (message: LeadMessage) => LeadMessage): void {
     const message = this.get(id)

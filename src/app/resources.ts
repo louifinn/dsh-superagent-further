@@ -30,6 +30,8 @@ export const RESOURCES: readonly { name: string; holds: string }[] = [
   { name: 'thread/<key>', holds: 'one thread: its label and link, its tickets and latest decisions, and its triggers, newest first' },
   { name: 'decisions', holds: 'decisions, newest first' },
   { name: 'decision/<id>', holds: 'one decision with its audit' },
+  { name: 'information', holds: 'the authoritative information records of cross-role messages, newest first, with their kind, direction, source, target, hops and delivery state (issue #13)' },
+  { name: 'information/<id>', holds: 'one information record whole, including its payload and origin chain' },
   { name: 'ticket/<id>', holds: 'a ticket\'s card, the trigger, decision and threads it is tied to, its latest assignments with the start of each '
     + 'report, and its inputs, newest first' },
   { name: 'ticket/<id>/assignment', holds: 'its assignment text' },
@@ -63,7 +65,7 @@ export const resourceGrammar = (reads: readonly string[]): string => RESOURCES.f
   .map(resource => `${resource.name}: ${resource.holds}`).join('; ')
 
 export interface ResourceHost {
-  readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus'>
+  readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus' | 'information'>
   /** The boundary audit for a refused read attempt (issue #37); absent in a fixture host. */
   readonly boundary?: BoundaryAudit
   readonly pages: TextCache
@@ -160,6 +162,12 @@ const ROUTES: readonly Route[] = [
     const decision = main(read).store.decisions.get(read.rest)
     if (!decision) throw new Error('Unknown decision')
     return decisionDetails(decision)
+  }],
+  ['information', read => list(read, (offset, count) => main(read).store.information.list(count, offset))],
+  ['information/', read => {
+    const record = main(read).store.information.byId(read.rest)
+    if (!record) throw new Error('Unknown information record')
+    return record
   }],
   ['settings', read => main(read).settings.view()],
   ['settings/proposals', read => text(read, JSON.stringify(main(read).settings.proposals()))],

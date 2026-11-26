@@ -19,6 +19,12 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   the caller's role, the resource and its project, and mirrored into the `boundary` operational log scope, so a
   tool-layer boundary crossing is discoverable from the panel; the boundary is operational, not isolation (issue #37,
   ADR-0011, schema 26).
+- Every durable cross-role message now has one authoritative information record written before delivery, carrying its
+  kind, direction, source and target role, audience, root, parent, hops, a one-shot flag, the payload and the delivery
+  and acknowledgement times; a fact's record names the assignment it answers, a retry finds the same record by its
+  dedupe key, and the Orchestrator reads the chain through the `information` resource while `GET information` pages it
+  for the panel. A schema 26 database backfills one record per existing Lead message (issue #13, ADR-0009 decision 1,
+  schema 27).
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
   and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).

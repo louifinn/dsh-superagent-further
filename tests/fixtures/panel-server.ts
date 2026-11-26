@@ -440,8 +440,12 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       matched: rows.length, total: server.memories.length, pinned: server.memories.filter(memory => memory.pinned).length,
       offset, limit, config: server.settings.memory }
   } },
-  'GET logs': { query: ['level', 'scope', 'limit', 'q'], answer: ({ query }) => {
-    const level = query.level ?? 'all'
+  'GET information': { query: ['offset', 'limit'], answer: ({ query }) => {
+    const offset = Number(query.offset ?? 0)
+    const limit = Number(query.limit ?? 20)
+    return { records: [], offset, limit }
+  } },
+  'GET logs': { query: ['level', 'scope', 'limit', 'q'], answer: ({ query }) => {    const level = query.level ?? 'all'
     const scope = query.scope ?? ''
     const q = query.q ?? ''
     const needle = q.toLowerCase()

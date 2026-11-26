@@ -460,6 +460,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `POST incidents/<id>/diagnose` | Runs the read-only diagnostician now, bounded to 10 minutes and one run at a time: `{status: "diagnosed", incident, diagnosis, resolution?}` where `resolution` is the token of any work the automatic route already created (`request:<id>`, `self-report:<id>`, `self-report:off` or `operational`); 404 for an unknown record, 409 when the status or the daily diagnosis budget refuses it (including `stale` when the record changed during the run). Audited as `incident.diagnose` with ids, status, confidence, target and that resolution |
 | `POST incidents/<id>/dismiss` with `{"reason": "..."}` | Dismisses an open record: `{incident}` with status `dismissed` and `resolution: "Dismissed: <reason>"`; 400 for an empty or over-long reason, 404 unknown, 409 a wrong status. Audited as `incident.dismiss` |
 | `POST incidents/<id>/route` with `{"confirm": true}` | Routes a diagnosed record that has no resolution yet: `{status: "routed", incident, resolution}` with `request:<id>`, `self-report:<id>`, `self-report:off` or `operational`; 400 without `confirm: true`, 404 unknown, 409 when the record is not diagnosed, not routable or already routed. Audited as `incident.route` with ids and the resolution |
+| `GET information` | The authoritative information records behind cross-role messages (issue #13), newest first and paged with `offset` and `limit`: each with its kind, direction, source and target role, audience, root and parent, hops, one-shot flag, payload, and delivery and acknowledgement times |
 
 The panel shows the reply queue while messages wait: how many, how many failed at least once, the oldest wait and the
 next attempt. A polling Source shows its next check beside its last message, so a quiet Source and a stuck one look
@@ -530,8 +531,8 @@ and starts a replacement with a recovery note.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
 5. If the installation predates workspace identity, it starts paused at `workspaceRequired`: open the panel and finish the workspace step of the setup wizard (or save the workspace block on **Execution → Settings**). The host registers the new DSH workspace and creates a new master Session; the old master Session is archived and readable, and the main conversation does not continue. An installation that already has a workspace skips this step. Selecting a previously used workspace later unarchives and resumes that workspace's own master Session.
-6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 26 (current)`, or
-   `schema 24 migrates to 25 on start` / `schema 25 migrates to 26 on start` when the next start is the one that upgrades
+6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 27 (current)`, or
+   `schema 25 migrates to 26 on start` / `schema 26 migrates to 27 on start` when the next start is the one that upgrades
    the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved

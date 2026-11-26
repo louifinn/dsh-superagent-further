@@ -24,6 +24,14 @@
     "holds": "one decision with its audit"
   },
   {
+    "name": "information",
+    "holds": "the authoritative information records of cross-role messages, newest first, with their kind, direction, source, target, hops and delivery state (issue #13)"
+  },
+  {
+    "name": "information/<id>",
+    "holds": "one information record whole, including its payload and origin chain"
+  },
+  {
     "name": "ticket/<id>",
     "holds": "a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first"
   },

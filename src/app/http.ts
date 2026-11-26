@@ -428,6 +428,12 @@ function routes(runtime: HttpHost): Routes {
       const { level, scope, limit, q } = LogsQuery.parse(query)
       return { entries: runtime.logs.list({ level: level as LogFilter, scope, limit, q }), level: level as LogFilter, scope, q }
     },
+    // The authoritative information records behind cross-role messages (issue #13): the read resource's source, paged.
+    'GET information': ({ query }) => {
+      const offset = Math.max(0, Number(query.offset ?? 0) || 0)
+      const limit = Math.min(50, Math.max(1, Number(query.limit ?? 20) || 20))
+      return { records: runtime.store.information.list(limit, offset), offset, limit }
+    },
     // Deterministic incidents (ADR-0004). Detection itself is not exposed here: M34 adds the diagnose/dismiss actions.
     'GET incidents': ({ query }) => {
       const parsed = IncidentsQuery.parse(query)

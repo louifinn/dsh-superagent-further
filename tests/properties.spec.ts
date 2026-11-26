@@ -16,6 +16,7 @@ import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { Engine, MemoryRepositories, key } from '../src/core/index.ts'
 import type { Assessor, Executor, Outcome, Policy, ProjectRequest, Trigger } from '../src/core/index.ts'
 import { FIELD_KEYS, PROJECTION_POLICY, field, project } from '../src/app/projection.ts'
+import { informationViolations, type InfoRecord } from '../src/core/information.ts'
 import { RESOURCE_NAMES } from '../src/app/resources.ts'
 import { ROLE_IDS, SURFACES } from '../src/app/surfaces.ts'
 import { assessmentOutcome, DEFAULT_RULES, type AdmissionDirection, type Assessment } from '../src/policy.ts'
@@ -341,5 +342,33 @@ describe('context projection invariants', () => {
         expect(project(field(key), value), `seed ${seed} ${key}`).toEqual(project(field(key), value))
       }
     }
+  })
+})
+
+describe('Information authority (issue #13)', () => {
+  it('keeps one origin per fact and a chain whose hops follow its parent, for every seed', () => {
+    for (const seed of SEEDS) {
+      const r = rng(seed)
+      for (let iteration = 0; iteration < 20; iteration++) {
+        const origin = `info-${seed}-${iteration}`
+        const chain: InfoRecord[] = []
+        const length = r.int(1, 4)
+        for (let hop = 0; hop < length; hop++) {
+          const id = `${origin}-${hop}`
+          chain.push({ id, kind: 'notice', direction: 'down', source: { role: 'orchestrator' }, target: { role: 'lead' },
+            audience: ['lead'], hops: hop, oneShot: false, dedupe: `lead:${id}`, payload: { body: 'text' },
+            root: `${origin}-0`, ...(hop === 0 ? {} : { parent: `${origin}-${hop - 1}` }), createdAt: `2026-11-${String(seed).padStart(2, '0')}T00:0${iteration}:00.000Z` })
+        }
+        expect(informationViolations(chain), `seed ${seed} iteration ${iteration}`).toEqual([])
+      }
+    }
+  })
+  it('flags a second authority or a reversed relay', () => {
+    const base: InfoRecord = { id: 'a', kind: 'notice', direction: 'up', source: { role: 'lead' }, target: { role: 'orchestrator' },
+      audience: ['orchestrator'], hops: 0, oneShot: false, dedupe: 'orchestrator:a', payload: {}, root: 'a', createdAt: '2026-11-26T00:00:00.000Z' }
+    const child: InfoRecord = { ...base, id: 'b', parent: 'a', root: 'a', hops: 1, direction: 'down',
+      source: { role: 'lead' }, target: { role: 'orchestrator' }, dedupe: 'orchestrator:b' }
+    expect(informationViolations([base, { ...child, dedupe: base.dedupe }])).toContain('two authoritative sources for orchestrator:a')
+    expect(informationViolations([base, child]).some(problem => problem.includes('reverses the direction'))).toBe(true)
   })
 })
