@@ -348,5 +348,5 @@ a planning decision, not a normative one.
 ## Open work
 
 The gaps between this discipline and the current implementation are tracked in the repository's issue tracker under the
-information-discipline epic (#11). The implementation decisions the operator took on 2026-11-26 are recorded in [ADR 0009](adr/0009-information-discipline-decisions.md). This document deliberately does not prescribe code, storage or tool names; an
+information-discipline epic (#11). The implementation decisions the operator took on 2026-11-26 are recorded in [ADR 0009](adr/0009-information-discipline-decisions.md); the Batch A incident-budget decision is recorded in [ADR 0010](adr/0010-incident-budget-and-held-notices.md). This document deliberately does not prescribe code, storage or tool names; an
 implementation may choose them, as long as the obligations above hold.

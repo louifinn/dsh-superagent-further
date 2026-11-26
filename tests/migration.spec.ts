@@ -786,7 +786,7 @@ it('migrates a schema 23 database to the current schema by creating the empty se
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(25)
+    expect(SCHEMA_VERSION).toBe(26)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.selfReports.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -815,7 +815,7 @@ it('migrates a schema 24 database to 25 by creating the empty incident table and
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(25)
+    expect(SCHEMA_VERSION).toBe(26)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.incidents.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -831,6 +831,35 @@ it('migrates a schema 24 database to 25 by creating the empty incident table and
     expect(store.incidents.list({ severity: 'low' })).toEqual([])
     // The fingerprint is unique: a second record with the same fingerprint is refused by SQLite.
     expect(() => store.incidents.save({ ...incident, id: 'inc-2' })).toThrow()
+  } finally { store.close() }
+})
+
+it('migrates a schema 25 database to 26 by creating the empty Batch A tables and keeping the records', () => {
+  const path = join(directory, 'batch-a.sqlite')
+  const at = '2026-11-10T09:00:00.000Z'
+  const seeded = new Store(path)
+  seeded.tickets.save({
+    id: 't1', title: 'Fix t1', decisionId: 'd-t1',
+    mandate: { strength: 'explicit', policyVersion: 'v1', basis: { via: 'listed' }, actor: { source: 'chat', id: 'alice' }, scope: 'small' },
+    channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: at, updatedAt: at, origin: { source: 'chat', thread: 't1' },
+  } as never)
+  // A schema 25 database had none of the Batch A tables: the Store creates them before migrateTo26 runs, with no backfill.
+  seeded.db.exec('DROP TABLE incident_notification; DROP TABLE request_link; DROP TABLE audit_boundary')
+  seeded.db.prepare("UPDATE kv SET value='25' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
+    expect(store.db.prepare('SELECT count(*) AS count FROM incident_notification').get()).toEqual({ count: 0 })
+    expect(store.db.prepare('SELECT count(*) AS count FROM request_link').get()).toEqual({ count: 0 })
+    expect(store.db.prepare('SELECT count(*) AS count FROM audit_boundary').get()).toEqual({ count: 0 })
+    store.incidents.noteNotification({ fingerprint: 'fp-1', rule: 'outbox-failures', severity: 'medium', title: 'Held', detail: 'd' }, at)
+    expect(store.incidents.notificationCount()).toBe(1)
+    expect(store.incidents.notifications()).toEqual([expect.objectContaining({ fingerprint: 'fp-1', rule: 'outbox-failures' })])
+    store.incidents.markNotificationNotified(store.incidents.notifications()[0]!.id, at)
+    expect(store.incidents.notificationCount()).toBe(0)
   } finally { store.close() }
 })
 

@@ -9,7 +9,7 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
-  migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, tooOld } from './migration.ts'
+  migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, migrateTo26, tooOld } from './migration.ts'
 import { IncidentRecords } from './incidents.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
@@ -170,10 +170,22 @@ export class Store implements Repositories {
               evidence_dir TEXT NOT NULL DEFAULT '', diagnosis TEXT, resolution TEXT, updated_at TEXT NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS incident_status ON incident(status, last_at);
             CREATE INDEX IF NOT EXISTS incident_severity ON incident(severity, last_at);
+            CREATE TABLE IF NOT EXISTS incident_notification (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL UNIQUE,
+              rule TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL,
+              notified_at TEXT);
+            CREATE INDEX IF NOT EXISTS incident_notification_waiting ON incident_notification(notified_at, id);
+            CREATE TABLE IF NOT EXISTS request_link (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, request TEXT NOT NULL,
+              at TEXT NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS request_link_group ON request_link(group_id, at);
+            CREATE TABLE IF NOT EXISTS audit_boundary (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, role TEXT NOT NULL,
+              action TEXT NOT NULL, resource TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL,
+              detail TEXT NOT NULL DEFAULT '', value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS audit_boundary_at ON audit_boundary(at);
+            CREATE INDEX IF NOT EXISTS audit_boundary_outcome ON audit_boundary(outcome, at);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this); if (version! < 23) migrateTo23(this); if (version! < 24) migrateTo24(this); if (version! < 25) migrateTo25(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this); if (version! < 23) migrateTo23(this); if (version! < 24) migrateTo24(this); if (version! < 25) migrateTo25(this); if (version! < 26) migrateTo26(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {

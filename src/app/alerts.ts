@@ -9,7 +9,7 @@ import type { Key } from '../kv.ts'
 import { KV } from '../kv.ts'
 import type { Settings } from '../policy.ts'
 import { key } from '../core/ids.ts'
-import { incidentSeverityRank, INCIDENT_TITLE_LIMIT, type Incident } from '../core/incidents.ts'
+import { incidentSeverityRank, INCIDENT_TITLE_LIMIT, type Incident, type IncidentNotification } from '../core/incidents.ts'
 import type { Logs } from './logs.ts'
 
 /** Which incident change an alert describes; dismissals never alert. */
@@ -63,5 +63,19 @@ export class Alerts {
       'The incident record and its evidence bundle are in the panel; this message is a notification, not a fix.',
     ].join('\n\n')
     return this.send(`incident:${incident.id}:${change}`, text)
+  }
+
+  /**
+   * Sends the alert for a detection the incident daily budget held back (issue #28, ADR-0010). The queue only holds
+   * notices at or above the operator's alert threshold, so this path skips the severity test and keeps the alert chat's
+   * daily allowance; a refusal keeps the notice queued for the next watchdog pass.
+   */
+  async notifyQueued(entry: IncidentNotification): Promise<boolean> {
+    const text = [
+      `[dsh-superagent] Incident held by the daily record budget: ${entry.severity} ${entry.rule} — ${entry.title.slice(0, INCIDENT_TITLE_LIMIT)}`,
+      entry.detail,
+      'The daily incident allowance was already spent, so this detection has no record yet; the panel shows it if the condition repeats.',
+    ].join('\n\n')
+    return this.send(`incident-queued:${entry.fingerprint}`, text)
   }
 }

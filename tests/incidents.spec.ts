@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSchema } from '../src/policy.ts'
 import type { DomainEvent } from '../src/core/index.ts'
 import { incidentFingerprint, isOpenIncident, normalizeIncidentDetail, canTransition, transitionIncident,
-  type IncidentCandidate } from '../src/core/incidents.ts'
+  type IncidentCandidate, type IncidentNotification } from '../src/core/incidents.ts'
 import { Incidents } from '../src/app/incidents.ts'
 import { IncidentDetector, updateOutcomeCandidate } from '../src/app/incident-detectors.ts'
 import { Logs } from '../src/app/logs.ts'
@@ -36,7 +36,8 @@ afterEach(() => {
 })
 
 /** One service over a real Store, a temp workspace, a real ring and an exact clock. */
-function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medium' | 'high' | 'critical'; dailyBudget?: number }
+function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medium' | 'high' | 'critical'
+  alertMinimumSeverity?: 'low' | 'medium' | 'high' | 'critical'; alertChatId?: string; dailyBudget?: number; notifyOk?: boolean }
   = {}, limits: { cooldownMs?: number; openCap?: number; keepBundles?: number; workspace?: string; workspaceThrows?: boolean } = {}) {
   directory = mkdtempSync(join(tmpdir(), 'incidents-'))
   workspace = limits.workspace ?? join(directory, 'workspace')
@@ -50,6 +51,7 @@ function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medi
   const settings = { ...base, executor: { ...base.executor, incidents: { ...base.executor.incidents, ...overrides } } }
   const health: { state: string; detail: string }[] = []
   const recorded: string[] = []
+  const notified: IncidentNotification[] = []
   let next = 0
   const incidents = new Incidents({
     store: { incidents: store.incidents, settings: () => settings },
@@ -63,6 +65,7 @@ function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medi
     logs,
     health: { set: value => { health.push(value) } },
     record: message => { recorded.push(message) },
+    notifyNotification: async entry => { notified.push(entry); return overrides.notifyOk ?? true },
     now: () => clock.at,
     version: '0.4.0-test',
     createId: () => `i${++next}`,
@@ -70,7 +73,7 @@ function harness(overrides: { enabled?: boolean; minimumSeverity?: 'low' | 'medi
     ...(limits.openCap === undefined ? {} : { openCap: limits.openCap }),
     ...(limits.keepBundles === undefined ? {} : { keepBundles: limits.keepBundles }),
   })
-  return { store, incidents, logs, clock, health, recorded, settings, directory, workspace }
+  return { store, incidents, logs, clock, health, recorded, notified, settings, directory, workspace }
 }
 
 const candidate = (rule: 'outbox-failures' | 'agent-error-rate' | 'health-error' | 'stalled-assignment' | 'assignment-burst'
@@ -142,45 +145,79 @@ describe('Incidents service', () => {
     expect(h.store.incidents.list()).toHaveLength(1)
   })
 
-  it('skips candidates below the minimum severity, disabled detection, and the daily budget', () => {
+  it('skips candidates below the minimum severity and disabled detection, and holds a quieter one for the alert chat', () => {
     const low = harness({ minimumSeverity: 'high' })
     expect(low.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))).toBeUndefined()
     expect(low.store.incidents.list()).toHaveLength(0)
 
     const off = harness({ enabled: false })
-    expect(off.incidents.record(candidate('outbox-failures'))).toBeUndefined()
+    expect(off.incidents.record(candidate('outbox-failures', { severity: 'medium' }))).toBeUndefined()
     expect(off.store.incidents.list()).toHaveLength(0)
 
-    const budget = harness({ dailyBudget: 1 })
-    expect(budget.incidents.record(candidate('outbox-failures'))).not.toBeUndefined()
-    expect(budget.incidents.record(candidate('agent-error-rate'))).toBeUndefined()
+    // Issue #28: a detection past the daily record budget is not recorded, but the alert queue holds its notice.
+    const budget = harness({ minimumSeverity: 'low', dailyBudget: 1, alertMinimumSeverity: 'medium', alertChatId: 'oc_test' })
+    expect(budget.incidents.record(candidate('outbox-failures', { severity: 'medium' }))).not.toBeUndefined()
+    expect(budget.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))).toBeUndefined()
     expect(budget.store.incidents.list()).toHaveLength(1)
+    expect(budget.incidents.heldNotifications()).toBe(1)
+    expect(budget.store.incidents.notifications()).toEqual([expect.objectContaining({ rule: 'agent-error-rate', severity: 'medium' })])
   })
 
   it('records a health error and a stalled assignment even when the daily budget is zero', () => {
-    // ADR-0004: the two live-outage rules record regardless of the daily budget; every other new record is dropped.
-    const h = harness({ dailyBudget: 0 })
-    expect(h.incidents.record(candidate('outbox-failures'))).toBeUndefined()
+    // ADR-0004: the two live-outage rules record regardless of the daily budget; ADR-0010 extends the same treatment to
+    // every high or critical condition, while a quieter new record is dropped (and held for the alert chat).
+    const h = harness({ minimumSeverity: 'low', dailyBudget: 0, alertMinimumSeverity: 'medium', alertChatId: 'oc_test' })
+    expect(h.incidents.record(candidate('outbox-failures', { severity: 'medium' }))).toBeUndefined()
     expect(h.store.incidents.list()).toHaveLength(0)
     const health = h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!
     const stalled = h.incidents.record(candidate('stalled-assignment', { detail: 'assignment a1 idle 10 minutes' }))!
+    const polled = h.incidents.record(candidate('source-poll-failures', { severity: 'high', detail: 'source feishu poll failed 3 times' }))!
     expect(health.rule).toBe('health-error')
     expect(stalled.rule).toBe('stalled-assignment')
-    expect(h.store.incidents.list()).toHaveLength(2)
+    expect(polled.severity).toBe('high')
+    expect(h.store.incidents.list()).toHaveLength(3)
     expect(h.store.incidents.list().every(incident => incident.status === 'bundled' && incident.severity === 'high')).toBe(true)
   })
 
-  it('exempts only the live-outage rules from a budget another record already spent', () => {
-    const h = harness({ dailyBudget: 1 })
-    expect(h.incidents.record(candidate('outbox-failures'))).not.toBeUndefined()
-    expect(h.incidents.record(candidate('agent-error-rate'))).toBeUndefined()
+  it('records a high-severity condition after the budget is spent, while a medium one waits in the alert queue', () => {
+    const h = harness({ minimumSeverity: 'low', dailyBudget: 1, alertMinimumSeverity: 'medium', alertChatId: 'oc_test' })
+    expect(h.incidents.record(candidate('outbox-failures', { severity: 'medium' }))).not.toBeUndefined()
+    expect(h.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))).toBeUndefined()
     const health = h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!
+    const polled = h.incidents.record(candidate('source-poll-failures', { severity: 'high', detail: 'source feishu poll failed 3 times' }))!
     expect(health.severity).toBe('high')
-    expect(h.incidents.record(candidate('source-poll-failures', { detail: 'source feishu poll failed 3 times' }))).toBeUndefined()
-    // Dedupe still wins over a second row for an exempt rule: a repeat only counts occurrences.
+    expect(polled.severity).toBe('high')
+    // Dedupe still wins over a second row for an exempt condition: a repeat only counts occurrences.
     h.clock.at = at('2026-11-11T10:30:00.000Z')
-    expect(h.incidents.record(candidate('health-error', { detail: 'health claim worker entered error' }))!.occurrences).toBe(2)
-    expect(h.store.incidents.list()).toHaveLength(2)
+    expect(h.incidents.record(candidate('outbox-failures', { severity: 'medium' }))!.occurrences).toBe(2)
+    expect(h.store.incidents.list()).toHaveLength(3)
+    expect(h.incidents.heldNotifications()).toBe(1)
+  })
+
+  it('flushes a held notice through the alert chat once, then forgets it', async () => {
+    const h = harness({ minimumSeverity: 'low', dailyBudget: 1, alertMinimumSeverity: 'medium', alertChatId: 'oc_test' })
+    h.incidents.record(candidate('outbox-failures', { severity: 'medium' }))
+    h.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))
+    expect(h.incidents.heldNotifications()).toBe(1)
+    await expect(h.incidents.flushNotifications()).resolves.toBe(1)
+    expect(h.notified).toHaveLength(1)
+    expect(h.notified[0]).toMatchObject({ rule: 'agent-error-rate', severity: 'medium' })
+    expect(h.incidents.heldNotifications()).toBe(0)
+    expect(h.recorded.some(message => message.startsWith('incident.notified'))).toBe(true)
+    await expect(h.incidents.flushNotifications()).resolves.toBe(0)
+  })
+
+  it('keeps a held notice when the alert chat refuses it, and never queues one below the alert threshold', async () => {
+    const refused = harness({ minimumSeverity: 'low', dailyBudget: 1, alertMinimumSeverity: 'medium', alertChatId: 'oc_test', notifyOk: false })
+    refused.incidents.record(candidate('outbox-failures', { severity: 'medium' }))
+    expect(refused.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))).toBeUndefined()
+    await expect(refused.incidents.flushNotifications()).resolves.toBe(0)
+    expect(refused.incidents.heldNotifications()).toBe(1)
+
+    const quiet = harness({ minimumSeverity: 'low', dailyBudget: 1, alertMinimumSeverity: 'high', alertChatId: 'oc_test' })
+    quiet.incidents.record(candidate('outbox-failures', { severity: 'medium' }))
+    expect(quiet.incidents.record(candidate('agent-error-rate', { severity: 'medium' }))).toBeUndefined()
+    expect(quiet.incidents.heldNotifications()).toBe(0)
   })
 
   it('skips a new incident when the open-incident cap is reached but still counts a repeat', () => {

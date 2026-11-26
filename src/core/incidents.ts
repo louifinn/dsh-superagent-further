@@ -34,6 +34,18 @@ export function incidentBudgetExempt(rule: IncidentRule): boolean {
   return INCIDENT_BUDGET_EXEMPT_RULES.includes(rule)
 }
 
+/**
+ * The severities whose first record is exempt from the daily budget (issue #28, ADR-0010): a high or critical condition is
+ * worth a record and a notice even when quieter records already spent the day's allowance. The rule, fingerprint, cap and
+ * minimum-severity gates still apply; only the count of new records a day steps aside.
+ */
+export const INCIDENT_BUDGET_EXEMPT_SEVERITIES: readonly IncidentSeverity[] = ['high', 'critical']
+
+/** True when a new record for this severity is exempt from the daily budget. */
+export function incidentSeverityBudgetExempt(severity: IncidentSeverity): boolean {
+  return INCIDENT_SEVERITY_RANK[severity] >= INCIDENT_SEVERITY_RANK.high
+}
+
 /** The related records a detector can name; absent keys mean installation-wide scope. */
 export interface IncidentScope { project?: string; ticket?: string; request?: string; session?: string }
 
@@ -54,6 +66,22 @@ export interface Incident {
   diagnosis?: string
   resolution?: string
   updated_at: string
+}
+
+/**
+ * One notice the daily record budget held back (issue #28, ADR-0010): the detection was real but the day's allowance of new
+ * records was spent, so `Incidents.flushNotifications` retries the alert through the operator chat until the alert allowance
+ * admits it. The queue is keyed by fingerprint, so a repeating condition keeps one notice.
+ */
+export interface IncidentNotification {
+  id: number
+  fingerprint: string
+  rule: IncidentRule
+  severity: IncidentSeverity
+  title: string
+  detail: string
+  created_at: string
+  notified_at?: string
 }
 
 /** The confidence levels a diagnosis may carry; an answer the parser cannot read is always low (ADR-0005). */
@@ -165,12 +193,22 @@ export interface IncidentRepository {
   count(filter?: IncidentFilter): number
   /** How many open incidents exist, optionally for one project. */
   openCount(project?: string): number
+  /** Queues a detection the daily record budget held back (issue #28); a repeated fingerprint keeps its first entry. */
+  noteNotification?(incident: { fingerprint: string; rule: IncidentRule; severity: IncidentSeverity; title: string; detail: string }, at: string): void
+  /** The queued notices still waiting for the operator chat, oldest first. */
+  notifications?(limit?: number): IncidentNotification[]
+  /** Marks one queue entry as delivered to the operator chat. */
+  markNotificationNotified?(id: number, at: string): void
+  /** How many queued notices still wait for the operator chat. */
+  notificationCount?(): number
 }
 
 export const INCIDENT_TITLE_LIMIT = 200
 export const INCIDENT_DETAIL_LIMIT = 800
 /** How many open records one installation may hold; a burst of new conditions cannot crowd the panel. */
 export const OPEN_INCIDENT_CAP = 100
+/** How many held notices the queue keeps; a burst of quiet conditions must not grow an unbounded backlog. */
+export const INCIDENT_NOTIFICATION_CAP = 100
 /** At most this many new records a day; repeats of a known condition still count as occurrences. */
 export const INCIDENT_DAILY_BUDGET_MAX = 24
 /** A resolved or dismissed condition stays quiet this long before a repeat may reopen its record. */

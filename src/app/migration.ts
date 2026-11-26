@@ -1,7 +1,7 @@
 /**
  * Migrates a schema 10 database to the current schema in a single transaction so runtime readers never convert legacy
  * shapes. Schema 11 reshaped records; schema 12 fills in the project of Tickets accepted before projects existed; schema 13
- * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (ADR-0004), which the Store creates before this runs.
+ * adds the project Lead Session and message records, whose tables the Store creates before this runs; schema 14 adds Requests; schema 15 ends the Requests of Tickets that ended before Requests existed; schema 16 adds the memory table, which the Store creates before this runs; schema 17 removes the GitHub Source's own repository setting, because the first registered project's repository is the deployment's primary repository; schema 18 adds the settings_proposal table, which the Store creates before this runs; schema 19 adds the installation automation table, which the Store creates before this runs; schema 20 adds the automation_delivery table, which the Store creates before this runs; schema 21 adds the project_request table, which the Store creates before this runs; schema 22 backfills Ticket deliverable, which distinguishes a change that delivers through a pull request from a read-only answer; schema 23 records why every ended Ticket ended, so its Executor retires by the recorded cause rather than by report timing; schema 24 adds the self_report table for the self-evolution Issue outlet (docs/014 D3), which the Store creates before this runs; schema 25 adds the incident table for deterministic incident detection (ADR-0004), which the Store creates before this runs; schema 26 adds the Batch A tables for the information-discipline program — the held incident-notice queue, request correlation links and the boundary audit trail (ADR-0010, ADR-0011) — which the Store creates before this runs.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -20,7 +20,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 25
+export const SCHEMA_VERSION = 26
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -266,6 +266,14 @@ export function migrateTo24(_store: Store): void {}
  * schema 24 record needs a backfill, so the step stays in the sequence as the place for a later incident record rewrite.
  */
 export function migrateTo25(_store: Store): void {}
+/**
+ * Schema 26 adds the information-discipline Batch A tables (ADR-0010, ADR-0011, issue #28, #32, #37): the
+ * `incident_notification` queue for detections the daily record budget held back, the `request_link` rows a correlation
+ * group references, and the `audit_boundary` trail for context access across trust boundaries. The Store creates every
+ * table before this runs and no schema 25 record changes shape, so the step stays in the sequence as the place for a later
+ * Batch A record rewrite.
+ */
+export function migrateTo26(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

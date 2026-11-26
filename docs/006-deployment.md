@@ -455,7 +455,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
-| `GET incidents` | The incident records of schema 25, filtered by `status` (`open`, one status or `all`), `severity` and any scope id (`project`, `ticket`, `request`, `session`) and paged with `offset` and `limit`; `incidents`, `total`, the applied filters and the window |
+| `GET incidents` | The incident records of schema 26, filtered by `status` (`open`, one status or `all`), `severity` and any scope id (`project`, `ticket`, `request`, `session`) and paged with `offset` and `limit`; `incidents`, `total`, the applied filters and the window |
 | `GET incidents/<id>` | One incident, its parsed diagnosis (root cause, evidence, hypotheses, fix plan, confidence and target) and its evidence summary: the `dir` under `<workspace>/artifacts/incidents/`, and the content-addressed manifest with its version, files, sizes and hashes; 404 for an unknown id |
 | `POST incidents/<id>/diagnose` | Runs the read-only diagnostician now, bounded to 10 minutes and one run at a time: `{status: "diagnosed", incident, diagnosis, resolution?}` where `resolution` is the token of any work the automatic route already created (`request:<id>`, `self-report:<id>`, `self-report:off` or `operational`); 404 for an unknown record, 409 when the status or the daily diagnosis budget refuses it (including `stale` when the record changed during the run). Audited as `incident.diagnose` with ids, status, confidence, target and that resolution |
 | `POST incidents/<id>/dismiss` with `{"reason": "..."}` | Dismisses an open record: `{incident}` with status `dismissed` and `resolution: "Dismissed: <reason>"`; 400 for an empty or over-long reason, 404 unknown, 409 a wrong status. Audited as `incident.dismiss` |
@@ -530,8 +530,9 @@ and starts a replacement with a recovery note.
 3. Run `git pull && pnpm install --frozen-lockfile && pnpm build`.
 4. Run `scripts/dsh-superagent-further restart` (`scripts\dsh-superagent-further.cmd restart` on Windows); an in-application host restarts the application instead.
 5. If the installation predates workspace identity, it starts paused at `workspaceRequired`: open the panel and finish the workspace step of the setup wizard (or save the workspace block on **Execution → Settings**). The host registers the new DSH workspace and creates a new master Session; the old master Session is archived and readable, and the main conversation does not continue. An installation that already has a workspace skips this step. Selecting a previously used workspace later unarchives and resumes that workspace's own master Session.
-6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 25 (current)`, or
-   `schema 24 migrates to 25 on start` when the next start is the one that upgrades the database.
+6. Run `scripts/verify-install --profile <name>` and require exit 0. Its `schema` line says `schema 26 (current)`, or
+   `schema 24 migrates to 25 on start` / `schema 25 migrates to 26 on start` when the next start is the one that upgrades
+   the database.
 
 The GitHub Source no longer stores a repository: the migration removes the retired `repository` setting from the saved
 settings and from their history, and setup derives the primary repository from the first project under **Execution →

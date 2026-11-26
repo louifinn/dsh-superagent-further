@@ -13,10 +13,11 @@ import type { Health } from '../sources/host.ts'
 import { restrictToOwner } from '../infra/acl.ts'
 import type { Settings } from '../policy.ts'
 import {
-  checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, isOpenIncident, parseIncidentDiagnosis,
-  transitionIncident, INCIDENT_COOLDOWN_MS, INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP, INCIDENT_LOG_LIMIT,
-  INCIDENT_LOG_WINDOW_MS, INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident, type IncidentCandidate, type IncidentDiagnosis,
-  type IncidentFilter, type IncidentRepository, type IncidentScope, type IncidentSeverity, type IncidentStatus,
+  checkIncidentCandidate, higherSeverity, incidentBudgetExempt, incidentFingerprint, incidentSeverityBudgetExempt, isOpenIncident,
+  parseIncidentDiagnosis, transitionIncident, INCIDENT_COOLDOWN_MS, INCIDENT_DETAIL_LIMIT, INCIDENT_EVIDENCE_DAYS, INCIDENT_EVIDENCE_KEEP,
+  INCIDENT_LOG_LIMIT, INCIDENT_LOG_WINDOW_MS, INCIDENT_NOTIFICATION_CAP, INCIDENT_TITLE_LIMIT, incidentSeverityRank, type Incident,
+  type IncidentCandidate, type IncidentDiagnosis, type IncidentFilter, type IncidentNotification, type IncidentRepository,
+  type IncidentRule, type IncidentScope, type IncidentSeverity, type IncidentStatus,
 } from '../core/incidents.ts'
 import { updateOutcomeCandidate } from './incident-detectors.ts'
 import { UserError } from '../core/errors.ts'
@@ -132,6 +133,36 @@ export class IncidentRecords implements IncidentRepository {
       : this.db.prepare("SELECT count(*) AS count FROM incident WHERE status IN ('detected', 'bundled', 'diagnosed') AND project = ?").get(project)
     return Number(row?.count ?? 0)
   }
+
+  /**
+   * Queues one detection the daily record budget held back (issue #28, ADR-0010). The fingerprint is UNIQUE, so a
+   * condition that repeats while the notice still waits keeps its first entry instead of adding a second.
+   */
+  noteNotification(incident: { fingerprint: string; rule: IncidentRule; severity: IncidentSeverity; title: string; detail: string }, at: string): void {
+    const pending = this.db.prepare('SELECT count(*) AS count FROM incident_notification WHERE notified_at IS NULL').get()
+    if (Number(pending?.count ?? 0) >= INCIDENT_NOTIFICATION_CAP) return
+    this.db.prepare(`INSERT OR IGNORE INTO incident_notification (fingerprint, rule, severity, title, detail, created_at)
+      VALUES (?,?,?,?,?,?)`).run(incident.fingerprint, incident.rule, incident.severity, incident.title, incident.detail, at)
+  }
+
+  notifications(limit = 20): IncidentNotification[] {
+    const rows = this.db.prepare(`SELECT id, fingerprint, rule, severity, title, detail, created_at, notified_at
+      FROM incident_notification WHERE notified_at IS NULL ORDER BY id LIMIT ?`).all(limit) as Record<string, unknown>[]
+    return rows.map(row => ({
+      id: Number(row.id), fingerprint: String(row.fingerprint), rule: String(row.rule) as IncidentRule,
+      severity: String(row.severity) as IncidentSeverity, title: String(row.title), detail: String(row.detail),
+      created_at: String(row.created_at), ...(row.notified_at == null ? {} : { notified_at: String(row.notified_at) }),
+    }))
+  }
+
+  markNotificationNotified(id: number, at: string): void {
+    this.db.prepare('UPDATE incident_notification SET notified_at = ? WHERE id = ? AND notified_at IS NULL').run(at, id)
+  }
+
+  notificationCount(): number {
+    const row = this.db.prepare('SELECT count(*) AS count FROM incident_notification WHERE notified_at IS NULL').get()
+    return Number(row?.count ?? 0)
+  }
 }
 
 /** The service's collaborators; the Runtime provides the real ones, a test an exact clock and a temp workspace. */
@@ -147,6 +178,11 @@ export interface IncidentsHost {
   record?(message: string): void
   /** Alerts a person about a new, reopened or resolved incident (issue #19); absent in unit tests. */
   alert?(incident: Incident, change: 'opened' | 'reopened' | 'resolved'): void
+  /**
+   * Sends the alert for a detection the daily record budget held back (issue #28), returning whether the operator chat
+   * accepted it; the queue keeps a refused notice for the next watchdog pass.
+   */
+  notifyNotification?(entry: IncidentNotification): Promise<boolean>
   now?(): Date
   version?: string | (() => string)
   createId?(): string
@@ -278,17 +314,21 @@ export class Incidents {
   }
 
   /**
-   * A first detection: the daily budget (except for the live-outage rules `health-error` and `stalled-assignment`),
-   * the open cap, the record, then its evidence bundle.
+   * A first detection: the daily budget (except for the live-outage rules and high/critical severities, ADR-0004 and
+   * issue #28), the open cap, the record, then its evidence bundle. A budget refusal now holds a notice for the alert
+   * chat instead of dropping the detection silently.
    */
   private create(candidate: IncidentCandidate, fingerprint: string, at: Date, dailyBudget: number): Incident | undefined {
     const time = at.toISOString()
-    // ADR-0004: a health flip or a stalled Assignment is recorded even when the day's budget is already spent.
-    if (!incidentBudgetExempt(candidate.rule)) {
+    // ADR-0004: a health flip or a stalled Assignment is recorded even when the day's budget is already spent; ADR-0010
+    // extends that to every high or critical condition, because silence about an outage is worse than a full count.
+    if (!incidentBudgetExempt(candidate.rule) && !incidentSeverityBudgetExempt(candidate.severity)) {
       const today = dayKey(at)
-      if (dailyBudget <= 0) return undefined
       const created = this.host.store.incidents.list({ status: 'all' }).filter(item => dayKey(new Date(item.first_at)) === today)
-      if (created.length >= dailyBudget) return undefined
+      if (dailyBudget <= 0 || created.length >= dailyBudget) {
+        this.hold(candidate, fingerprint, time)
+        return undefined
+      }
     }
     if (this.host.store.incidents.openCount() >= this.openCap) return undefined
     const id = this.createId()
@@ -304,6 +344,46 @@ export class Incidents {
     this.host.alert?.(base, 'opened')
     return base
   }
+
+  /**
+   * Holds a detection the daily budget refused (issue #28, ADR-0010). A notice the operator's alert threshold would drop
+   * anyway is not queued — the queue exists to hand a real detection to the person who configured alerts, not to bypass
+   * that configuration. The queue is keyed by fingerprint in the table, so a repeat joins the waiting notice.
+   */
+  private hold(candidate: IncidentCandidate, fingerprint: string, at: string): void {
+    const config = this.config()
+    if (config.alertChatId.trim() === '') return
+    if (incidentSeverityRank(candidate.severity) < incidentSeverityRank(config.alertMinimumSeverity)) return
+    const repository = this.host.store.incidents
+    if (repository.noteNotification === undefined) return
+    repository.noteNotification({ fingerprint, rule: candidate.rule, severity: candidate.severity,
+      title: candidate.title.slice(0, INCIDENT_TITLE_LIMIT), detail: candidate.detail.slice(0, INCIDENT_DETAIL_LIMIT) }, at)
+    this.host.record?.(`incident.held rule=${candidate.rule} severity=${candidate.severity} at=${at}`)
+  }
+
+  /**
+   * Retries the notices the daily budget held back (issue #28) through the operator chat. One call stops at the first
+   * refusal so the alert allowance is not hammered; the watchdog calls it again on its next pass. Returns how many notices
+   * reached the chat.
+   */
+  async flushNotifications(limit = 5): Promise<number> {
+    const repository = this.host.store.incidents
+    const notify = this.host.notifyNotification
+    if (notify === undefined || repository.notifications === undefined) return 0
+    let sent = 0
+    for (const entry of repository.notifications(limit)) {
+      let delivered = false
+      try { delivered = await notify(entry) } catch (error) { this.fail('notification', error); break }
+      if (!delivered) break
+      repository.markNotificationNotified?.(entry.id, this.now().toISOString())
+      this.host.record?.(`incident.notified id=${entry.id} rule=${entry.rule} severity=${entry.severity}`)
+      sent += 1
+    }
+    return sent
+  }
+
+  /** How many held notices still wait for the operator chat; the panel can show this beside the incident count. */
+  heldNotifications(): number { return this.host.store.incidents.notificationCount?.() ?? 0 }
 
   /** Resolves the open record with this fingerprint when the condition cleared; repeats reopen it after the cooldown. */
   recover(fingerprint: string, at: Date = this.now()): Incident | undefined {

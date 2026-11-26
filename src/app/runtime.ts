@@ -297,6 +297,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         record: message => this.logs.record('info', 'incidents', message),
         healthSnapshot: () => this.health,
         alert: (incident, change) => { void this.alerts.notify(incident, change).then(refreshIncidentDigest) },
+        notifyNotification: entry => this.alerts.notifyQueued(entry),
       })
       this.detachIncidentLogs = this.logs.observe((entry, at) => {
         // The diagnosis service's own lines are never detector input, so a diagnosis cannot feed itself (ADR-0005).
@@ -747,6 +748,9 @@ export class Runtime implements SourceHost, RuntimeHandle {
     // wait forever.
     await this.timeoutRequests(at)
     await this.expireAttention(at)
+    // Held incident notices (issue #28) retry here, before the paused check: a paused Runtime still owes the operator a
+    // notice about a detection the event stream recorded while no work was dispatched.
+    try { await this.incidents.flushNotifications() } catch (error) { this.log.warn('dsh-superagent-further: could not flush held incident notices: %s', String(error)) }
     // A paused Runtime dispatches nothing, so a worker idle now is not yet a stall a Lead could act on.
     if (this.paused()) return
     for (const ticket of open) {
