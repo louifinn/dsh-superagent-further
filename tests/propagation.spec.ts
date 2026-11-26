@@ -142,6 +142,27 @@ describe('propagation rehearsal: one fact, one tree (issue #38)', () => {
     }
   })
 
+  it('P9: a user-notice request walks the approval chain and is delivered once', async () => {
+    host = await startRuntime()
+    const { ticket } = await host.acceptedTicket(feishu('prop-6', '@bot 通知我发布结果'))
+    const worker = `worker-${ticket.id}`
+    const lead = leadSessionId('default')
+    host.deliveries.mockClear()
+    const raised = await host.runTool(worker, 'request_user_notice', { text: 'The release is ready to publish.' }) as { notice: { id: string } }
+    await host.runTool(lead, 'lead_notice_decide', { notice_id: raised.notice.id, approve: true })
+    await host.runtime.idle()
+    const records = host.runtime.store.information.all()
+    expectScenario(host, records, scenario('P9'))
+    // The request climbed one adjacent hop and the decision came back down the same edge; each is one record.
+    expect(recordPaths(records).get('worker-lead')).toBe(1)
+    expect(recordPaths(records).get('lead-worker')).toBe(1)
+    expect(host.runtime.store.userNotices.get(raised.notice.id)).toMatchObject({ status: 'sent', via: 'channel' })
+    // A redelivery of the same words is the same durable request, so the person hears the fact once.
+    const again = await host.runTool(worker, 'request_user_notice', { text: 'The release is ready to publish.' }) as { notice: { id: string } }
+    expect(again.notice.id).toBe(raised.notice.id)
+    expect(host.runtime.store.userNotices.list().filter(record => record.text === 'The release is ready to publish.')).toHaveLength(1)
+  })
+
   it('P11: a routine progress report stays internal and notifies the person of nothing', async () => {
     host = await startRuntime()
     const { sessionId } = await host.acceptedTicket(feishu('prop-5', '@bot 进展如何'), 'answer')
