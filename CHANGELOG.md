@@ -6,6 +6,8 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
 ### Added
 - A built runtime manifest now records the package name and version, the git commit the bundle was built from and
   whether that worktree was dirty, so a serving, staged or rolled-back runtime traces back to a revision even when a
