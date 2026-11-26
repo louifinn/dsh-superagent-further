@@ -27,11 +27,11 @@ describe('the activation request of a Lead-hosted executor', () => {
     expect(spec.label).toBe('Add a line')
     // Superagent's own Lead messages are the notification authority; DSH must not deliver a second settlement.
     expect(spec.delivery).toBe('caller')
-    expect(spec.request.cwd).toBe('/state/work/app/one')
-    expect(spec.request.agentPreset).toBe('dsh-superagent-further-worker')
-    expect(spec.request.parent).toBe(lead)
-    expect(spec.request.maxDepth).toBe(1)
-    expect(spec.request.prompt).toEqual([{ type: 'text', text: '{"ticket_id":"t"}' }])
+    expect(spec.cwd).toBe('/state/work/app/one')
+    expect(spec.agentPreset).toBe('dsh-superagent-further-worker')
+    expect(spec.parent).toBe(lead)
+    expect(spec.maxDepth).toBe(1)
+    expect(spec.prompt).toEqual([{ type: 'text', text: '{"ticket_id":"t"}' }])
     expect(spec.signal).toBe(signal)
   })
 

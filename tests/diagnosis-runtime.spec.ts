@@ -61,14 +61,14 @@ it('dispatches the read-only diagnostician after an incident is bundled, never i
     expect(start).toHaveBeenCalledTimes(before)
     const childId = await childOf(h)
     const spec = start.mock.calls.at(-1)![0] as ActivationSpec
-    const text = spec.request.prompt[0]!.text
+    const text = spec.prompt[0]!.text
     expect(spec.provider).toBe('spawn')
     expect(spec.delivery).toBe('caller')
     expect(spec.childId).toBe(childId)
-    expect(spec.request.agentPreset).toBe(DIAGNOSTICIAN_PRESET)
-    expect(spec.request.maxDepth).toBe(1)
-    expect(spec.request.cwd).toBe(h.workspaceRoot)
-    expect(spec.request.parent.id).toBe(h.runtime.masterId)
+    expect(spec.agentPreset).toBe(DIAGNOSTICIAN_PRESET)
+    expect(spec.maxDepth).toBe(1)
+    expect(spec.cwd).toBe(h.workspaceRoot)
+    expect(spec.parent.id).toBe(h.runtime.masterId)
     for (const fragment of [incident.id, 'STRICT JSON', 'rootCause', 'fixPlan', join(h.workspaceRoot, 'artifacts', 'incidents'),
       h.workspaceRoot, 'Do not write']) expect(text).toContain(fragment)
     expect(h.subagents.started(childId)).toEqual({ parent: h.runtime.masterId, delivery: 'caller', preset: DIAGNOSTICIAN_PRESET })

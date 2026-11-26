@@ -24,7 +24,13 @@ export interface Activation {
   dispose(): Promise<void>
 }
 
-/** The request a Lead makes for one executor. */
+/**
+ * The request a Lead makes for one executor, in the shape DSH's subagent service reads.
+ *
+ * Every field here is read off the spec itself: the parent, the depth, the preset, the directory and the prompt. Nesting
+ * them under a wrapper leaves the service with `undefined` for each, which surfaces as "Cannot read properties of undefined"
+ * inside DSH rather than as a refusal.
+ */
 export interface ActivationSpec {
   /** The registered provider; the bundle mounts the spawn provider. */
   readonly provider: string
@@ -32,15 +38,19 @@ export interface ActivationSpec {
   readonly label: string
   /** The reserved child Session id, always the worker id of the Ticket. */
   readonly childId: string
-  readonly request: {
-    readonly cwd: string
-    /** The preset the child composes; an executor always runs the worker preset. */
-    readonly agentPreset: string
-    readonly prompt: [{ readonly type: 'text'; readonly text: string }]
-    readonly parent: Agent
-    /** Executors never delegate further. */
-    readonly maxDepth: number
-  }
+  /**
+   * The live parent agent. DSH checks it against its own agent registry before starting the child, so it must be the exact
+   * object its `agents` service holds: a spec without a parent is refused with `UNAUTHORIZED`.
+   */
+  readonly parent: Agent
+  /** Executors never delegate further. */
+  readonly maxDepth: number
+  /** The preset the child composes; an executor always runs the worker preset. */
+  readonly agentPreset: string
+  /** The directory the child Session works in. */
+  readonly cwd: string
+  /** The first message the child receives. */
+  readonly prompt: [{ readonly type: 'text'; readonly text: string }]
   readonly signal: AbortSignal
   /**
    * DSH's settlement delivery, chosen per role. A worker uses `caller`: superagent's own Lead messages are the single
@@ -61,8 +71,11 @@ export function executorActivation(input: { childId: string; title: string; cwd:
     provider: LEAD_PROVIDER,
     label: input.title,
     childId: input.childId,
-    request: { cwd: input.cwd, agentPreset: input.preset, prompt: [{ type: 'text', text: input.text }], parent: input.lead,
-      maxDepth: 1 },
+    parent: input.lead,
+    maxDepth: 1,
+    agentPreset: input.preset,
+    cwd: input.cwd,
+    prompt: [{ type: 'text', text: input.text }],
     signal: input.signal,
     delivery: input.delivery ?? 'caller',
   }
@@ -90,9 +103,9 @@ export class LeadActivations {
       // A Ticket that runs again (a retry, or a launch after a restart) keeps its durable child Session; its id is the
       // reserved worker id, so starting a second child with it is refused. Wake the existing child with this message instead.
       if (!/already exists/.test(String(error))) throw error
-      await service.sendMessage(spec.request.parent, spec.childId, spec.request.prompt, { signal: spec.signal })
+      await service.sendMessage(spec.parent, spec.childId, spec.prompt, { signal: spec.signal })
       activation = { childId: spec.childId, result: new Promise(() => {}), dispose: async () => {
-        service.interrupt?.(spec.childId, { kind: 'ancestor', agent: spec.request.parent })
+        service.interrupt?.(spec.childId, { kind: 'ancestor', agent: spec.parent })
       } }
     }
     this.running.set(activation.childId, activation)
@@ -116,7 +129,7 @@ export class LeadActivations {
     const spec = this.started.get(childId)
     const service = this.service()
     if (!spec || !service) return false
-    await service.sendMessage(spec.request.parent, childId, [{ type: 'text', text }], { signal })
+    await service.sendMessage(spec.parent, childId, [{ type: 'text', text }], { signal })
     return true
   }
 

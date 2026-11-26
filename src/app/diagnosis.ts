@@ -31,7 +31,7 @@ import type { SelfReports } from './self-reports.ts'
 import type { Store } from './store.ts'
 
 /** ADR-0005: one diagnosis may hold a dispatch for at most ten minutes before it is disposed and retried later. */
-export const DIAGNOSIS_TIMEOUT_MS = 600_000
+export const DIAGNOSIS_TIMEOUT_MS = 900_000
 /** The log scope of the diagnosis service; detectors skip it so a diagnosis can never feed itself. */
 export const DIAGNOSIS_SCOPE = 'diagnosis'
 /** The child Session id prefix of a diagnosis dispatch; excluded from incident detection and from Session decoration. */
@@ -97,6 +97,17 @@ function bounded<T>(work: Promise<T>, signal: AbortSignal, ms: number): Promise<
 function short(value: unknown, max = 200): string {
   const line = (value instanceof Error ? value.message : String(value)).replace(/\s+/g, ' ').trim()
   return line.length <= max ? line : `${line.slice(0, max - 3)}...`
+}
+
+/**
+ * The first stack frames of a failure, for the log only: a diagnosis can fail inside the Host's subagent dispatch, and a
+ * bare message like "Cannot read properties of undefined" names neither the layer nor the call that threw it.
+ */
+function frames(error: unknown, max = 3): string {
+  if (!(error instanceof Error) || error.stack === undefined) return ''
+  const lines = error.stack.split('\n').slice(1).map(line => line.trim()).filter(line => line.startsWith('at '))
+  if (lines.length === 0) return ''
+  return ` frames=${short(lines.slice(0, max).join(' | '), 400)}`
 }
 
 /** The first text answer in a SubagentResult, or undefined when it carried none. */
@@ -225,8 +236,8 @@ export class Diagnosis {
     this.host.lifetime.addEventListener('abort', lifetime, { once: true })
     const deadline = Date.now() + this.timeoutMs
     const spec: ActivationSpec = { provider: 'spawn', label: `diagnose incident ${incident.id}`, childId,
-      request: { cwd: workspace, agentPreset: DIAGNOSTICIAN_PRESET, prompt: [{ type: 'text', text: this.prompt(incident, workspace) }],
-        parent, maxDepth: 1 },
+      parent, maxDepth: 1, agentPreset: DIAGNOSTICIAN_PRESET, cwd: workspace,
+      prompt: [{ type: 'text', text: this.prompt(incident, workspace) }],
       signal: controller.signal, delivery: 'caller' }
     let activation: Activation | undefined
     try {
@@ -460,7 +471,7 @@ export class Diagnosis {
   private failed(id: string, error: unknown): DiagnoseRefused {
     const detail = `The diagnosis of incident ${id} failed: ${short(error)}`
     this.host.health?.set({ state: 'error', detail, at: this.now().toISOString() })
-    this.host.logs.record('warn', DIAGNOSIS_SCOPE, `diagnosis.failed id=${id} reason=${short(error)}`)
+    this.host.logs.record('warn', DIAGNOSIS_SCOPE, `diagnosis.failed id=${id} reason=${short(error)}${frames(error)}`)
     return { status: 'refused', reason: 'failed' }
   }
 }

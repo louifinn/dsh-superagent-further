@@ -7,9 +7,15 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 ## [Unreleased]
 
 ### Fixed
+- Every subagent activation now carries the parent, the depth, the preset, the directory and the prompt where DSH reads
+  them — on the spec itself. They were nested under a `request` wrapper that DSH does not read, so each arrived as
+  `undefined` and every worker, reviewer and diagnostician start failed inside DSH with a `TypeError` before the child
+  existed; the fakes copied the wrong shape, which is why the suite stayed green (issue #44).
 - The runtime reports ready before restoring the Lead prompts a restart left unanswered: that durable, idempotent
   backlog no longer blocks the supervisor's 30-second readiness bound, so a state directory with a large backlog can
   start the updated plugin (issue #43).
+- An incident diagnosis may take 15 minutes, not 10: a real run of the read-only diagnostician takes about ten minutes
+  on this installation, so the old bound disposed it just before it answered (issue #44).
 
 ## [0.5.0] - 2026-11-26
 

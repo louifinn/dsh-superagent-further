@@ -59,7 +59,7 @@ Issues; every human action audited; no automatic fix or merge. This ADR records 
    persisted, so a crash cannot strand a record.
 
 5. **The wait is bounded, failure is local, and a stale completion is refused.** Starting the activation and awaiting
-   its result together are bounded to 10 minutes (`DIAGNOSIS_TIMEOUT_MS`) through `host.lifetime`. If
+   its result together are bounded to 15 minutes (`DIAGNOSIS_TIMEOUT_MS`) through `host.lifetime`. If
    `startActivation` itself outlives the deadline the abort signal is fired, and an activation that resolves after the
    deadline is disposed once and never observed; a result-phase timeout disposes the activation it already has. A
    timeout records one `warn` line in scope `diagnosis`, sets the `incidents` health entry to `error` and leaves the

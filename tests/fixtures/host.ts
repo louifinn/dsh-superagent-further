@@ -169,15 +169,15 @@ export function subagentRuntime(agents: Map<string, FakeAgent>, options: {
     }),
     interrupt: vi.fn((id: string) => { settle(id) }),
     // DSH's spawn provider starts a durable child with the reserved id and reports the same shape the Executor expects.
-    startActivation: vi.fn(async (spec: { childId: string; delivery: 'parent' | 'caller'; request: { parent: { id: string }; agentPreset: string } }) => {
-      const parent = spec.request.parent.id
+    startActivation: vi.fn(async (spec: { childId: string; delivery: 'parent' | 'caller'; parent: { id: string }; agentPreset: string; prompt?: unknown }) => {
+      const parent = spec.parent.id
       const id = spec.childId
       // A host with a real subagent service creates the child Session, decorates it and then delivers the activation prompt.
       if (options.open) await options.open(id, parent)
       if (agents.has(id) && !options.open) throw new Error(`subagent "${id}" already exists`)
-      children.set(id, { parent, delivery: spec.delivery, preset: spec.request.agentPreset, live: true, settled: Promise.withResolvers<unknown>() })
+      children.set(id, { parent, delivery: spec.delivery, preset: spec.agentPreset, live: true, settled: Promise.withResolvers<unknown>() })
       if (!agents.has(id)) agents.set(id, { id, status: 'running', session: { header: { parentSession: parent } }, whenIdle: async () => {} } as never)
-      options.deliver?.(id, (spec.request as { prompt?: unknown }).prompt)
+      options.deliver?.(id, spec.prompt)
       // A Lead-hosted child is a durable Session: ending its Assignment disposes the activation, not the child. As DSH's spawn
       // provider does, disposing a live activation cancels a running child turn with the canonical `parent` kind; an idle child
       // has no turn to cancel, which is what the Executor's graceful retirement relies on. The child's inbox is the Session's,

@@ -145,12 +145,12 @@ async function start() {
   const resolveAgent = async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } }
   /** The Lead's side of the DSH subagent service: a start creates the reserved child, which records its tools and prompts. */
   const subagents = {
-    startActivation: async (spec: { childId: string; request: { prompt: unknown[]; parent: { id: string }; agentPreset: string } }) => {
+    startActivation: async (spec: { childId: string; prompt: unknown[]; parent: { id: string }; agentPreset: string }) => {
       await create({ sessionId: spec.childId })
       const child = agents.get(spec.childId) as unknown as { session: { header?: unknown }; status: string; followup: (message: unknown) => void }
-      child.session.header = { parentSession: spec.request.parent.id, agentPreset: spec.request.agentPreset }
+      child.session.header = { parentSession: spec.parent.id, agentPreset: spec.agentPreset }
       await ctx.parallel('agent/created', { agent: child } as never)
-      child.followup({ id: 'activation-' + spec.childId, role: 'user', content: spec.request.prompt, source: { kind: 'dsh-superagent-further', form: 'relay' } })
+      child.followup({ id: 'activation-' + spec.childId, role: 'user', content: spec.prompt, source: { kind: 'dsh-superagent-further', form: 'relay' } })
       child.status = 'running'
       return { childId: spec.childId, result: new Promise(() => {}), dispose: async () => {} }
     },

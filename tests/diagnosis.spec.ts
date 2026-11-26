@@ -158,16 +158,19 @@ describe('diagnosis dispatch', () => {
     const pending = h.diagnosis.diagnose(incident.id)
     await vi.waitFor(() => expect(h.starts).toHaveLength(1))
     const { spec } = h.starts[0]!
-    const text = spec.request.prompt[0]!.text
-    expect(DIAGNOSIS_TIMEOUT_MS).toBe(600_000)
+    const text = spec.prompt[0]!.text
+    expect(DIAGNOSIS_TIMEOUT_MS).toBe(900_000)
     expect(spec.provider).toBe('spawn')
     expect(spec.delivery).toBe('caller')
     expect(spec.label).toContain(incident.id)
     expect(spec.childId).toMatch(new RegExp(`^diag-${incident.id}-[0-9a-f]{8}$`))
-    expect(spec.request.agentPreset).toBe(DIAGNOSTICIAN_PRESET)
-    expect(spec.request.maxDepth).toBe(1)
-    expect(spec.request.cwd).toBe(h.workspace)
-    expect(spec.request.parent.id).toBe('master-1')
+    expect(spec.agentPreset).toBe(DIAGNOSTICIAN_PRESET)
+    expect(spec.maxDepth).toBe(1)
+    // DSH reads the parent, the depth, the preset, the directory and the prompt off the spec itself. A spec that nests them
+    // leaves its service with `undefined` for each, and the child never starts ("Cannot read properties of undefined").
+    expect('request' in spec).toBe(false)
+    expect(spec.cwd).toBe(h.workspace)
+    expect(spec.parent.id).toBe('master-1')
     expect(spec.signal).toBeInstanceOf(AbortSignal)
     for (const fragment of [incident.id, incident.title, incident.rule, incident.severity, join(h.workspace, 'artifacts', 'incidents'),
       h.workspace, 'STRICT JSON', 'rootCause', 'evidence', 'hypotheses', 'fixPlan', 'confidence', 'target', 'Do not write'])

@@ -338,10 +338,10 @@ beforeEach(async () => {
     inspect: vi.fn(async () => ({ events: [] })),
   }
   subagents = {
-    startActivation: vi.fn(async (spec: { childId: string; request: { parent: { id: string }; agentPreset: string } }) => {
+    startActivation: vi.fn(async (spec: { childId: string; parent: { id: string }; agentPreset: string; prompt: readonly { type: string; text?: string }[] }) => {
       if (agents.has(spec.childId)) throw new Error(`subagent "${spec.childId}" already exists`)
-      await (controller.create as (spec: { sessionId: string; agentPreset: string }) => Promise<void>)({ sessionId: spec.childId, agentPreset: spec.request.agentPreset })
-      const prompt = (spec.request as unknown as { prompt: { type: string; text?: string }[] }).prompt
+      await (controller.create as (spec: { sessionId: string; agentPreset: string }) => Promise<void>)({ sessionId: spec.childId, agentPreset: spec.agentPreset })
+      const prompt = spec.prompt as unknown as { type: string; text?: string }[]
       const promptText = prompt.map(block => block.text ?? '').join('')
       // The activation carries the first Assignment message under the id a root worker delivery uses,
       // so Sessions.holds finds it on a restart the same way it does for a root worker.
@@ -2090,9 +2090,9 @@ it('starts a Ticket executor as a child of its project Lead', async () => {
   expect(agents.has('lead-app')).toBe(true)
   expect(agents.has(childId)).toBe(true)
   const spec = subagents.startActivation.mock.calls.at(-1)![0] as { provider: string; childId: string; delivery: string;
-    request: { agentPreset: string; maxDepth: number; parent: { id: string } } }
+    agentPreset: string; maxDepth: number; parent: { id: string } }
   expect(spec).toMatchObject({ provider: 'spawn', childId, delivery: 'caller',
-    request: { agentPreset: 'dsh-superagent-further-worker', maxDepth: 1, parent: { id: 'lead-app' } } })
+    agentPreset: 'dsh-superagent-further-worker', maxDepth: 1, parent: { id: 'lead-app' } })
   // The child's report reaches the Ticket through its Lead, and a ready report ends it.
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: agents.get(childId) } as never)
   await runTool(childId, 'orchestrator_report', { state: 'ready', summary: 'done' })
