@@ -21,7 +21,7 @@ Parameters:
     "resource": {
       "type": "string",
       "minLength": 1,
-      "description": "The resource, one of: tickets: ticket cards, newest first; a card's state is person/review after a ready report, person/blocked or person/failed after those reports, person/answer with a question, person/delivery when an input could not reach the worker, working or working/queued while it works, idle once the worker ended its turn without a report, else how the ticket ended; triggers: trigger cards with where each went, newest first; threads: subscribed threads, newest activity first, with their labels, tickets, current assessment and polling errors; thread/<key>: one thread: its label and link, its tickets and latest decisions, and its triggers, newest first; decisions: decisions, newest first; decision/<id>: one decision with its audit; information: the authoritative information records of cross-role messages, newest first, with their kind, direction, source, target, hops and delivery state (issue #13); information/<id>: one information record whole, including its payload and origin chain; ticket/<id>: a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first; ticket/<id>/assignment: its assignment text; ticket/<id>/assignments: its assignments, newest first, with the start of each report; ticket/<id>/inputs: its inputs, newest first; ticket/<id>/result: its latest report; ticket/<id>/report/<id>: the report of one of its assignments; ticket/<id>/transcript: its Executor Session's messages, newest first; ticket/<id>/message/<n>: one message of that transcript; ticket/<id>/input/<id>: one input it was delivered; trigger/<id>: a trigger's text, where it went, the message it replies to and the messages around it on its thread; settings: settings by block, each with the revision a save names: the small blocks whole, the Policy and the Source instances summarized; settings/proposals: pending settings proposals with per-field diffs, newest first; settings/<block>: one settings block whole, as orchestrator_settings_save takes it: policy, eval, executor, pause or source:<id>; prompts: the prompt revision each Session reads, the skills, and the saved versions; prompts/<revision>: one prompt version by number, or current, the one the Session works under; prompts/defaults: the built-in prompt configuration, and the built-in parts by the key an override names; prompt-preview/<id>: a composed prompt that orchestrator_prompts_save previewed; models: model providers, the DSH default and each role's model; models/<provider>: one provider's models; feishu/<trigger-id>/…: a Feishu original, as the dsh-superagent-further-feishu skill describes; github/…: a GitHub original, as the dsh-superagent-further-github skill describes."
+      "description": "The resource, one of: tickets: ticket cards, newest first; a card's state is person/review after a ready report, person/blocked or person/failed after those reports, person/answer with a question, person/delivery when an input could not reach the worker, working or working/queued while it works, idle once the worker ended its turn without a report, else how the ticket ended; triggers: trigger cards with where each went, newest first; threads: subscribed threads, newest activity first, with their labels, tickets, current assessment and polling errors; thread/<key>: one thread: its label and link, its tickets and latest decisions, and its triggers, newest first; decisions: decisions, newest first; decision/<id>: one decision with its audit; information: the authoritative information records of cross-role messages, newest first, with their kind, direction, source, target, hops and delivery state (issue #13); information/<id>: one information record whole, including its payload and origin chain; directives: the person's unconsumed Directives, newest first, with the original words, the addressed Session, its project and Ticket, and whether the upward hops were delivered (issues #20–#22); directive/<id>: one Directive whole, including its source, parent hop, effect and when it was consumed; ticket/<id>: a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first; ticket/<id>/assignment: its assignment text; ticket/<id>/assignments: its assignments, newest first, with the start of each report; ticket/<id>/inputs: its inputs, newest first; ticket/<id>/result: its latest report; ticket/<id>/report/<id>: the report of one of its assignments; ticket/<id>/transcript: its Executor Session's messages, newest first; ticket/<id>/message/<n>: one message of that transcript; ticket/<id>/input/<id>: one input it was delivered; trigger/<id>: a trigger's text, where it went, the message it replies to and the messages around it on its thread; settings: settings by block, each with the revision a save names: the small blocks whole, the Policy and the Source instances summarized; settings/proposals: pending settings proposals with per-field diffs, newest first; settings/<block>: one settings block whole, as orchestrator_settings_save takes it: policy, eval, executor, pause or source:<id>; prompts: the prompt revision each Session reads, the skills, and the saved versions; prompts/<revision>: one prompt version by number, or current, the one the Session works under; prompts/defaults: the built-in prompt configuration, and the built-in parts by the key an override names; prompt-preview/<id>: a composed prompt that orchestrator_prompts_save previewed; models: model providers, the DSH default and each role's model; models/<provider>: one provider's models; feishu/<trigger-id>/…: a Feishu original, as the dsh-superagent-further-feishu skill describes; github/…: a GitHub original, as the dsh-superagent-further-github skill describes."
     },
     "offset": {
       "default": 0,
@@ -98,13 +98,62 @@ Parameters:
             ]
           },
           "deliverable": {
-            "description": "accept: what the work owes; `answer` is read-only and has no branch or pull request (default change).",
+            "description": "accept: what the work owes; `answer` is read-only and has no branch or pull request, `review` is a read-only review of a named subject (default change).",
             "anyOf": [
               {
                 "type": "string",
                 "enum": [
                   "change",
-                  "answer"
+                  "answer",
+                  "review"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review_scope": {
+            "description": "accept with deliverable review: the named subject and standard; required for a review.",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repository": {
+                    "description": "review: the repository the review reads; omitted, the Ticket's registered project names it.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "ref": {
+                    "description": "review: the ref (branch, tag or commit) to read; default HEAD.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "standard": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "review: the standard or checklist the subject is judged against."
+                  }
+                },
+                "required": [
+                  "standard"
                 ]
               },
               {
@@ -1599,6 +1648,70 @@ Parameters:
 }
 ```
 
+### `orchestrator_directives`
+
+List the person's unconsumed Directives (issues #20–#22). Each names the original words, the Session a person addressed, its project and Ticket, and the hops that already carried it to you. Act on it within your own authority; the source node acts on it in its own layer, and you may adjust other projects but not that one while it is unconsumed. A Directive is consumed once, by acting on it, and a redelivery is never a second adjustment.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+### `orchestrator_notices`
+
+List the user-notice requests a project Lead raised that wait for your approval (issue #29). Answer each with orchestrator_notice_decide; a refusal states the reason, which goes back to the Lead.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+### `orchestrator_notice_decide`
+
+Approve or refuse one pending user-notice request from a Lead (issue #29). Approval sends the exact words to the origin Ticket's human channel, or to the alert chat, or as attention; refusal needs the reason and is returned to the Lead. A request is answered once.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "notice_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "approve": {
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "Required when refuse: why the person is not being notified.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    }
+  },
+  "required": [
+    "notice_id",
+    "approve"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## Executor Session
 
 ### `orchestrator_read`
@@ -1913,11 +2026,89 @@ Parameters:
         ],
         "additionalProperties": false
       }
+    },
+    "review": {
+      "description": "With a review Ticket (issue #34): its verdict and the coverage statement; required by a ready report.",
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "blocked"
+          ],
+          "description": "clean when the named subject met the standard, blocked when a finding does."
+        },
+        "coverage": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "What the review actually covered, in its own words; a ready review report without it is refused."
+        },
+        "findings": {
+          "description": "The concrete findings, each with its evidence.",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "evidence": {
+          "description": "What the verdict rests on, such as commands or files read.",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      },
+      "required": [
+        "verdict",
+        "coverage"
+      ],
+      "additionalProperties": false
+    },
+    "directive_effect": {
+      "description": "With a person's direct Directive: what you did with it in this report — acted on it, adjusted your own work once, or handed it back as beyond your Mandate. Required by the next report after a person addressed this worker.",
+      "type": "string",
+      "enum": [
+        "acted",
+        "adjusted",
+        "handback"
+      ]
     }
   },
   "required": [
     "state",
     "summary"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `request_user_notice`
+
+Ask your project Lead for permission to notify the person of a fact of this Ticket (issue #29). The request is durable: the Lead approves or refuses with a reason, and only an approval sends these exact words to the person on this Ticket's channel, or the alert chat, or as attention. Never tell the person you notified them before it is approved.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The exact words the person should receive."
+    }
+  },
+  "required": [
+    "text"
   ],
   "additionalProperties": false
 }
@@ -2719,6 +2910,86 @@ Parameters:
 }
 ```
 
+### `lead_request_user_notice`
+
+Ask the Orchestrator for permission to notify the person of a fact of this project (issue #29). The request is durable: the Orchestrator approves or refuses with a reason, and an approval sends these exact words to the person on the origin Ticket's channel, or the alert chat, or attention. Do not claim the person was told before this is approved.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The exact words the person should receive."
+    },
+    "ticket_id": {
+      "description": "The Ticket whose human channel should receive it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_notices`
+
+List the user-notice requests of this project that wait for you, and the ones you already answered (issue #29). A worker request is answered with lead_notice_decide; you cannot answer your own request.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+### `lead_notice_decide`
+
+Approve or refuse one worker user-notice request of this project (issue #29). Approval sends the exact words to the person on the origin Ticket's channel, or the alert chat, or attention; a refusal needs the reason and returns it to the worker. A request is answered once.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "notice_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "approve": {
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "Required when refuse: why the person is not being notified.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    }
+  },
+  "required": [
+    "notice_id",
+    "approve"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## The Host schedule service is installed
 
 ### `automation_create`
@@ -3044,4 +3315,4 @@ Parameters:
 
 ## Total
 
-61 distinct tools across 5 groups (68 registrations).
+68 distinct tools across 5 groups (75 registrations).

@@ -7,7 +7,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/index.ts'
+import { canComplete, key, liveTicket, UserError, type DirectiveParty, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession, workerSessionId } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
@@ -20,6 +20,7 @@ import { initializeRoleModel, resolveRoleModel, sessionModel, switchSessionModel
 import { bundledSkills } from './skill-files.ts'
 import { composeSurfacePrompt, SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
+import { Directives } from './directives.ts'
 import { leadReportRelay } from './notices.ts'
 import { leadTools } from './tools/lead.ts'
 import type { InfoRecord } from '../core/information.ts'
@@ -33,6 +34,7 @@ import type { CaptureLogs } from './logs.ts'
 import type { Project } from '../projects.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
+import type { UserNotices } from './user-notices.ts'
 
 /** The retry attempt at which a managed Session's model falls back to its parent's current model (issue #24). */
 const MODEL_ESCALATION_ATTEMPTS = 2
@@ -43,7 +45,7 @@ export interface SessionsHost {
   readonly context: Context
   /** The DSH value exports this part uses: scope identity, message IDs, and the message freezer. */
   readonly values: RuntimeHostValues
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests' | 'information'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests' | 'information' | 'directives' | 'boundary'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
@@ -165,6 +167,10 @@ export class Sessions {
   private readonly ctx: Context
   /** Prompts a project's Lead about raised Project Requests and enforces the mandatory reply at its turn end. */
   readonly lead: LeadDispatch
+  /** Records a person's direct word as a one-shot Directive and carries it to the parents that must know (issues #20–#22). */
+  readonly directives: Directives
+  /** The user-notice service, attached by the Runtime after it composes Outbox and Sessions (issue #29). */
+  private readonly noticeService: { current?: UserNotices } = {}
   /** The Engine's project-request commands; assigned after the Runtime composes the Engine. */
   private leadEngine?: LeadEngine
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
@@ -183,6 +189,19 @@ export class Sessions {
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
     host.effects.handle('wake', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'queue'), { ordered: true })
+    this.directives = new Directives(host.store, host.effects, {
+      masterId: host.masterId,
+      roleOf: sessionId => this.directiveParty(sessionId),
+      prompt: (sessionId, requestId, text, mode) => this.prompt(sessionId, requestId, text, mode),
+      ensureLead: async projectId => {
+        const project = host.store.settings().executor.projects.find(item => item.id === projectId)
+        if (!project) throw new Error(`The Directive names unknown project ${projectId}`)
+        return this.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+      },
+      boundary: host.store.boundary,
+      closing: () => this.host.closing(),
+      ...(host.log === undefined ? {} : { log: host.log }),
+    })
   }
   /** Writes a warning into the Host log ring when the Runtime injected a scoped logger; the Host logger's own output is unchanged. */
   private warn(format: string, ...args: unknown[]): void {
@@ -192,6 +211,8 @@ export class Sessions {
   }
   /** Gives the Lead dispatch and its tools the Engine's project-request commands once the Runtime has composed it. */
   attachEngine(engine: LeadEngine): void { this.leadEngine = engine }
+  /** Gives the Lead and Orchestrator tools the user-notice service once the Runtime has composed Outbox (issue #29). */
+  attachUserNotices(service: UserNotices): void { this.noticeService.current = service }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
     const ctx = this.ctx
@@ -245,6 +266,8 @@ export class Sessions {
       const projectId = leadProjectOf(agent.id)
       if (projectId !== undefined) void this.lead.turnEnded(projectId).catch(() => { /* the durable record stays for recovery */ })
     })
+    // A person's direct word is a Directive wherever it lands, in an Orchestrator, Lead or worker Session (issue #20).
+    this.directives.install(ctx)
   }
   /**
    * Resolves or creates session `id` in a workspace, initializes its role model, decorates it with prompts/skills/tools,
@@ -553,6 +576,7 @@ export class Sessions {
       report: (reportId: string, note?: string) => this.reportUpward(project.id, reportId, note),
       relay: (input: { to: string; text: string; ticket_id?: string }) => this.relayAcross(project, input),
       relayWorker: (input: { from: string; to: string; text: string }) => this.relayWorker(project, input),
+      userNotices: this.noticeService,
       ...tickets === undefined ? {} : { tickets } }, project), readTool('Read one page of a resource of this project that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
       SURFACES.lead.reads, (resource, offset, limit, signal) => host.readProject === undefined
         ? Promise.reject(new Error('This installation has no project-scoped read path'))
@@ -587,6 +611,11 @@ export class Sessions {
     const match = /^(?:worker|review)-(.+)$/.exec(sessionId)
     const ticket = match ? this.host.store.tickets.get(match[1]!) : undefined
     if (!ticket || ticket.project !== project) throw new UserError('unknownWorkerSession')
+    // A worker acting on a person's unconsumed Directive is the temporary highest source for it: the Lead may steer other
+    // workers and its own work, but not this one (issue #21, ADR-0009 decision 4).
+    if (this.directives.pendingForTicket(ticket.id)) {
+      this.directives.refuse('lead', 'lead_notify_worker', `worker ${sessionId}`, ticket.project, sessionId)
+    }
     await this.prompt(sessionId, key('lead-notify', sessionId, text), text, 'queue')
     return { delivered: true }
   }
@@ -652,6 +681,17 @@ export class Sessions {
   private leadProject(agent: Agent): Project | undefined {
     const projectId = leadProjectOf(agent.id)
     return projectId === undefined ? undefined : this.host.store.settings().executor.projects.find(project => project.id === projectId)
+  }
+  /** Who a managed Session speaks for, for a person's Directive: the Orchestrator, a Lead, or a Ticket's worker. */
+  private directiveParty(sessionId: string): DirectiveParty | undefined {
+    if (sessionId === this.host.masterId) return { role: 'orchestrator', sessionId }
+    const projectId = leadProjectOf(sessionId)
+    if (projectId !== undefined) return { role: 'lead', sessionId, project: projectId }
+    const ticketId = ticketOfSession(sessionId)
+    if (ticketId === undefined) return undefined
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (!ticket) return undefined
+    return { role: 'worker', sessionId, ticketId, ...(ticket.project === undefined ? {} : { project: ticket.project }) }
   }
   /**
    * Whether a Session runs the router preset: as DSH's preset registry last selected it, read through the session projection

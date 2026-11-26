@@ -153,7 +153,12 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
     : note.trim()
   // A ticket of a registered project keeps its worktree inside that project's namespace, so two projects can both use `add-login`.
   const directory = answer ? project?.workspace ?? '' : join(executionRoot(settings, stateDir), ...ticket.project ? [ticket.project] : [], name)
-  return { name, directory, assignment }
+  // A review's subject is explicit (issue #34): name the repository, ref and standard in the assignment, and say that the
+  // work is read-only and its result is a verdict with coverage rather than a change.
+  const scope = ticket.deliverable === 'review' ? ticket.reviewScope : undefined
+  const review = scope ? `\nReview subject: repository ${scope.repository || project?.repository || 'unknown'}, ref ${scope.ref}, standard: ${scope.standard}.\n`
+    + 'This is a read-only review: do not modify files, commit, or open a pull request. Report verdict clean or blocked with review.coverage, findings and evidence.' : ''
+  return { name, directory, assignment: `${assignment}${review}` }
 }
 /**
  * The git command that creates a ticket's worktree in its project's local clone. Used when the operator configured no
@@ -347,7 +352,9 @@ export class DshExecutor implements Executor {
     }
     const project = named ?? fromRepository
     if (!project) throw new Error('This Ticket names no registered project; a request must be accepted with a project (Execution → Projects)')
-    const placed: Ticket = { ...ticket, project: project.id }
+    // A review defaults to the project's own repository when acceptance named only the standard (issue #34).
+    const scope = ticket.deliverable === 'review' ? ticket.reviewScope : undefined
+    const placed: Ticket = { ...ticket, project: project.id, ...(scope && !scope.repository ? { reviewScope: { ...scope, repository: project.repository } } : {}) }
     return { ...placed, execution: ticketExecution(placed, outcome, settings, this.host.machine.stateDir) }
   }
   /**

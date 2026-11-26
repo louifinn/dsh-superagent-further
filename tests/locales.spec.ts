@@ -28,7 +28,7 @@ it('names every health entry of dsh-superagent-further itself, which the overvie
   // Each entry by its writer: dsh-superagent-further, the model budget retries, every kind of the effect queue, Channel messages, the
   // Executor and the unavailable Evals of the last hour.
   const entries = { runtime: 0, models: 0, reply: 0, worker: 0, assessment: 0, dispatch: 0, fact: 0, launch: 0, delivery: 0, relay: 0,
-    notice: 0, wake: 0, evals: 0 } satisfies Record<EffectKind | 'runtime' | 'models' | 'reply' | 'worker' | 'evals', 0>
+    notice: 0, wake: 0, directive: 0, 'user-notice': 0, evals: 0 } satisfies Record<EffectKind | 'runtime' | 'models' | 'reply' | 'worker' | 'evals', 0>
   expect(Object.keys(entries).filter(name => !(`health.${name}` in zh))).toEqual([])
 })
 

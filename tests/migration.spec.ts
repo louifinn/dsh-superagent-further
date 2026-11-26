@@ -786,7 +786,7 @@ it('migrates a schema 23 database to the current schema by creating the empty se
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(27)
+    expect(SCHEMA_VERSION).toBe(28)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.selfReports.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -815,7 +815,7 @@ it('migrates a schema 24 database to 25 by creating the empty incident table and
   seeded.close()
   const store = new Store(path)
   try {
-    expect(SCHEMA_VERSION).toBe(27)
+    expect(SCHEMA_VERSION).toBe(28)
     expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
     expect(store.incidents.list()).toEqual([])
     expect(store.tickets.get('t1')).toMatchObject({ id: 't1', title: 'Fix t1' })
@@ -894,6 +894,22 @@ it('backfills why every ended Ticket ended when migrating to schema 23 and prese
     expect(ended('t5')).toEqual({ at, by: 'executor', outcome: 'dropped', cause: 'report' })
     expect(ended('t6')).toEqual({ at, by: 'human', outcome: 'stopped', cause: 'eval' })
     expect(ended('t7')).toBeUndefined()
+  } finally { store.close() }
+})
+
+it('migrates a schema 27 database to 28 by creating the empty Directive and user-notice tables', () => {
+  const path = join(directory, 'batch-b.sqlite')
+  const seeded = new Store(path)
+  // A schema 27 database had neither table: the Store creates both before migrateTo28 runs, with no backfill.
+  seeded.db.exec('DROP TABLE directive')
+  seeded.db.exec('DROP TABLE user_notice')
+  seeded.db.prepare("UPDATE kv SET value='27' WHERE key='schema'").run()
+  seeded.close()
+  const store = new Store(path)
+  try {
+    expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+    expect(store.directives.all()).toEqual([])
+    expect(store.userNotices.list()).toEqual([])
   } finally { store.close() }
 })
 

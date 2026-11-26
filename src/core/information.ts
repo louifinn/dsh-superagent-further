@@ -60,7 +60,11 @@ export const ALLOWED_EDGES: readonly (readonly [InformationRole, InformationRole
   ['worker', 'lead'],
   ['lead', 'reviewer'],
   ['reviewer', 'lead'],
+  // A person may address any handled level directly (docs/016 P8, issue #20); the word is recorded in from the person and
+  // travels upward through the adjacent hops after that.
+  ['person', 'orchestrator'],
   ['person', 'lead'],
+  ['person', 'worker'],
   ['lead', 'person'],
 ]
 /** Whether a record from `from` to `to` would cross a forbidden edge. */

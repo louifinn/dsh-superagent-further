@@ -408,9 +408,15 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
     sources: { ...sources, feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
   deliveries.mockClear()
 
-  /** Parsed JSON payloads delivered to `sessionId`. */
+  /** Parsed JSON payloads delivered to `sessionId`; a plain-text Directive prompt is not a JSON relay and is skipped. */
   const relays = (sessionId: string) => deliveries.mock.calls.map(([call]) => call).filter(call => call.sessionId === sessionId)
-    .map(call => JSON.parse(call.text) as Record<string, unknown>)
+    .flatMap(call => {
+      try {
+        return [JSON.parse(call.text) as Record<string, unknown>]
+      } catch {
+        return []
+      }
+    })
   const candidates = () => relays(runtime.masterId).filter(item => item.kind === 'candidate').map(item => item.trigger_id)
   const runTool = async (sessionId: string, name: string, args: unknown) => {
     const tool = tools.get(sessionId)?.get(name)
@@ -429,15 +435,23 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
    * Accepts a trigger into a Ticket and, unless `assign: false`, has its project Lead start the Assignment as the
    * Orchestrator dispatch asks: `lead_assign` is the only entry into a worker Session (docs/010, issue #12).
    */
-  async function acceptedTicket(trigger: Trigger, deliverable: 'change' | 'answer' = 'change', options: { assign?: boolean } = {}) {
+  async function acceptedTicket(trigger: Trigger, deliverable: 'change' | 'answer' | 'review' = 'change',
+    options: { assign?: boolean; review_scope?: Record<string, string> } = {}) {
     runtime.receive(trigger)
     await runtime.idle()
-    const result = await route({ kind: 'accept', trigger_id: trigger.id, title: `Fix ${trigger.id}`, worktree_name: 'fix-regression',
-      deliverable, acknowledgement: '收到，修复回归。' })
+    const result = await route({ kind: 'accept', trigger_id: trigger.id, title: `Fix ${trigger.id}`, acknowledgement: '收到，修复回归。',
+      deliverable, ...(deliverable === 'change' ? { worktree_name: 'fix-regression' } : {}),
+      ...(options.review_scope === undefined ? {} : { review_scope: options.review_scope }) })
     await runtime.idle()
     const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
     if (options.assign !== false) await assign(ticket.id)
     return { trigger, ticket, sessionId: `worker-${ticket.id}` }
+  }
+  /** A person writes into a managed Session directly, as DSH reports their user message (P8, issues #20–#22). */
+  function person(sessionId: string, text: string, id = `person-${sessionId}-${Math.random().toString(36).slice(2)}`): string {
+    ctx.emit('session/event', { id: sessionId } as never,
+      { type: 'user/message', data: { id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } } } as never)
+    return id
   }
   /** The project Lead starts Ticket's pending Assignment with `lead_assign`, and (unless `settle: false`) the launch settles. */
   async function assign(ticketId: string, options: { settle?: boolean } = {}) {
@@ -512,7 +526,7 @@ export async function startRuntime(seed?: (store: Store) => void, options: HostO
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
   return { runtime, ctx, directory, workspaceRoot, registry: workspaces.registry, workspaces, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, assign, mergeWithPull, grantFacts, setAutoFacts, api, controller, subprocess, hooks, resolveDefault, stop,
-    jobs, subagents, step, claim, permissionPresets }
+    jobs, subagents, step, claim, permissionPresets, person }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>
 

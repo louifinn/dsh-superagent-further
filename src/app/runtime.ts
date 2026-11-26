@@ -42,6 +42,7 @@ import { HealthBoard } from '../infra/health.ts'
 import { Automations, type ScheduleService } from './automations.ts'
 import { localFile } from './files.ts'
 import { Outbox } from './outbox.ts'
+import { UserNotices } from './user-notices.ts'
 import { Passes } from './passes.ts'
 import { Setup } from './setup.ts'
 import { feishuSettings } from '../sources/feishu.ts'
@@ -116,6 +117,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
   readonly executor: DshExecutor
   readonly assessor: MasterAssessor
   readonly outbox: Outbox
+  /** Durable user-notice requests, approved level by level and delivered as attention when no channel exists (issue #29). */
+  readonly userNotices: UserNotices
   readonly engine: Engine
   readonly passes: Passes
   /** The self-evolution Issue outlet's service, shared by the main Session's tool and the Overview's review routes. */
@@ -317,6 +320,21 @@ export class Runtime implements SourceHost, RuntimeHandle {
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(), log: this.capture('outbox') })
+      this.userNotices = new UserNotices(store, effects, {
+        masterId,
+        prompt: (sessionId, requestId, text, mode) => sessions.prompt(sessionId, requestId, text, mode),
+        ensureLead: async projectId => {
+          const project = store.settings().executor.projects.find(item => item.id === projectId)
+          if (!project) throw new Error(`The user-notice request names unknown project ${projectId}`)
+          return sessions.ensureLead(project.id, project.workspace, `Lead · ${project.name}`)
+        },
+        send: message => outbox.send(message),
+        fallbackChatId: () => store.settings().executor.incidents.alertChatId.trim() || undefined,
+        alerts: this.alerts,
+        wake: (requestId, text) => sessions.wake(requestId, text),
+        log: this.capture('executor'),
+      })
+      sessions.attachUserNotices(this.userNotices)
       const { assessor, executor } = this
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
@@ -505,6 +523,7 @@ export class Runtime implements SourceHost, RuntimeHandle {
         log: kind => this.capture(kind) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
         selfReports: this.selfReports, incidents: this.incidents, diagnosis: this.diagnosis, automations: this.automations,
+        userNotices: this.userNotices, directives: () => sessions.directives,
         log: this.capture('executor'),
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         projects: () => store.settings().executor.projects,

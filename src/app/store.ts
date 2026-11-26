@@ -9,11 +9,13 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, migrateTo15, migrateTo16, migrateTo17, migrateTo18,
-  migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, migrateTo26, migrateTo27, tooOld } from './migration.ts'
+  migrateTo19, migrateTo20, migrateTo21, migrateTo22, migrateTo23, migrateTo24, migrateTo25, migrateTo26, migrateTo27, migrateTo28, tooOld } from './migration.ts'
 import { IncidentRecords } from './incidents.ts'
 import { BoundaryAudit } from './boundary.ts'
 import { RequestLinks } from './request-links.ts'
 import { Information } from './information.ts'
+import { DirectiveRecords } from './directive-records.ts'
+import { UserNoticeRecords } from './user-notice-records.ts'
 import { LeadMessages } from './lead-messages.ts'
 import { Memories } from './memories.ts'
 import { ProjectRequests } from './project-requests.ts'
@@ -86,6 +88,10 @@ export class Store implements Repositories {
   readonly leads: LeadMessages
   /** The authoritative record for every cross-role message; Lead messages write one before they store the message (issue #13, schema 27). */
   readonly information: Information
+  /** Every person's one-shot Directive addressed to a managed Session, with its upward chain and consumption (issues #20–#22, schema 28). */
+  readonly directives: DirectiveRecords
+  /** Durable user-notice requests and their per-level approval (issue #29, schema 28). */
+  readonly userNotices: UserNoticeRecords
   /** Root and derived project-level requests a project Lead disposes (docs/012 D1, schema 21). */
   readonly projectRequests: ProjectRequests
   /** Drafts, filed Issues and dismissed findings of the self-evolution Issue outlet (docs/014 D3, schema 24). */
@@ -105,12 +111,14 @@ export class Store implements Repositories {
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to the current schema in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (27), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (28), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
     this.information = new Information(this.db)
+    this.directives = new DirectiveRecords(this.db)
+    this.userNotices = new UserNoticeRecords(this.db)
     this.leads = new LeadMessages(this.db, this.information)
     this.projectRequests = new ProjectRequests(this.db)
     this.selfReports = new SelfReportRecords(this.db)
@@ -197,10 +205,21 @@ export class Store implements Repositories {
             CREATE TABLE IF NOT EXISTS information (id TEXT PRIMARY KEY, root TEXT NOT NULL, parent TEXT NOT NULL DEFAULT '',
               kind TEXT NOT NULL, direction TEXT NOT NULL, dedupe TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS information_created ON information(created_at);
+            CREATE TABLE IF NOT EXISTS directive (id TEXT PRIMARY KEY, root TEXT NOT NULL, parent TEXT NOT NULL DEFAULT '',
+              source_role TEXT NOT NULL, source_project TEXT NOT NULL DEFAULT '', source_session TEXT NOT NULL, source_ticket TEXT NOT NULL DEFAULT '',
+              parent_session TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL, dedupe TEXT NOT NULL UNIQUE, audience TEXT NOT NULL,
+              created_at TEXT NOT NULL, propagated_at TEXT, consumed_at TEXT, effect TEXT, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS directive_created ON directive(created_at);
+            CREATE INDEX IF NOT EXISTS directive_open ON directive(consumed_at, created_at);
+            CREATE INDEX IF NOT EXISTS directive_ticket ON directive(source_ticket, consumed_at);
+            CREATE TABLE IF NOT EXISTS user_notice (id TEXT PRIMARY KEY, dedupe TEXT NOT NULL UNIQUE, session TEXT NOT NULL, role TEXT NOT NULL,
+              project TEXT NOT NULL DEFAULT '', ticket TEXT NOT NULL DEFAULT '', approver TEXT NOT NULL, approver_project TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL, created_at TEXT NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS user_notice_status ON user_notice(status, created_at);
           `)
           this.addColumns()
           // Each step only touches the shapes its own version introduced, so a schema 10 database runs both.
-          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this); if (version! < 23) migrateTo23(this); if (version! < 24) migrateTo24(this); if (version! < 25) migrateTo25(this); if (version! < 26) migrateTo26(this); if (version! < 27) migrateTo27(this) }
+          if (migrating) { if (version! < 11) migrateTo11(this); if (version! < 12) migrateTo12(this); if (version! < 13) migrateTo13(this); if (version! < 14) migrateTo14(this); if (version! < 15) migrateTo15(this); if (version! < 16) migrateTo16(this); if (version! < 17) migrateTo17(this); if (version! < 18) migrateTo18(this); if (version! < 19) migrateTo19(this); if (version! < 20) migrateTo20(this); if (version! < 21) migrateTo21(this); if (version! < 22) migrateTo22(this); if (version! < 23) migrateTo23(this); if (version! < 24) migrateTo24(this); if (version! < 25) migrateTo25(this); if (version! < 26) migrateTo26(this); if (version! < 27) migrateTo27(this); if (version! < 28) migrateTo28(this) }
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {

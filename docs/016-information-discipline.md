@@ -300,6 +300,8 @@ a summary and this document differ, this document wins. Their relationship is:
 - [012](012-project-requests.md): D3's mandatory reply stands; D4's "passive parent" is historical; D6 and D13 gain the
   notification duty.
 - [011](011-capabilities.md) Part P records the program decisions.
+- [ADR 0012](adr/0012-directive-notice-and-review-semantics.md) records the Directive one-shot model, the durable
+  user-notice approval chain and the `review` deliverable that implement issues #20–#22, #29 and #34.
 
 ## Non-goals
 

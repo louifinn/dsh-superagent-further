@@ -5,7 +5,7 @@
 import { LIMITS } from './limits.ts'
 import { z } from 'zod'
 import { ADMISSION_DEFAULTS, type Admission, type AdmissionCell, type AdmissionRow } from './admission.ts'
-import { key, type AssessmentOutcome, type Mandate, type Policy, type PolicyEffect, type SourceScope, type Strength, type Thread, type Ticket,
+import { key, UserError, type AssessmentOutcome, type Mandate, type Policy, type PolicyEffect, type SourceScope, type Strength, type Thread, type Ticket,
   type Trigger, type ActorRef, type GateResult, INCIDENT_DAILY_BUDGET_MAX, INCIDENT_SEVERITIES } from './core/index.ts'
 import { sameName } from './infra/text.ts'
 import { WORKER_COMMANDS } from './infra/environment.ts'
@@ -37,8 +37,10 @@ export function directionAllowed(value: unknown): value is AdmissionDirection {
 export interface Assessment {
   decision: 'accept' | 'ignore' | 'unavailable'; rule_assessments: RuleAssessment[]; direction: unknown
   title: string; scope: string; reason: string; intent_evidence?: string | null; acknowledgement?: string | null; worktree_name?: string
-  /** What an accepted Ticket owes: a pull request (change, the default) or a read-only answer (nswer). */
-  deliverable?: 'change' | 'answer'
+  /** What an accepted Ticket owes: a pull request (change, the default), a read-only answer, or a read-only review (issue #34). */
+  deliverable?: 'change' | 'answer' | 'review'
+  /** A review's named subject; `standard` is required, while the repository defaults to the Ticket's project (issue #34). */
+  review_scope?: { repository?: string; ref?: string; standard: string }
   project?: string
 }
 /**
@@ -63,11 +65,20 @@ export function assessmentOutcome(assessment: Assessment, settings: Pick<Setting
   if (!assessment.intent_evidence) throw new Error('Acceptance requires intent_evidence')
   const { title, scope, worktree_name: name } = assessment
   const deliverable = assessment.deliverable ?? 'change'
+  // A review is a first-class deliverable, never a change or an answer: the review rule's work must say so, and it must
+  // name the standard it is judged against (issue #34, docs/016 review section).
+  if (deliverable === 'review') {
+    if (!assessment.review_scope?.standard?.trim()) throw new UserError('reviewNeedsScope')
+    if (!matches.some(match => match.rule_id === 'review')) throw new UserError('reviewNeedsSubtype')
+  } else if (matches.length === 1 && matches[0]!.rule_id === 'review') {
+    throw new UserError('reviewNeedsSubtype')
+  }
   if (strength === 'inferred' && settings.eval.mode !== 'auto') {
     const proposal = { title, scope, worktree_name: name, deliverable }
     return { kind: 'ignore', audit: { ...audit, would_accept: true, proposal }, reason: { code: 'observed', values: { text: assessment.reason } } }
   }
   return { kind: 'accept', title, scope, reason: assessment.reason, deliverable, ...(assessment.acknowledgement ? { acknowledgement: assessment.acknowledgement } : {}),
+    ...(assessment.review_scope ? { review_scope: assessment.review_scope } : {}),
     ...(assessment.project ? { project: assessment.project } : {}),
     rules: matches.map(match => match.rule_id), audit, ...(name ? { name } : {}) }
 }

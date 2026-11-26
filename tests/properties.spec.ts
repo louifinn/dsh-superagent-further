@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Automations } from '../src/app/automations.ts'
 import { migrateTo22, migrateTo23, migrateTo24, migrateTo25 } from '../src/app/migration.ts'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
-import { Engine, MemoryRepositories, key } from '../src/core/index.ts'
+import { Engine, MemoryRepositories, UserError, key } from '../src/core/index.ts'
 import type { Assessor, Executor, Outcome, Policy, ProjectRequest, Trigger } from '../src/core/index.ts'
 import { FIELD_KEYS, PROJECTION_POLICY, field, project } from '../src/app/projection.ts'
 import { informationViolations, type InfoRecord } from '../src/core/information.ts'
@@ -70,7 +70,14 @@ describe('Policy gate', () => {
         const bounded = assessment.direction as AdmissionDirection
         const settled = bounded.implementation_requested && bounded.target_basis !== 'undetermined' && !bounded.requires_design_decision
         let outcome: Outcome
-        try { outcome = assessmentOutcome(assessment, settings as never, strength) as Outcome } catch {
+        try { outcome = assessmentOutcome(assessment, settings as never, strength) as Outcome } catch (error) {
+          // A request that matched the review rule must be accepted as the review subtype with its named scope
+          // (issue #34); the generator here never supplies one, so that refusal is the documented one for its input.
+          if (error instanceof UserError && error.code === 'reviewNeedsSubtype') {
+            expect(enabled.some(rule => rule.id === 'review') && assessments.some(item => item.matched && item.rule_id === 'review'),
+              `seed ${seed}`).toBe(true)
+            continue
+          }
           // The documented refusal for an accept that names matched rules but no intent evidence.
           expect(matched, `seed ${seed}`).toBeGreaterThan(0)
           expect(settled && !assessment.intent_evidence, `seed ${seed}`).toBe(true)

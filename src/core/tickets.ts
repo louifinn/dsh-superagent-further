@@ -55,6 +55,8 @@ export class Tickets extends EnginePart {
     units.forEach((unit, index) => {
       const waits = (unit.after ?? []).filter(waited => waited >= 0 && waited < index)
       let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, deliverable: outcome.deliverable ?? 'change', requestId: request.id,
+        ...(outcome.deliverable === 'review' && outcome.review_scope ? { reviewScope: {
+          repository: outcome.review_scope.repository ?? '', ref: outcome.review_scope.ref ?? 'HEAD', standard: outcome.review_scope.standard } } : {}),
         ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}),
         channels: channels.map(channel => ({ ...channel })), assignments: [], inputs: [], undelivered: [],
         createdAt: at, updatedAt: at, origin }
@@ -85,7 +87,9 @@ export class Tickets extends EnginePart {
     units.forEach((unit, index) => {
       const waits = (unit.after ?? []).filter(waited => waited >= 0 && waited < index)
       let ticket: Ticket = { id: ids[index]!, title: unit.title ?? outcome.title, decisionId, mandate, deliverable: outcome.deliverable ?? 'change',
-        requestId: request.id, ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}), channels: [], assignments: [],
+        requestId: request.id, ...(outcome.deliverable === 'review' && outcome.review_scope ? { reviewScope: {
+          repository: outcome.review_scope.repository ?? '', ref: outcome.review_scope.ref ?? 'HEAD', standard: outcome.review_scope.standard } } : {}),
+        ...(waits.length ? { after: waits.map(waited => ids[waited]!) } : {}), channels: [], assignments: [],
         inputs: [], undelivered: [], createdAt: at, updatedAt: at, origin, ...(unit.project ? { project: unit.project } : {}) }
       ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
       const assignment = waits.length ? undefined : this.newAssignment(ticket)

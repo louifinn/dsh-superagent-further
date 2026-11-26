@@ -32,6 +32,14 @@
     "holds": "one information record whole, including its payload and origin chain"
   },
   {
+    "name": "directives",
+    "holds": "the person's unconsumed Directives, newest first, with the original words, the addressed Session, its project and Ticket, and whether the upward hops were delivered (issues #20–#22)"
+  },
+  {
+    "name": "directive/<id>",
+    "holds": "one Directive whole, including its source, parent hop, effect and when it was consumed"
+  },
+  {
     "name": "ticket/<id>",
     "holds": "a ticket's card, the trigger, decision and threads it is tied to, its latest assignments with the start of each report, and its inputs, newest first"
   },

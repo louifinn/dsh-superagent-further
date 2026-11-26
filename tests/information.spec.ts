@@ -76,7 +76,7 @@ it('backfills one record per durable message when a schema 26 database opens', (
   before.close()
   const after = new Store(path, () => {})
   expect(after.get('schema')).toBe(SCHEMA_VERSION)
-  expect(SCHEMA_VERSION).toBe(27)
+  expect(SCHEMA_VERSION).toBe(28)
   const records = after.information.all()
   expect(records).toHaveLength(2)
   expect(informationViolations(records)).toEqual([])

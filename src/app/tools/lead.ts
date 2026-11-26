@@ -6,6 +6,7 @@ import type { LeadDispatch } from '../lead-dispatch.ts'
 import { projectRequestView } from '../lead-dispatch.ts'
 import { assignmentOfRequest, factOfRequest } from '../lead-messages.ts'
 import type { Store } from '../store.ts'
+import type { UserNotices } from '../user-notices.ts'
 import { tool, type Tool } from './tool.ts'
 
 /** The Engine commands the Lead tools need; the runtime binds them because a Lead Session only holds its dispatch. */
@@ -56,6 +57,8 @@ export interface LeadToolsHost {
   report(reportId: string, note?: string): { reported: true }
   /** Relays a message to another project's Lead through the Orchestrator (issue #14). */
   relay(input: { to: string; text: string; ticket_id?: string }): Promise<{ relayed: true; request_id: string }>
+  /** The user-notice service, attached by Sessions after the Runtime composes it (issue #29). */
+  readonly userNotices?: { current?: UserNotices }
   /** Relays a message to another Ticket's worker in this project (issue #14). */
   relayWorker(input: { from: string; to: string; text: string }): Promise<{ relayed: true; request_id: string }>
   /** The Engine's ticket commands; the runtime binds them once its composition is complete (ADR-0008). */
@@ -536,5 +539,50 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
     }).strict(),
     execute: async ({ from_ticket_id, to_ticket_id, text }: { from_ticket_id: string; to_ticket_id: string; text: string }) =>
       host.relayWorker({ from: from_ticket_id, to: to_ticket_id, text }),
+  }), tool({
+    name: 'lead_request_user_notice',
+    description: 'Ask the Orchestrator for permission to notify the person of a fact of this project (issue #29). The request is '
+      + 'durable: the Orchestrator approves or refuses with a reason, and an approval sends these exact words to the person on '
+      + 'the origin Ticket\'s channel, or the alert chat, or attention. Do not claim the person was told before this is approved.',
+    schema: z.object({
+      text: z.string().trim().min(1).max(4_000).describe('The exact words the person should receive.'),
+      ticket_id: z.string().trim().min(1).max(200).optional().describe('The Ticket whose human channel should receive it.'),
+    }).strict(),
+    execute: async ({ text, ticket_id }: { text: string; ticket_id?: string }) => {
+      const notices = host.userNotices?.current
+      if (!notices) throw new Error('The user-notice service is not available yet')
+      const record = await notices.raise({ session: host.session, role: 'lead', text, project: project.id,
+        ...(ticket_id === undefined ? {} : { ticketId: ticket_id }) })
+      return { notice: { id: record.id, status: record.status } }
+    },
+  }), tool({
+    name: 'lead_notices',
+    description: 'List the user-notice requests of this project that wait for you, and the ones you already answered '
+      + '(issue #29). A worker request is answered with lead_notice_decide; you cannot answer your own request.',
+    schema: z.object({}).strict(),
+    execute: async () => {
+      const notices = host.userNotices?.current
+      if (!notices) throw new Error('The user-notice service is not available yet')
+      const pending = notices.pendingFor('lead', project.id)
+      return { pending: pending.map(record => ({ id: record.id, raiser: record.role, session: record.session,
+        ticket_id: record.ticketId ?? null, text: record.text, created_at: record.createdAt })) }
+    },
+  }), tool({
+    name: 'lead_notice_decide',
+    description: 'Approve or refuse one worker user-notice request of this project (issue #29). Approval sends the exact words to '
+      + 'the person on the origin Ticket\'s channel, or the alert chat, or attention; a refusal needs the reason and returns it to '
+      + 'the worker. A request is answered once.',
+    schema: z.object({
+      notice_id: z.string().trim().min(1).max(200),
+      approve: z.boolean(),
+      reason: z.string().trim().min(1).max(1_000).optional().describe('Required when refuse: why the person is not being notified.'),
+    }).strict(),
+    execute: async ({ notice_id, approve, reason }: { notice_id: string; approve: boolean; reason?: string }) => {
+      const notices = host.userNotices?.current
+      if (!notices) throw new Error('The user-notice service is not available yet')
+      const record = await notices.decide(notice_id, { approve, ...(reason === undefined ? {} : { reason }), by: host.session,
+        role: 'lead', project: project.id })
+      return { notice: { id: record.id, status: record.status, via: record.via ?? null, reason: record.reason ?? null } }
+    },
   })]
 }

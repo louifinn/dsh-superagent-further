@@ -26,6 +26,23 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
   dedupe key, and the Orchestrator reads the chain through the `information` resource while `GET information` pages it
   for the panel. A schema 26 database backfills one record per existing Lead message (issue #13, ADR-0009 decision 1,
   schema 27).
+- A person's message into any Orchestrator, Lead or worker Session is one recorded Directive (schema 28 `directive`
+  table): its origin is an `information` record from `person` to the addressed role, it climbs the adjacent levels
+  with the original words, the parent is prompted by its next turn, and it is consumed once — by an addressed turn end
+  or by the worker's report naming `directive_effect`. A duplicate message is the same Directive; while it is
+  unconsumed the source node cannot be steered against, and `lead_notify_worker` / `orchestrator_lead_instruction`
+  refuse with `directiveSourceLocked` and record the refusal in the boundary audit; `orchestrator_directives` and the
+  `directives` resource expose the pending queue (issues #20, #21, #22, ADR-0012, schema 28).
+- A worker or Lead can ask for a person to be told through a durable user-notice request (`request_user_notice`,
+  `lead_request_user_notice`): the direct superior approves or refuses with a reason, an approved notice is delivered
+  once through the originating Ticket's channel, then the alert chat, then attention with a durable wake, and every
+  step is an `information` record; the request survives a restart, a duplicate raise is the same request, and a failed
+  delivery stays visible (issue #29, ADR-0012, schema 28).
+- `deliverable: review` is a first-class read-only subtype of the answer contract: an accept names `review_scope`
+  (repository, ref, standard), the Ticket runs read-only and never asks for a branch or pull request, its ready report
+  must carry a `clean` or `blocked` verdict and a coverage statement, a blocked verdict keeps the Ticket open, and the
+  scope, verdict and coverage appear on cards, notices and the result; a change that matched the review rule, or a
+  review without a standard, is refused with the correction (issue #34, ADR-0012).
 - The model-facing surfaces of the Orchestrator and the worker are collected from one declaration in
   `src/app/surfaces.ts`, and golden files under `tests/fixtures/context-golden/` pin the prompt text, the tool schemas
   and the resources each role sees, so a change to either surface has to be acknowledged (part of #6).

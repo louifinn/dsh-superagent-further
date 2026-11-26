@@ -315,17 +315,38 @@ export type TicketEndCause = 'report' | 'human' | 'merge' | 'eval'
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
 /**
  * What a Ticket owes when it ends: a `change` delivers through a pull request (its followed Threads decide merged or
- * closed), while an `answer` delivers a written answer and never creates a branch or worktree. The contract is declared at
- * acceptance and immutable; it is the only source of truth for these rules, exposed through the capability helpers below
- * rather than compared across the app layer.
+ * closed), while an `answer` delivers a written answer and a `review` delivers a read-only assessment of an explicit
+ * subject. An `answer` or `review` never creates a branch or worktree. The contract is declared at acceptance and
+ * immutable; it is the only source of truth for these rules, exposed through the capability helpers below rather than
+ * compared across the app layer.
  */
-export type Deliverable = 'change' | 'answer'
+export type Deliverable = 'change' | 'answer' | 'review'
 /** Whether Tickets with this deliverable deliver through a pull request, so they can never end `completed`. */
 export const requiresPullRequest = (deliverable: Deliverable): boolean => deliverable === 'change'
 /** Whether the outcome vocabulary of this deliverable includes `merged`/`closed` through a followed pull request. */
 export const canMerge = (deliverable: Deliverable): boolean => deliverable === 'change'
-/** Whether `completed` is a successful ending for this deliverable: only an answer ticket's report is its deliverable. */
+/** Whether `completed` is a successful ending for this deliverable: only an answer or review ticket's report is its deliverable. */
 export const canComplete = (deliverable: Deliverable): boolean => !requiresPullRequest(deliverable)
+/** Whether the deliverable is a read-only review of a named subject (issue #34). */
+export const isReview = (deliverable: Deliverable): boolean => deliverable === 'review'
+/**
+ * The subject a review Ticket names: the repository, the ref to read, and the standard it is judged against (issue #34,
+ * ADR-0009 decision 9). `repository` falls back to the Ticket's own registered project when acceptance left it out.
+ */
+export interface ReviewScope {
+  repository: string
+  ref: string
+  standard: string
+}
+/** A review Ticket's report: a verdict on the named subject, its coverage, and the evidence it rests on. */
+export interface ReviewReport {
+  verdict: 'clean' | 'blocked'
+  /** What the review covered, in the reviewer's words; a review without one is incomplete. */
+  coverage: string
+  findings: readonly string[]
+  evidence: readonly string[]
+  at: string
+}
 /** Where a change Ticket's independent review stands: pending while a reviewer runs, clean or blocked after it reports. */
 export type ReviewState = 'pending' | 'clean' | 'blocked'
 /** One reviewer's verdict on a change Ticket, kept on the Ticket so a request cannot settle without it. */
@@ -507,8 +528,12 @@ export interface Ticket {
   title: string
   decisionId: string
   mandate: Mandate
-  /** What the ticket owes: a reviewable change or an answer. Set at acceptance from the accept outcome; immutable afterwards. */
+  /** What the ticket owes: a reviewable change, an answer, or a read-only review. Set at acceptance from the accept outcome; immutable afterwards. */
   deliverable: Deliverable
+  /** A review Ticket's named subject (issue #34); absent for the other deliverables. */
+  reviewScope?: ReviewScope
+  /** A review Ticket's report, kept on the Ticket so a blocked verdict cannot be lost by completing it. */
+  reviewReport?: ReviewReport
   /** The latest independent review of a change ticket's delivery; a change request does not settle without a clean one. */
   review?: TicketReview
   /** The Request it belongs to; absent only on records from before schema 14 until the upgrade fills it in. */

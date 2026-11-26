@@ -278,11 +278,84 @@
             ],
             "additionalProperties": false
           }
+        },
+        "review": {
+          "description": "With a review Ticket (issue #34): its verdict and the coverage statement; required by a ready report.",
+          "type": "object",
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "clean",
+                "blocked"
+              ],
+              "description": "clean when the named subject met the standard, blocked when a finding does."
+            },
+            "coverage": {
+              "type": "string",
+              "maxLength": 2000,
+              "description": "What the review actually covered, in its own words; a ready review report without it is refused."
+            },
+            "findings": {
+              "description": "The concrete findings, each with its evidence.",
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "evidence": {
+              "description": "What the verdict rests on, such as commands or files read.",
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            }
+          },
+          "required": [
+            "verdict",
+            "coverage"
+          ],
+          "additionalProperties": false
+        },
+        "directive_effect": {
+          "description": "With a person's direct Directive: what you did with it in this report — acted on it, adjusted your own work once, or handed it back as beyond your Mandate. Required by the next report after a person addressed this worker.",
+          "type": "string",
+          "enum": [
+            "acted",
+            "adjusted",
+            "handback"
+          ]
         }
       },
       "required": [
         "state",
         "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "request_user_notice",
+    "description": "Ask your project Lead for permission to notify the person of a fact of this Ticket (issue #29). The request is durable: the Lead approves or refuses with a reason, and only an approval sends these exact words to the person on this Ticket's channel, or the alert chat, or as attention. Never tell the person you notified them before it is approved.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "The exact words the person should receive."
+        }
+      },
+      "required": [
+        "text"
       ],
       "additionalProperties": false
     }

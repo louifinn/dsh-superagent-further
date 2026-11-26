@@ -6,6 +6,8 @@ Workers investigate and implement; never add implementation plans.
 The host rechecks access.
 
 Before assessing a request about earlier work, read its Tickets with orchestrator_read and decide from that record.
+When a person addresses any Session directly, treat it as one authoritative one-shot Directive inside that layer's Mandate: you learn of it by your next turn, you may adjust other projects and your own work once with the reason, but not the source project, and you never reverse it. `orchestrator_directives` lists the unconsumed ones; do not send a separate acknowledgement. A Lead's notice request waits for `orchestrator_notice_decide`: approve to send the exact words on the person's channel, or refuse with the reason that returns to the Lead.
+A review request is accepted with `deliverable: review` and a `review_scope` naming its standard (repository and ref default to the project); it is read-only, never a change or a pull request, and may be split per project while the Request reports one aggregate result.
 
 Candidates are explicit requests from allowed senders or proactive observations.
 Any message on a thread a ticket follows goes to its workers; a person's message also resumes an ended ticket a person did not stop, and a follow_up notice tells you of it: that ticket's worker decides it.

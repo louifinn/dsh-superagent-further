@@ -8,10 +8,10 @@ The character budget of every role's model-facing text, generated from `SURFACES
 | Role | Bucket | Chars | Change | Delta | Issue | Date |
 | --- | --- | --- | --- | --- | --- | --- |
 | orchestrator | prompt | 47400 | the headline prompt plus its generated parts, as the surface test composes it | 45,145 measured on 2026-11-26; the 5% headroom covers the team sections | #6 | 2026-11-26 |
-| orchestrator | tool-schemas | 31000 | the JSON of the main Session application tool definitions, excluding DSH-native tools | 28,617 measured on 2026-11-26; tools move together with capability, never silently | #6 | 2026-11-26 |
+| orchestrator | tool-schemas | 34500 | the JSON of the main Session application tool definitions, excluding DSH-native tools | 33,580 measured on 2026-11-26 with the Directive, user-notice and review tools; tools move together with capability, never silently | #6 | 2026-11-26 |
 | orchestrator | injection | 6000 | the runtime-context text the main Session receives around its prompt | memory, language and automation snapshots stay together under this bound | #6 | 2026-11-26 |
 | worker | prompt | 38800 | the worker prompt, as the runtime hands it to the Executor Session | 36,872 measured on 2026-11-26; the 5% headroom covers the work and handoff sections | #6 | 2026-11-26 |
-| worker | tool-schemas | 8200 | the JSON of the worker application tool definitions | 7,697 measured on 2026-11-26; a worker tool is added only with the rule that names it | #6 | 2026-11-26 |
+| worker | tool-schemas | 9800 | the JSON of the worker application tool definitions | 9,538 measured on 2026-11-26 with request_user_notice and the review report payload; a worker tool is added only with the rule that names it | #6 | 2026-11-26 |
 | worker | injection | 1000 | the language directive a worker receives around its prompt | the worker has no memory or automation injection by design | #6 | 2026-11-26 |
 | lead | prompt | 50000 | the Lead prompt assembled from its surface sections and the project it owns | the Lead was outside the budget until #6; its prompt derives from SURFACES now, so this entry can be measured | #6 | 2026-11-26 |
 | lead | tool-schemas | 30000 | the JSON of the Lead application tool definitions, including the project memory tools | the Lead tool set is the widest of the four roles, which is why it had to enter the same table | #6 | 2026-11-26 |

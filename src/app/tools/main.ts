@@ -22,6 +22,8 @@ import { decideEscalation } from '../escalations.ts'
 import type { SelfReports } from '../self-reports.ts'
 import { requireIncident, type Incidents } from '../incidents.ts'
 import type { Diagnosis } from '../diagnosis.ts'
+import type { Directives } from '../directives.ts'
+import type { UserNotices } from '../user-notices.ts'
 import { INCIDENT_SEVERITY_FILTERS, INCIDENT_STATUS_FILTERS } from '../api.ts'
 import type { InfoRecord } from '../../core/information.ts'
 
@@ -46,6 +48,10 @@ export interface MainToolsHost {
   readonly diagnosis: Diagnosis
   /** Installation automation tasks, present only when the Host's `schedule` service is installed. */
   readonly automations?: Automations
+  /** The person's unconsumed Directives and the one-shot limits on this Session (issues #20–#22). */
+  directives(): Directives
+  /** Durable user-notice requests and their per-level approval (issue #29). */
+  readonly userNotices: UserNotices
   /** The registered Execution projects, for validating a request's delivery units. */
   readonly projects: () => readonly { id: string; name: string; workspace: string }[]
   /** Applies existing labels to the Issue or pull request a Trigger names, through that Source kind. */
@@ -80,7 +86,12 @@ const RouteItemSchema = z.object({
   trigger_id: z.string().describe('The candidate card\'s trigger_id; deciding it decides its batch.'),
   ticket_id: z.string().nullish().describe('attach and stop: the ticket.'),
   title: z.string().nullish().describe('accept: a short label of at most 200 characters describing the original request.'),
-  deliverable: z.enum(['change', 'answer']).nullish().describe('accept: what the work owes; `answer` is read-only and has no branch or pull request (default change).'),
+  deliverable: z.enum(['change', 'answer', 'review']).nullish().describe('accept: what the work owes; `answer` is read-only and has no branch or pull request, `review` is a read-only review of a named subject (default change).'),
+  review_scope: z.object({
+    repository: z.string().trim().min(1).max(200).nullish().describe('review: the repository the review reads; omitted, the Ticket\'s registered project names it.'),
+    ref: z.string().trim().min(1).max(200).nullish().describe('review: the ref (branch, tag or commit) to read; default HEAD.'),
+    standard: z.string().trim().min(1).max(2_000).describe('review: the standard or checklist the subject is judged against.'),
+  }).nullish().describe('accept with deliverable review: the named subject and standard; required for a review.'),
   worktree_name: z.string().nullish().describe(`accept: ${WorktreeNameSchema.description ?? ''}`),
   acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source, so do not quote it.`),
   note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
@@ -100,7 +111,9 @@ const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: r
   ticket_id: { check: z.string(), reads: ['attach', 'stop'], needs: ['attach', 'stop'] },
   title: { check: z.string().max(200), reads: ['accept'], needs: ['accept'] },
   worktree_name: { check: WorktreeNameSchema, reads: ['accept'], needs: [] },
-  deliverable: { check: z.enum(['change', 'answer']), reads: ['accept'], needs: [] },
+  deliverable: { check: z.enum(['change', 'answer', 'review']), reads: ['accept'], needs: [] },
+  review_scope: { check: z.object({ repository: z.string().trim().min(1).max(200).nullish(), ref: z.string().trim().min(1).max(200).nullish(),
+    standard: z.string().trim().min(1).max(2_000) }), reads: ['accept'], needs: [] },
   acknowledgement: { check: AcknowledgementSchema, reads: ['accept'], needs: ['accept'] },
   note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
   project: { check: z.string().trim().min(1).max(40), reads: ['accept'], needs: [] },
@@ -121,7 +134,9 @@ function invalid(item: RouteItem): string | undefined {
     const checked = check.safeParse(value)
     if (!checked.success) return `${field}: ${checked.error.issues[0]?.message ?? 'invalid'}`
   }
-  if (item.kind === 'accept' && (item.deliverable ?? 'change') === 'change' && !item.worktree_name) return 'accept needs worktree_name for change work; for read-only work such as a review, use deliverable: answer instead'
+  if (item.kind === 'accept' && (item.deliverable ?? 'change') === 'change' && !item.worktree_name) return 'accept needs worktree_name for change work; for read-only work use deliverable: answer, and for a review of a named subject use deliverable: review with review_scope'
+  if (item.kind === 'accept' && item.deliverable === 'review' && !item.review_scope?.standard) return 'accept with deliverable review needs review_scope.standard, the standard the review is judged against'
+  if (item.kind === 'accept' && item.review_scope && item.deliverable !== 'review') return 'review_scope is only read with deliverable: review'
   return undefined
 }
 type Routed = { decision?: DecisionKind; reason: string; ticketId?: string | undefined; triggerIds?: readonly string[] }
@@ -164,6 +179,8 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId
       const decision = host.engine.decide(item.trigger_id, { kind: 'accept', title: item.title!, scope: item.title!, reason: { code: 'explicitRouted' },
         acknowledgement: item.acknowledgement!, deliverable: item.deliverable ?? 'change', ...(item.worktree_name ? { name: item.worktree_name } : {}), ...(item.project ? { project: item.project } : {}),
+        ...(item.review_scope ? { review_scope: { ...(item.review_scope.repository ? { repository: item.review_scope.repository } : {}),
+          ...(item.review_scope.ref ? { ref: item.review_scope.ref } : {}), standard: item.review_scope.standard } } : {}),
         ...(item.deliverables?.length ? { deliverables: item.deliverables.map(unit => ({ ...(unit.project ? { project: unit.project } : {}), ...(unit.title ? { title: unit.title } : {}), ...(unit.after?.length ? { after: unit.after } : {}) })) } : {}), ...note })
       // A Decision that created no ticket is the item's refusal; one that existed before keeps what it was accepted with.
       if (decision.kind !== 'accept' || !decision.ticketId) return { refused: `Ticket was not created: ${reasonText(decision.reason)}` }
@@ -246,6 +263,10 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         if (!ticket) throw new Error(`Unknown Ticket ${args.ticket_id}`)
         const project = host.projects().find(candidate => candidate.id === ticket.project)
         if (!project) throw new Error(`Ticket ${ticket.id} names no registered project; its Lead cannot be resolved`)
+        // The source project of a person's unconsumed Directive is the temporary highest source (issue #21): the
+        // Orchestrator may adjust other projects and its own work, but steering this one is refused and audited.
+        const directive = host.directives().pendingForProject(project.id)
+        if (directive) host.directives().refuse('orchestrator', 'orchestrator_lead_instruction', `Lead of ${project.id}`, project.id, directive.source.sessionId)
         if (args.action === 'attach' && args.trigger_id === undefined) throw new Error('Attaching a Trigger needs its id')
         if (args.action === 'note' && args.text === undefined) throw new Error('A note needs its text')
         const requestId = `lead-instruction:${ticket.id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
@@ -591,6 +612,40 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         project: z.string().trim().min(1).max(200).describe('The target project id the relay names.'),
       }).strict(),
       execute: async ({ relay_id, project }: { relay_id: string; project: string }) => host.relayForward(relay_id, project),
+    }), tool({
+      name: 'orchestrator_directives',
+      description: 'List the person\'s unconsumed Directives (issues #20–#22). Each names the original words, the Session a person '
+        + 'addressed, its project and Ticket, and the hops that already carried it to you. Act on it within your own authority; '
+        + 'the source node acts on it in its own layer, and you may adjust other projects but not that one while it is unconsumed. '
+        + 'A Directive is consumed once, by acting on it, and a redelivery is never a second adjustment.',
+      schema: z.object({}).strict(),
+      execute: async () => ({ directives: host.directives().pending().map(record => ({
+        id: record.id, text: record.text, origin: record.origin, source_role: record.source.role,
+        source_session: record.source.sessionId, project: record.source.project ?? null, ticket_id: record.source.ticketId ?? null,
+        hops: record.hops, audience: record.audience, created_at: record.at, propagated_at: record.propagatedAt ?? null })) }),
+    }), tool({
+      name: 'orchestrator_notices',
+      description: 'List the user-notice requests a project Lead raised that wait for your approval (issue #29). Answer each with '
+        + 'orchestrator_notice_decide; a refusal states the reason, which goes back to the Lead.',
+      schema: z.object({}).strict(),
+      execute: async () => ({ notices: host.userNotices.pendingFor('orchestrator').map(record => ({
+        id: record.id, raiser: record.role, session: record.session, project: record.project ?? null,
+        ticket_id: record.ticketId ?? null, text: record.text, created_at: record.createdAt })) }),
+    }), tool({
+      name: 'orchestrator_notice_decide',
+      description: 'Approve or refuse one pending user-notice request from a Lead (issue #29). Approval sends the exact words to '
+        + 'the origin Ticket\'s human channel, or to the alert chat, or as attention; refusal needs the reason and is returned to '
+        + 'the Lead. A request is answered once.',
+      schema: z.object({
+        notice_id: z.string().trim().min(1).max(200),
+        approve: z.boolean(),
+        reason: z.string().trim().min(1).max(1_000).optional().describe('Required when refuse: why the person is not being notified.'),
+      }).strict(),
+      execute: async (args: { notice_id: string; approve: boolean; reason?: string }) => {
+        const record = await host.userNotices.decide(args.notice_id, { approve: args.approve, ...(args.reason === undefined ? {} : { reason: args.reason }),
+          by: agent.session.id, role: 'orchestrator' })
+        return { notice: { id: record.id, status: record.status, via: record.via ?? null, reason: record.reason ?? null } }
+      },
     }),
   ]
 }

@@ -1,6 +1,6 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
 import { z } from 'zod'
-import { liveTicket, projectRequestOpen, threadKey, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT,
+import { liveTicket, projectRequestOpen, threadKey, UserError, PROJECT_REQUEST_INSTRUCTION_LIMIT, PROJECT_REQUEST_TITLE_LIMIT,
   type EngineForExecutor, type ProjectRequest, type ProjectRequestRoot, type Ticket } from '../../core/index.ts'
 import { workerSessionId } from '../../executor/dsh.ts'
 import { IM_WORDS } from '../../infra/text.ts'
@@ -10,6 +10,8 @@ import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { CaptureLogs } from '../logs.ts'
 import type { Store } from '../store.ts'
+import type { Directives } from '../directives.ts'
+import type { UserNotices } from '../user-notices.ts'
 import { reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { Sessions } from '../sessions.ts'
 import { SURFACES } from '../surfaces.ts'
@@ -25,6 +27,10 @@ export interface ExecutorToolsHost {
   /** The projects this installation works on, so a Ticket's own repository can be read for its PR. */
   readonly projects: () => readonly Project[]
   sendReplies(): Promise<void>
+  /** The person's unconsumed Directives; a worker report must carry the effect of the one addressed to it (issues #21–#22). */
+  directives?: () => Directives
+  /** Durable user-notice requests: a worker asks its Lead, who approves or refuses with a reason (issue #29). */
+  readonly userNotices?: UserNotices
   /** Operational log scoped to the executor; a report's summary and any question are never logged. */
   readonly log?: CaptureLogs
 }
@@ -159,6 +165,14 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           exit_code: z.number().int().min(-1000).max(1000).optional().describe('The command\'s exit code.'),
           evidence: z.string().trim().min(1).max(1000).optional().describe('A short line of evidence, such as the key output or the test count.'),
         }).strict()).max(20).optional().describe('The verifications this report rests on; list only checks you actually ran.'),
+        review: z.object({
+          verdict: z.enum(['clean', 'blocked']).describe('clean when the named subject met the standard, blocked when a finding does.'),
+          coverage: z.string().trim().max(2_000).describe('What the review actually covered, in its own words; a ready review report without it is refused.'),
+          findings: z.array(z.string().trim().min(1).max(1_000)).max(50).optional().describe('The concrete findings, each with its evidence.'),
+          evidence: z.array(z.string().trim().min(1).max(1_000)).max(50).optional().describe('What the verdict rests on, such as commands or files read.'),
+        }).strict().optional().describe('With a review Ticket (issue #34): its verdict and the coverage statement; required by a ready report.'),
+        directive_effect: z.enum(['acted', 'adjusted', 'handback']).optional()
+          .describe('With a person\'s direct Directive: what you did with it in this report — acted on it, adjusted your own work once, or handed it back as beyond your Mandate. Required by the next report after a person addressed this worker.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
@@ -187,6 +201,10 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
               throw new Error(`Name the unanswered project requests this report leaves behind in requests: ${missing.map(request => request.id).join(', ')}`)
             }
           }
+          // A person's direct Directive is one-shot and must be reported with its effect, so the Lead sees the original
+          // words and what this worker did with them (issue #22, ADR-0009 decision 5).
+          const pending = host.directives?.().pendingForTicket(ticketId)
+          if (pending && args.directive_effect === undefined) throw new UserError('directiveReportRequired')
           const refused = pull && claimPull(host.github, ticketId, pull)
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
@@ -198,7 +216,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
               ...(check.exit_code !== undefined ? { exitCode: check.exit_code } : {}),
               ...(check.evidence ? { evidence: check.evidence } : {}),
             })) }) }
-          const updated = host.engine.report(ticketId, report)
+          const updated = host.engine.report(ticketId, { ...report, ...(args.review === undefined ? {} : { review: args.review }) })
+          if (pending && args.directive_effect) host.directives?.().report(ticketId, args.directive_effect)
           const relay = reportRelay(updated, report)
           const notification = relay ? 'lead' : 'internal_only'
           return { result: { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }, updated, relay }
@@ -211,6 +230,20 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         // cannot be woken leaves the request waiting for the next reconciliation or Lead turn.
         await host.sessions.lead.reported(outcome.updated, { state: args.state, summary: args.summary }, requests)
         return { ...outcome.result, ...(requests.length === 0 ? {} : { requests }) }
+      },
+    }), tool({
+      name: 'request_user_notice',
+      description: 'Ask your project Lead for permission to notify the person of a fact of this Ticket (issue #29). The request is '
+        + 'durable: the Lead approves or refuses with a reason, and only an approval sends these exact words to the person on this '
+        + 'Ticket\'s channel, or the alert chat, or as attention. Never tell the person you notified them before it is approved.',
+      schema: z.object({
+        text: z.string().trim().min(1).max(4_000).describe('The exact words the person should receive.'),
+      }).strict(),
+      execute: async ({ text }: { text: string }) => {
+        if (!host.userNotices) throw new Error('The user-notice service is not available yet')
+        const record = await host.userNotices.raise({ session: workerSessionId(ticketId), role: 'worker', text, ticketId,
+          ...(ticket.project === undefined ? {} : { project: ticket.project }) })
+        return { notice: { id: record.id, status: record.status } }
       },
     }),
   ]

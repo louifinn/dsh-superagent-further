@@ -21,7 +21,7 @@ import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 import { factParentDedupe, informationOf } from './information.ts'
 
-export const SCHEMA_VERSION = 27
+export const SCHEMA_VERSION = 28
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -288,6 +288,13 @@ export function migrateTo27(store: Store): void {
     store.information.send(informationOf(message, parent), message.at)
   }
 }
+/**
+ * Schema 28 adds the Batch B records (ADR-0009 decisions 3–5, 7, 9; issues #20–#22, #29, #34): the `directive` table for a
+ * person's one-shot word to a managed Session and the `user_notice` table for durable notify-the-person requests with their
+ * approval. The Store creates both tables before this runs and no schema 27 record changes shape, so the step stays in the
+ * sequence as the place for a later Batch B record rewrite; re-running it is a no-op.
+ */
+export function migrateTo28(_store: Store): void {}
 /**
  * Normalize trigger and thread timestamps to fixed-width millisecond ISO strings so lexicographical text order matches
  * chronological order (GitHub wrote whole seconds like `…:00Z`, which sorted after `…:00.001Z`).

@@ -32,6 +32,8 @@ export const RESOURCES: readonly { name: string; holds: string }[] = [
   { name: 'decision/<id>', holds: 'one decision with its audit' },
   { name: 'information', holds: 'the authoritative information records of cross-role messages, newest first, with their kind, direction, source, target, hops and delivery state (issue #13)' },
   { name: 'information/<id>', holds: 'one information record whole, including its payload and origin chain' },
+  { name: 'directives', holds: 'the person\'s unconsumed Directives, newest first, with the original words, the addressed Session, its project and Ticket, and whether the upward hops were delivered (issues #20–#22)' },
+  { name: 'directive/<id>', holds: 'one Directive whole, including its source, parent hop, effect and when it was consumed' },
   { name: 'ticket/<id>', holds: 'a ticket\'s card, the trigger, decision and threads it is tied to, its latest assignments with the start of each '
     + 'report, and its inputs, newest first' },
   { name: 'ticket/<id>/assignment', holds: 'its assignment text' },
@@ -65,7 +67,7 @@ export const resourceGrammar = (reads: readonly string[]): string => RESOURCES.f
   .map(resource => `${resource.name}: ${resource.holds}`).join('; ')
 
 export interface ResourceHost {
-  readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus' | 'information'>
+  readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus' | 'information' | 'directives'>
   /** The boundary audit for a refused read attempt (issue #37); absent in a fixture host. */
   readonly boundary?: BoundaryAudit
   readonly pages: TextCache
@@ -167,6 +169,12 @@ const ROUTES: readonly Route[] = [
   ['information/', read => {
     const record = main(read).store.information.byId(read.rest)
     if (!record) throw new Error('Unknown information record')
+    return record
+  }],
+  ['directives', read => list(read, (offset, count) => main(read).store.directives.pending().slice().reverse().slice(offset, offset + count))],
+  ['directive/', read => {
+    const record = main(read).store.directives.get(read.rest)
+    if (!record) throw new Error('Unknown Directive')
     return record
   }],
   ['settings', read => main(read).settings.view()],

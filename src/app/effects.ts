@@ -27,6 +27,10 @@ export interface EffectPayloads {
   wake: { text: string }
   /** Send a message for a Channel through its Source; the key is the message ID, whose receipt the Outbox keeps. */
   reply: Record<string, never>
+  /** Carry one recorded Directive to the adjacent parents that must know; the key is the Directive ID. */
+  directive: { id: string }
+  /** Deliver one approved user-notice request; the key is the request ID, and its outcome is recorded on the request. */
+  'user-notice': { id: string }
 }
 export type EffectKind = keyof EffectPayloads
 interface Handler<K extends EffectKind> {

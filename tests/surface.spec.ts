@@ -36,20 +36,20 @@ describe('mounted surface', () => {
     const worker = [...host.tools.get(`worker-${ticket.id}`)!.keys()].sort()
     expect({ main, lead, worker }).toEqual({
       // The main Session: routing and evaluation, communication, configuration, memory, and the raise/escalation channels.
-      main: ['memory_forget', 'memory_search', 'memory_write', 'orchestrator_correlate', 'orchestrator_escalation_decide', 'orchestrator_escalations',
+      main: ['memory_forget', 'memory_search', 'memory_write', 'orchestrator_correlate', 'orchestrator_directives', 'orchestrator_escalation_decide', 'orchestrator_escalations',
         'orchestrator_eval', 'orchestrator_eval_decide', 'orchestrator_eval_read', 'orchestrator_incident', 'orchestrator_issue_create', 'orchestrator_label',
-        'orchestrator_lead_instruction', 'orchestrator_policy_sync',
+        'orchestrator_lead_instruction', 'orchestrator_notice_decide', 'orchestrator_notices', 'orchestrator_policy_sync',
         'orchestrator_prompts_save', 'orchestrator_read', 'orchestrator_relay_forward', 'orchestrator_relays', 'orchestrator_reply', 'orchestrator_request_create', 'orchestrator_route',
         'orchestrator_send_file', 'orchestrator_settings_propose', 'orchestrator_settings_save', 'orchestrator_thread_unsubscribe',
         'orchestrator_trigger_requeue'],
       // A project Lead: its project's requests and messages, its own Tickets, plus the memories scoped to its project.
-      lead: ['lead_assign', 'lead_fact', 'lead_instruction_reply', 'lead_notify_worker', 'lead_relay', 'lead_relay_worker', 'lead_report', 'lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
-        'lead_request_escalate', 'lead_request_reply', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'lead_ticket_attach',
+      lead: ['lead_assign', 'lead_fact', 'lead_instruction_reply', 'lead_notice_decide', 'lead_notices', 'lead_notify_worker', 'lead_relay', 'lead_relay_worker', 'lead_report', 'lead_request_approval', 'lead_request_approve', 'lead_request_complete', 'lead_request_create', 'lead_request_decide',
+        'lead_request_escalate', 'lead_request_reply', 'lead_request_user_notice', 'lead_requests', 'lead_review', 'lead_review_record', 'lead_status', 'lead_ticket_attach',
         'lead_ticket_note', 'lead_ticket_request_status', 'lead_ticket_retry', 'lead_ticket_stop', 'memory_forget',
         'memory_search', 'memory_write', 'orchestrator_read'],
       // An Executor Session: report, read what reached it, follow or detach Threads, and hand a Trigger back.
       worker: ['orchestrator_ack', 'orchestrator_read', 'orchestrator_report', 'orchestrator_thread_follow', 'orchestrator_thread_unrelated',
-        'orchestrator_trigger_handback', 'request_create'],
+        'orchestrator_trigger_handback', 'request_create', 'request_user_notice'],
     })
   })
 

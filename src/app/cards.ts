@@ -29,6 +29,8 @@ export function ticketCard(ticket: Ticket) {
     reason: ticket.ended.reason ?? ticket.ended.outcome }
   const { attention } = ticket
   return { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket), strength: ticket.mandate.strength,
+    deliverable: ticket.deliverable, ...(ticket.reviewScope ? { review_scope: ticket.reviewScope } : {}),
+    ...(ticket.reviewReport ? { review_report: ticket.reviewReport } : {}),
     ...(pullOf(ticket) ? { pr_number: pullOf(ticket) } : {}), ...(ended ? { ended } : {}),
     ...(attention ? { attention: { question: attention.question, ...attention.triggerId ? { trigger_id: attention.triggerId } : {} } } : {}),
     preview: project(field('card.report'), latestReport(ticket)?.summary ?? '').inline, read: `ticket/${ticket.id}` }

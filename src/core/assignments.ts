@@ -21,6 +21,8 @@ export interface WorkerReport {
   pull_request?: string
   /** The verifications this report rests on; a ready report without any is still accepted, but its evidence is empty. */
   checks?: readonly ReportCheck[]
+  /** A review Ticket's verdict and coverage (issue #34); a ready review report without one is refused. */
+  review?: { verdict: 'clean' | 'blocked'; coverage: string; findings?: readonly string[]; evidence?: readonly string[] }
 }
 const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Finish the original assignment and report its status.'
 
@@ -117,6 +119,20 @@ export class Assignments extends EnginePart {
     if (assignment.state === 'ended') throw new UserError('assignmentEnded')
     // A change ends through its pull request, never through a bare ready report: demand the delivery pointer before recording the report.
     if (report.state === 'ready' && requiresPullRequest(ticket.deliverable) && !ticket.follows?.length && !report.pull_request) throw new UserError('changeNeedsPullRequest')
+    // A review deliverable carries a structured verdict and coverage (issue #34, docs/016 review section). A blocked verdict
+    // is recorded on the Ticket and refuses the ready report, so the Ticket stays open for the findings to be addressed.
+    if (ticket.deliverable === 'review') {
+      if (report.state === 'ready' && !report.review) throw new UserError('reviewReportMissing')
+      if (report.review) {
+        const coverage = report.review.coverage?.trim()
+        if (!coverage) throw new UserError('reviewCoverageMissing')
+        const findings = (report.review.findings ?? []).map(item => String(item).trim()).filter(Boolean)
+        const evidence = (report.review.evidence ?? []).map(item => String(item).trim()).filter(Boolean)
+        ticket.reviewReport = { verdict: report.review.verdict, coverage, findings, evidence, at: this.now() }
+        this.repo.tickets.save(ticket)
+        if (report.state === 'ready' && report.review.verdict === 'blocked') throw new UserError('reviewBlocked')
+      }
+    }
     const checks = this.checks(report.checks)
     const at = this.now()
     const previous = ticket.attention

@@ -120,8 +120,9 @@ it.each(RULES)('%s (%s)', (_rule, file, says, gone = []) => {
 
 it('keeps each role\'s own instructions short', () => {
   // The self-evolution finding rule (014) adds one sentence to the orchestrator's own instructions; Phase 2 adds the
-  // discovery-or-Issue routing sentence, so the limit moves to 1,850 and not with added rules, as the rename comment below does.
-  expect(masterPrompt.length).toBeLessThan(1850)
+  // discovery-or-Issue routing sentence, so the limit moved to 1,850, and the Directive, notice and review routing
+  // (ADR-0012) adds one more paragraph, moving it to 2,700.
+  expect(masterPrompt.length).toBeLessThan(2700)
   // The 0.3.0 rename made the worker's registration names 12 characters longer, so the same instructions now
   // measure 1,001; the limit moves with the name and not with added rules.
   expect(workerPrompt.length).toBeLessThan(1010)
@@ -149,6 +150,7 @@ it('shows a trigger and a ticket as cards with a short preview and references to
   const batch = [{ ...trigger, id: 'request-2', text: 'Also the flaky one.' }]
   expect(ticketDetails(ticket, threads, batch)).toEqual({ ticket_id: 'ticket-1', title: 'Inspect failing check',
     state: 'person/review', strength: 'explicit', pr_number: 42, read: 'ticket/ticket-1', trigger_id: 'request-1', decision_id: 'd1',
+    deliverable: 'change',
     batch: [{ trigger_id: 'request-2', from: 'alice', at: trigger.at, preview: 'Also the flaky one.', read: 'trigger/request-2' }],
     threads, directory: '/worktrees/ticket-1', scope: mandate.scope, requested_by: 'alice', inputs: { items: [] },
     assignments: { items: [{ id: 'a1', state: 'running', at: '2026-09-09T00:00:00Z', report: { state: 'ready', at: '', preview: expect.stringMatching(/^The focused/),

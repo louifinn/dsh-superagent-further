@@ -50,9 +50,10 @@ export interface DeliveryUnit {
 export type AssessmentOutcome =
   | { kind: 'ignore'; reason: string | Reason; audit?: Record<string, unknown> }
   | { kind: 'unavailable'; reason: string | Reason; audit?: Record<string, unknown> }
-  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `project` the registered project whose checkout the work uses, `note` a routing note for its worker, and `deliverable` what the accepted Tickets owe (default `change`). */
+  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `project` the registered project whose checkout the work uses, `note` a routing note for its worker, `deliverable` what the accepted Tickets owe (default `change`), and `review_scope` a review's named subject. */
   | { kind: 'accept'; title: string; scope: string; reason: string | Reason; acknowledgement?: string; rules?: string[]; audit?: Record<string, unknown>;
-    name?: string; project?: string; note?: string; deliverables?: DeliveryUnit[]; deliverable?: TicketDeliverable }
+    name?: string; project?: string; note?: string; deliverables?: DeliveryUnit[]; deliverable?: TicketDeliverable;
+    review_scope?: { repository?: string; ref?: string; standard: string } }
   | { kind: 'stop'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
 
 /** Semantic judgement. `request` queues the assessment, idempotently per `evalId`; the outcome returns through `Engine.decide`. */
