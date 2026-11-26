@@ -7,6 +7,13 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 ## [Unreleased]
 
 ### Added
+- A built runtime manifest now records the package name and version, the git commit the bundle was built from and
+  whether that worktree was dirty, so a serving, staged or rolled-back runtime traces back to a revision even when a
+  version number is reused; `pnpm deploy stage` copies those fields and still stages a manifest written before them
+  (issue #42).
+- Before a drain the supervisor broadcasts `dsh-superagent-further/sources-stop`; the Feishu and GitHub plugins abort
+  the loops they own, and the Feishu consumer's child-stop, 45 s readiness timeout and stderr line handler each catch
+  their own failure, so a Source timer cannot reach a closing Store (issue #42, ADR-0007).
 - Project Leads relay messages between projects only through the Orchestrator (`lead_relay` → `orchestrator_relays` / `orchestrator_relay_forward`), and between workers of one project through the Lead (`lead_relay_worker`); every relay keeps the original text and is recorded as an `information` hop whose parent is the request it answers (issue #14).
 
 - High and critical incident conditions bypass the daily record budget, and a detection the budget refuses at or above

@@ -24,9 +24,12 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    `pnpm deploy stage`) takes a built package (`lib/runtime-entry.js` plus `lib/runtime-manifest.json`), verifies the
    manifest shape, version, host API, integer schema, entry name and SHA-256, and copies both files into
    `<stateDir>/runtime/<version>/` through a temporary directory and one atomic rename. The staged manifest adds
-   `builtAt` (the entry's modification time) and `node` (the staging interpreter). Staging the same bundle again is
-   idempotent; a different bundle under an already-staged version is refused. The build's own `lib/runtime-manifest.json`
-   is never rewritten.
+   `builtAt` (the entry's modification time) and `node` (the staging interpreter). The build's own descriptor also
+   records the package name and version, the git commit it was built from and whether that worktree was dirty, so a
+   running, staged or rolled-back runtime can be traced back to a revision even when a version number is reused; a
+   manifest written before that record (or by a build without a repository) still stages, with those fields absent.
+   Staging the same bundle again is idempotent; a different bundle under an already-staged version is refused. The
+   build's own `lib/runtime-manifest.json` is never rewritten.
 
 2. **The supervisor owns the swap; the operator only writes a request.** `apply` and `rollback` create one
    `{api:1, id, action:'apply'|'rollback', version?, at, by:'operator'}` file under `<stateDir>/updates/`
@@ -43,13 +46,14 @@ That leaves three questions: how a bundle arrives, who owns the swap, and what h
    - `backup` runs SQLite `VACUUM INTO <stateDir>/runtime/backups/<version>-<timestamp>.sqlite` while the old runtime
      still serves, bounded by a busy timeout; no database yet means the phase is skipped.
    - `drain` calls the old runtime handle's own `drain('update')` — the same contract and phases as shutdown — so intake
-     stops, in-flight work settles, and the Store closes. The supervisor keeps the lock; the runtime's lock phase is a
-     no-op because the supervisor has not set `releasing`. Source plugins are separate DSH plugin entries that outlive the
-     versioned runtime, so their watch loops keep ticking until the candidate is loaded; the Store therefore treats a
-     closing runtime as "no settings" rather than reading it, and every Source loop stops on that answer. A lookup that
-     threw after the Store closed landed in a timer callback and killed DSH (the 2026-11-12 host crash):
-     `SourceRegistry` is closed-aware, `sourceConfig` swallows a closed-runtime lookup, and the Feishu five-second check
-     never lets a timer callback throw.
+     stops, in-flight work settles, and the Store closes. Before it does, the supervisor broadcasts
+     `dsh-superagent-further/sources-stop`; each Source plugin listens and aborts the loops it owns, so their timers are
+     stopped by the drain rather than racing it. The broadcast is the primary guard; the closing Store is the fallback —
+     the Store treats a closing runtime as "no settings" rather than reading it, `SourceRegistry` is closed-aware,
+     `sourceConfig` swallows a closed-runtime lookup, and every Feishu consumer callback (the five-second check, the 45 s
+     readiness timeout, the child stop, and the stderr line handler) catches its own failure. Both guards exist because
+     a lookup that threw after the Store closed landed in a timer callback and killed DSH (the 2026-11-12 host crash).
+     The supervisor keeps the lock; the runtime's lock phase is a no-op because the supervisor has not set `releasing`.
    - `swap` writes `previous.json` (the old current, or the recorded previous when no current exists; only when that
      descriptor verifies inside the runtime directory, since the packaged descriptor is relative to the package and can
      never be a rollback target) and then `current.json` (the new descriptor), each through a mode-`0600` temporary file,

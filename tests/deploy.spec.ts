@@ -94,6 +94,22 @@ describe('stage-runtime', () => {
       deploy: { command: expect.stringContaining('deploy-runtime.mjs') } })
   })
 
+  it('records the revision a build came from, and still stages a build whose manifest predates that record (issue #42)', () => {
+    const entry = build({ version: '0.5.1' })
+    const commit = 'a'.repeat(40)
+    writeFileSync(join(source, 'lib', 'runtime-manifest.json'), JSON.stringify({ version: '0.5.1',
+      entry: 'runtime-entry.js', hostApi: HOST_API, schema: 25, sha256: sha256(entry),
+      package: 'dsh-superagent-further@0.5.1', commit, dirty: false }, null, 2))
+    expect(stageRuntime({ from: source, stateDir })).toMatchObject({ version: '0.5.1', commit, dirty: false,
+      package: 'dsh-superagent-further@0.5.1' })
+    expect(manifest('0.5.1')).toMatchObject({ commit, dirty: false, package: 'dsh-superagent-further@0.5.1' })
+    // A manifest written before that record (or by a probe without a repository) has no provenance and still stages.
+    build({ version: '0.5.2' })
+    expect(stageRuntime({ from: source, stateDir })).toMatchObject({ version: '0.5.2' })
+    expect(manifest('0.5.2').commit).toBeUndefined()
+  })
+
+
   it('is idempotent for the identical bundle and refuses a different bundle under the same version', () => {
     build({ version: '0.5.0' })
     stageRuntime({ from: source, stateDir })

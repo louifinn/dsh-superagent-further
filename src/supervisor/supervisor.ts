@@ -27,6 +27,7 @@ import { buildRuntimeHost, type BuiltHost } from './host.ts'
 import { Journal, type JournalRecovery, type JournalState } from './journal.ts'
 import { loadRuntime, packagedRuntime, type LoadedRuntime, type PackagedRuntime } from './loader.ts'
 import { UpdateEngine, type UpdateEnvironment } from './update.ts'
+import { SOURCES_STOP_EVENT } from '../sources/stop.ts'
 import {
   readUpdateHistory, recoverInterruptedRestore, removeDescriptorFile, restoreDatabase, shortReason, UPDATE_POLL_MS,
   updateBackupsDirectory, updateSnapshot, writeDescriptorFile, type UpdateHistoryEntry, type UpdateSnapshot,
@@ -156,6 +157,7 @@ export class Supervisor {
           detail: 'no runtime was running; the supervisor flushed the log sink and released the state-directory lock' }] }
     }
     this.drainer ??= this.makeDrainer()
+    await this.stopSources()
     return await this.drainer.drain(runtime, reason, signal)
   }
 
@@ -176,6 +178,7 @@ export class Supervisor {
     try {
       if (this.runtime !== undefined) {
         this.drainer ??= this.makeDrainer()
+        await this.stopSources()
         await this.drainer.drain(this.runtime, 'shutdown')
       }
     } catch (error) {
@@ -183,6 +186,16 @@ export class Supervisor {
     } finally {
       await this.flushLogs()
       await this.releaseLock()
+    }
+  }
+
+  /**
+   * Ask every Source plugin to abort its timers and polling loops before a drain closes the Store (issue #42). A listener
+   * that throws is logged, not propagated: the drain itself must still run.
+   */
+  private async stopSources(): Promise<void> {
+    try { await this.options.context.parallel(SOURCES_STOP_EVENT) } catch (error) {
+      this.log.warn('dsh-superagent-further could not stop the Source timers before draining: %s', String(error))
     }
   }
 
@@ -489,6 +502,7 @@ export class Supervisor {
         const runtime = this.runtime
         this.runtime = undefined
         if (runtime === undefined) throw new Error('no runtime is running to drain for the update')
+        await this.stopSources()
         const report = await runtime.drain(reason)
         await this.flushLogs()
         return report

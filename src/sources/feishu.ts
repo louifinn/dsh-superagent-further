@@ -9,6 +9,7 @@ import { runFeishuDigest } from './feishu-digest.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
 import { SOURCE, feishuTriggerId } from './feishu-trigger.ts'
 import { sourceContext } from './host.ts'
+import { SOURCES_STOP_EVENT } from './stop.ts'
 import type { Localized, SourceKind } from './kind.ts'
 import type { SourceRegistry } from './registry.ts'
 
@@ -141,14 +142,19 @@ export const name = 'dsh-superagent-further-feishu'
 export const inject = ['orchestrator']
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.orchestrator.sources.register(feishuKind), 'feishu: source kind')
+  // The supervisor asks all Source plugins to stop their timers before the runtime drains its Store (issue #42).
+  const controllers = new Set<AbortController>()
+  ctx.on(SOURCES_STOP_EVENT, () => { for (const controller of controllers) controller.abort() })
   ctx.effect(() => {
     const controller = new AbortController()
+    controllers.add(controller)
     const running = runFeishu(sourceContext(ctx.orchestrator, feishuKind), controller.signal)
-    return async () => { controller.abort(); await running }
+    return async () => { controllers.delete(controller); controller.abort(); await running }
   })
   ctx.effect(() => {
     const controller = new AbortController()
+    controllers.add(controller)
     const running = runFeishuDigest(sourceContext(ctx.orchestrator, feishuKind), controller.signal)
-    return async () => { controller.abort(); await running }
+    return async () => { controllers.delete(controller); controller.abort(); await running }
   })
 }

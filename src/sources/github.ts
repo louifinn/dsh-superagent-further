@@ -12,6 +12,7 @@ import { setGithubLabels } from './github-labels.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
 import { observePull, readPull, type Pull } from './github-pull.ts'
 import { health, sourceConfig, sourceContext, type Health, type SourceContext } from './host.ts'
+import { SOURCES_STOP_EVENT } from './stop.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, lagged, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
 import type { Localized, SourceKind } from './kind.ts'
@@ -128,13 +129,17 @@ export const name = 'dsh-superagent-further-github'
 export const inject = ['orchestrator']
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.orchestrator.sources.register(githubKind), 'github: source kind')
+  // The supervisor asks all Source plugins to stop their timers before the runtime drains its Store (issue #42).
+  const controllers = new Set<AbortController>()
+  ctx.on(SOURCES_STOP_EVENT, () => { for (const controller of controllers) controller.abort() })
   ctx.effect(() => {
     const source = sourceContext(ctx.orchestrator, githubKind)
     const controller = new AbortController()
+    controllers.add(controller)
     // Unhandled rejections terminate the DSH process, so a failure escaping the polling loop is reported as source health instead.
     const running = watch(source, controller.signal)
       .catch((error: unknown) => { source.report('github', { state: 'error', detail: String(error) }) })
-    return async () => { controller.abort(); await running }
+    return async () => { controllers.delete(controller); controller.abort(); await running }
   })
 }
 /** Returns an error health once `failures` consecutive polls fail, or undefined so a single network interruption stays quiet. */

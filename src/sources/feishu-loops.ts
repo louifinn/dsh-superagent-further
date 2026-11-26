@@ -84,24 +84,32 @@ async function consume(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   /** Record a consumer failure that must outlive a later `[event] ready` line, which can arrive on the other pipe. */
   const fail = (detail: string): void => {
     failed = true
-    ctx.report('feishu', { state: 'error', detail })
+    try { ctx.report('feishu', { state: 'error', detail }) } catch { /* the runtime may be closing; a consumer failure must not throw */ }
   }
   const stop = (): void => {
-    child.stdin.end()
-    // Ending a wrapping `cmd.exe` leaves the batch file's own process running, so end the tree; elsewhere a signal suffices.
-    if (verbatim && child.pid !== undefined) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
-    child.kill('SIGTERM')
+    // Every step here reaches a process or stream that may already be gone; a timer callback must never throw (issue #42).
+    try { child.stdin.end() } catch { /* already closed */ }
+    try {
+      // Ending a wrapping `cmd.exe` leaves the batch file's own process running, so end the tree; elsewhere a signal suffices.
+      if (verbatim && child.pid !== undefined) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+      child.kill('SIGTERM')
+    } catch { /* already exited */ }
   }
   signal.addEventListener('abort', stop, { once: true })
-  const timeout = setTimeout(() => { diagnostic = 'Feishu event consumer did not become ready within 45 seconds'; stop() }, 45_000)
+  const timeout = setTimeout(() => {
+    diagnostic = 'Feishu event consumer did not become ready within 45 seconds'
+    try { stop() } catch { /* the consumer is already gone */ }
+  }, 45_000)
   stderr.on('line', (line: string) => {
-    diagnostic = line.slice(0, 4000)
-    if (line.startsWith('[event] ready')) {
-      ready = true; clearTimeout(timeout)
-      // The ready line arrives on stderr and events on stdout, so a malformed event can be read first; a reported failure
-      // stays until the consumer restarts instead of being erased by the startup line.
-      if (!failed) ctx.report('feishu', { state: 'ready', detail: 'Listening for bot events', at: new Date().toISOString() })
-    } else if (/WARN|drop|error/.test(line)) fail(diagnostic)
+    try {
+      diagnostic = line.slice(0, 4000)
+      if (line.startsWith('[event] ready')) {
+        ready = true; clearTimeout(timeout)
+        // The ready line arrives on stderr and events on stdout, so a malformed event can be read first; a reported failure
+        // stays until the consumer restarts instead of being erased by the startup line.
+        if (!failed) ctx.report('feishu', { state: 'ready', detail: 'Listening for bot events', at: new Date().toISOString() })
+      } else if (/WARN|drop|error/.test(line)) fail(diagnostic)
+    } catch { failed = true }
   })
   stdout.on('line', (line: string) => {
     chain = chain.then(async () => {
@@ -239,6 +247,8 @@ export async function pollThreads(ctx: SourceContext, signal?: AbortSignal, tall
   await pollEach(ctx, SOURCE, () => !!signal?.aborted, thread => pollThread(ctx, thread, signal, tally))
 }
 async function pollThread(ctx: SourceContext, thread: Thread, signal?: AbortSignal, tally?: Tally): Promise<void> {
+  // A Source stop asked these loops to end; the Store may be closing, so do not read it again (issue #42).
+  if (signal?.aborted) return
   const ref = threadRef(ctx, thread)
   if (!ref) throw new Error('Subscribed thread has no retained source message')
   const config = enabled(ctx)

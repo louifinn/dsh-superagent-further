@@ -54,8 +54,20 @@ export function inspectBuild(from) {
   if (typeof recorded !== 'string' || !HASH.test(recorded)) throw new Error('the built runtime manifest has no sha256')
   const actual = sha256(entryPath)
   if (actual !== recorded) throw new Error(`the built runtime entry has hash ${actual}, but its manifest records ${recorded}; rebuild before staging`)
+  // Provenance is optional so a manifest written by an older build still stages, but a present field must be well-typed (#42).
+  const bundlePackage = manifest.package
+  if (bundlePackage !== undefined && (typeof bundlePackage !== 'string' || bundlePackage.length > 160)) throw new Error('the built runtime manifest has an invalid package')
+  const commit = manifest.commit
+  if (commit !== undefined && (typeof commit !== 'string' || commit.length > 80)) throw new Error('the built runtime manifest has an invalid commit')
+  const dirty = manifest.dirty
+  if (dirty !== undefined && typeof dirty !== 'boolean') throw new Error('the built runtime manifest has an invalid dirty flag')
+  const provenance = {
+    ...(bundlePackage === undefined ? {} : { package: bundlePackage }),
+    ...(commit === undefined ? {} : { commit }),
+    ...(dirty === undefined ? {} : { dirty }),
+  }
   const builtAt = statSync(entryPath).mtime.toISOString()
-  return { root, entryPath, manifest, descriptor: { version, entry, hostApi, schema, sha256: actual, builtAt, node: process.version } }
+  return { root, entryPath, manifest, descriptor: { version, entry, hostApi, schema, sha256: actual, ...provenance, builtAt, node: process.version } }
 }
 
 /** Stage one build; returns the descriptor that was recorded in `<stateDir>/runtime/<version>/runtime-manifest.json`. */

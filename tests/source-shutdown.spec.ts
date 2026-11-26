@@ -4,6 +4,9 @@ import { SettingsSchema } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import type { SourceKind } from '../src/sources/kind.ts'
 import { HealthBoard } from '../src/infra/health.ts'
+import { apply as applyFeishu } from '../src/sources/feishu.ts'
+import { apply as applyGithub } from '../src/sources/github.ts'
+import { SOURCES_STOP_EVENT } from '../src/sources/stop.ts'
 
 const probe: SourceKind<{ interval: number }> = {
   kind: 'probe', title: { zh: '探针', en: 'Probe' }, description: { zh: '', en: '' }, health: [],
@@ -54,3 +57,31 @@ describe('Source registry while the runtime closes', () => {
     expect(() => sources.declarations()).not.toThrow()
   })
 })
+
+/**
+ * The 2026-11-12 post-mortem (issue #42): the drain that closed the Store was started by the supervisor, which has no
+ * handle on the sibling Source plugin entries. It therefore asks them to stop through one broadcast, and both Source
+ * plugins must listen and abort the loops they own before the Store closes.
+ */
+describe('Source plugins stop on the supervisor\'s broadcast', () => {
+  /** A context that records listeners and effects without running either, so no polling loop starts in this test. */
+  function recorder(): { listeners: (() => void)[]; ctx: unknown } {
+    const listeners: (() => void)[] = []
+    const ctx = {
+      effect: () => () => {},
+      on: (name: string, listener: () => void) => { if (name === SOURCES_STOP_EVENT) listeners.push(listener); return () => {} },
+    }
+    return { listeners, ctx }
+  }
+
+  it('registers one stop listener per Source plugin, and firing it is safe before any loop owns a controller', () => {
+    const feishu = recorder()
+    const github = recorder()
+    applyFeishu(feishu.ctx as never)
+    applyGithub(github.ctx as never)
+    expect(feishu.listeners).toHaveLength(1)
+    expect(github.listeners).toHaveLength(1)
+    for (const listener of [...feishu.listeners, ...github.listeners]) expect(() => listener()).not.toThrow()
+  })
+})
+

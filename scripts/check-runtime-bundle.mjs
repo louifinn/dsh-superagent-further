@@ -8,6 +8,7 @@
 // `node_modules/@deepseek-ai` beside it: every import must be a Node builtin, and all other code must be bundled in. The
 // module must export the host API this package implements, `createRuntime`, and the database schema it understands; the
 // descriptor records those, the entry name, and the entry's SHA-256, which the loader verifies before importing.
+import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -20,6 +21,24 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 
 const HOST_API = 1
 const MAX_BYTES = 8 * 1024 * 1024
 const update = process.argv.includes('--write')
+
+/**
+ * Where this build came from: the package identity and the git commit and dirty state, so a runtime that is serving or
+ * staged can be traced back to a revision (issue #42). Probing git may fail (a packaged build without a repository), so
+ * unknown values are recorded instead of failing the build.
+ */
+function provenance() {
+  const probe = command => {
+    try { return execSync(command, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return undefined }
+  }
+  const commit = probe('git rev-parse HEAD')
+  const status = probe('git status --porcelain')
+  return {
+    package: `${packageJson.name}@${packageJson.version}`,
+    commit: commit === undefined || commit === '' ? 'unknown' : commit,
+    dirty: status === undefined ? 'unknown' : status !== '',
+  }
+}
 
 if (!fs.existsSync(entryPath)) {
   console.error(`runtime bundle check failed: ${path.relative(root, entryPath)} is missing; run pnpm build first`)
@@ -58,15 +77,15 @@ if (module !== undefined) {
 }
 
 const sha256 = createHash('sha256').update(fs.readFileSync(entryPath)).digest('hex')
-const descriptor = { version: packageJson.version, entry: 'runtime-entry.js', hostApi: HOST_API, schema: module?.SCHEMA_VERSION, sha256 }
+const descriptor = { version: packageJson.version, entry: 'runtime-entry.js', hostApi: HOST_API, schema: module?.SCHEMA_VERSION, sha256, ...provenance() }
 if (update) {
   fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`)
-  console.log(`runtime bundle check: wrote ${path.relative(root, descriptorPath)} (${bytes} bytes, sha256 ${sha256.slice(0, 12)}…)`)
+  console.log(`runtime bundle check: wrote ${path.relative(root, descriptorPath)} (${bytes} bytes, sha256 ${sha256.slice(0, 12)}…, commit ${String(descriptor.commit).slice(0, 12)}${descriptor.dirty === true ? ' dirty' : ''})`)
 } else if (!fs.existsSync(descriptorPath)) {
   problems.push(`${path.relative(root, descriptorPath)} is missing; run pnpm build`)
 } else {
   const stored = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'))
-  for (const key of ['version', 'entry', 'hostApi', 'schema', 'sha256']) {
+  for (const key of ['version', 'entry', 'hostApi', 'schema', 'sha256', 'package', 'commit', 'dirty']) {
     if (JSON.stringify(stored[key]) !== JSON.stringify(descriptor[key])) {
       problems.push(`the descriptor's ${key} is ${JSON.stringify(stored[key])}, expected ${JSON.stringify(descriptor[key])}`)
     }
