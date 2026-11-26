@@ -510,6 +510,8 @@ export class Runtime implements SourceHost, RuntimeHandle {
         projects: () => store.settings().executor.projects,
         label: (triggerId, change) => this.label(triggerId, change),
         sendFile: request => this.sendFile(request),
+        relays: () => this.sessions.pendingRelays(),
+        relayForward: (relayId, project) => this.sessions.relayForward(relayId, project),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       // The `session` Source and its global tool: an independent DSH Session submits through the ordinary intake, and

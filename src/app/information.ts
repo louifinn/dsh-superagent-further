@@ -77,6 +77,17 @@ export class Information {
   count(): number {
     return (this.db.prepare('SELECT COUNT(*) AS count FROM information').get() as unknown as { count: number }).count
   }
+  /**
+   * Cross-project relay requests (issue #14) whose target is the Orchestrator and which no forward record answers yet, oldest
+   * first: the Orchestrator's relay inbox.
+   */
+  pendingRelays(): InfoRecord[] {
+    return this.db.prepare(`SELECT i.id, i.value FROM information i
+      WHERE json_extract(i.value, '$.kind') = 'relay' AND json_extract(i.value, '$.target.role') = 'orchestrator'
+        AND NOT EXISTS (SELECT 1 FROM information child WHERE json_extract(child.value, '$.parent') = i.id)
+      ORDER BY i.created_at, i.rowid`).all()
+      .map(row => this.parse(row as unknown as Row)!)
+  }
   /** Mirrors that the target's Session took the message; a later delivery is a no-op. */
   markDelivered(id: string, at = new Date().toISOString()): void {
     this.update(id, record => record.deliveredAt === undefined ? { ...record, deliveredAt: at } : record)

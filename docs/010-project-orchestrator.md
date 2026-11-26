@@ -575,3 +575,7 @@ The operator answered these on 2026-11-08, taking the proposed defaults:
    single final result that lists them, and the single done state.
 8. Only the Orchestrator creates Tickets; a Lead asks or hands back and never adds one. The
    within-project segment fan-out stays deferred until a measured latency need.
+
+## Cross-project relays
+
+The Lead is the boundary between a project and the rest of the installation (issue #14). A Lead that needs to deliver a finding, a decision or a question to another project calls `lead_relay`; the request is recorded on the Orchestrator side and the Orchestrator alone forwards it to the target Lead with `orchestrator_relay_forward`, so no project messages a sibling directly. Inside one project the same rule holds for workers: `lead_relay_worker` carries a message from one Ticket's worker to another through their Lead. Relays preserve the original text, name their source and are ordinary `information` records, so the Orchestrator's read path and the panel can audit every hop.

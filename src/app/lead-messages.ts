@@ -13,9 +13,9 @@ import { z } from 'zod'
 import { Information, factParentDedupe, informationOf } from './information.ts'
 
 /** Who a record is from or to: the Orchestrator, a project's Lead, its Executor, or a person. */
-export type LeadParty = 'orchestrator' | 'lead' | 'executor' | 'person'
+export type LeadParty = 'orchestrator' | 'lead' | 'executor' | 'worker' | 'person'
 /** What a record carries: work to start, a fact to release, a settled report, a question, or a notice. */
-export type LeadMessageKind = 'assignment' | 'fact' | 'report' | 'question' | 'notice' | 'instruction'
+export type LeadMessageKind = 'assignment' | 'fact' | 'report' | 'question' | 'notice' | 'instruction' | 'relay'
 /** A durable message between the Orchestrator and a project's Lead. */
 export interface LeadMessage {
   id: string
@@ -57,8 +57,8 @@ export const factOfRequest = (requestId: string): { assignmentId: string; inputI
 /** The fields a sender supplies; the Store stamps `id` and `at`. */
 export type LeadMessageInput = Omit<LeadMessage, 'id' | 'at' | 'deliveredAt' | 'ackAt'>
 
-const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'fact', 'report', 'question', 'notice', 'instruction']),
-  from: z.enum(['orchestrator', 'lead', 'executor', 'person']), to: z.enum(['orchestrator', 'lead', 'executor', 'person']), requestId: z.string(),
+const LeadMessageSchema = z.object({ id: z.string(), project: z.string(), kind: z.enum(['assignment', 'fact', 'report', 'question', 'notice', 'instruction', 'relay']),
+  from: z.enum(['orchestrator', 'lead', 'executor', 'worker', 'person']), to: z.enum(['orchestrator', 'lead', 'executor', 'worker', 'person']), requestId: z.string(),
   ticketId: z.string().optional(), body: z.string(), at: z.string(), deliveredAt: z.string().optional(), ackAt: z.string().optional() }).strict()
 
 /** The row shape the `lead_message` table stores: a JSON record plus the columns reads and uniqueness use. */
@@ -74,14 +74,14 @@ export class LeadMessages {
     return row === undefined ? undefined : LeadMessageSchema.parse(JSON.parse(row.value))
   }
   /** Stores `input` unless the same recipient already has a message with its `requestId`, and returns the stored record. */
-  send(input: LeadMessageInput, at = new Date().toISOString()): LeadMessage {
+  send(input: LeadMessageInput, at = new Date().toISOString(), parentDedupe?: string): LeadMessage {
     const existing = this.getByRequest(input.to, input.requestId)
     if (existing) return existing
     const message: LeadMessage = { ...input, id: randomUUID(), at }
     // The authoritative record is written before the message: a lost delivery still leaves one source of the fact
     // (docs/016 P1, issue #13), and a redelivery of the same request finds it by its dedupe key.
     if (this.information) {
-      const request = factParentDedupe(message)
+      const request = parentDedupe ?? factParentDedupe(message)
       const parent = request === undefined ? undefined : this.information.byDedupe(request)
       this.information.send(informationOf(message, parent), at)
     }

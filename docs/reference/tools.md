@@ -1552,6 +1552,53 @@ Parameters:
 }
 ```
 
+### `orchestrator_relays`
+
+List the cross-project relay requests a project Lead handed to you that are not forwarded yet (issue #14). Each names the project it came from, the project it is for and the original text.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+### `orchestrator_relay_forward`
+
+Forward one pending cross-project relay, by relay_id, to the project it names (issue #14). The target project Lead receives the original text with its source; you cannot edit or redirect it.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "relay_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The id from orchestrator_relays."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The target project id the relay names."
+    }
+  },
+  "required": [
+    "relay_id",
+    "project"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## Executor Session
 
 ### `orchestrator_read`
@@ -2595,6 +2642,83 @@ Parameters:
 }
 ```
 
+### `lead_relay`
+
+Relay a message to another registered project's Lead through the Orchestrator (issue #14). You may not message a sibling project directly: the Orchestrator receives the request with the original text and forwards it. Use it to pass a finding, a decision or a question another project needs, not to run that project's work.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "to_project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The registered project id whose Lead should receive the relay."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The message, in the language of the work; the text is preserved."
+    },
+    "ticket_id": {
+      "description": "The Ticket of this project the relay comes from, if any.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "to_project",
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
+### `lead_relay_worker`
+
+Relay a message from one Ticket's worker to another Ticket's worker in this project (issue #14): worker A → you → worker B. Both Tickets must be live and of this project; the original text reaches the target worker, and this Lead is the required hop.
+
+Parameters:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "from_ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The Ticket the message comes from."
+    },
+    "to_ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "The Ticket whose worker should receive the relay."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The message, in the language of the work; the text is preserved."
+    }
+  },
+  "required": [
+    "from_ticket_id",
+    "to_ticket_id",
+    "text"
+  ],
+  "additionalProperties": false
+}
+```
+
 ## The Host schedule service is installed
 
 ### `automation_create`
@@ -2920,4 +3044,4 @@ Parameters:
 
 ## Total
 
-57 distinct tools across 5 groups (64 registrations).
+61 distinct tools across 5 groups (68 registrations).

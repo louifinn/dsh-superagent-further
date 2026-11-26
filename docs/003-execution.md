@@ -273,3 +273,7 @@ An Eval in progress does not expire during a pause; its deadline moves later by 
 ### Invalid configuration
 
 A stored Source configuration that its kind rejects disables that Source instance.
+
+## Relays between roles
+
+A message that has to reach a sibling project or a sibling worker is relayed, never sent directly: a project Lead calls `lead_relay`, the Orchestrator lists the pending request with `orchestrator_relays` and forwards it with `orchestrator_relay_forward` (source Lead → Orchestrator → target Lead), and `lead_relay_worker` moves a message between two Tickets of one project through that project's Lead. Each hop is an `information` record whose parent is the request it answers, so the original text and its path stay auditable (issue #14).

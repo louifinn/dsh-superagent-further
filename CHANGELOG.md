@@ -7,6 +7,7 @@ the settings schema and the state database; the upgrade steps in `docs/006-deplo
 ## [Unreleased]
 
 ### Added
+- Project Leads relay messages between projects only through the Orchestrator (`lead_relay` → `orchestrator_relays` / `orchestrator_relay_forward`), and between workers of one project through the Lead (`lead_relay_worker`); every relay keeps the original text and is recorded as an `information` hop whose parent is the request it answers (issue #14).
 
 - High and critical incident conditions bypass the daily record budget, and a detection the budget refuses at or above
   the operator's alert threshold is held in `incident_notification` and retried through the alert chat by the watchdog

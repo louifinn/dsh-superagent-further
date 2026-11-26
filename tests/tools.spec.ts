@@ -95,6 +95,36 @@ it('refuses a request that names both an automation and via discovery, or neithe
     deliverables: [{ project: 'default' }] })).rejects.toThrow(/exactly one/)
 })
 
+it('relays messages across projects only through the Orchestrator, and inside a project through its Lead (issue #14)', async () => {
+  const settings = h.runtime.store.settings()
+  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, projects: [...settings.executor.projects,
+    { id: 'lib', name: 'Lib', workspace: join(h.directory, 'lib'), repository: 'acme/lib', branch: '' }] } })
+  await h.runtime.sessions.ensureLead('default', join(h.directory, 'default'), 'Lead · Default')
+  await h.runtime.sessions.ensureLead('lib', join(h.directory, 'lib'), 'Lead · Lib')
+  // A Lead cannot message a sibling project directly, nor name its own project as cross-project.
+  await expect(h.runTool('lead-default', 'lead_relay', { to_project: 'default', text: 'hello' })).rejects.toThrow(/another project/)
+  await expect(h.runTool('lead-default', 'lead_relay', { to_project: 'missing', text: 'hello' })).rejects.toThrow(/Unknown project/)
+  const relayed = await h.runTool('lead-default', 'lead_relay', { to_project: 'lib', text: 'Original text from A' })
+  expect(relayed.relayed).toBe(true)
+  const inbox = await h.runTool(h.runtime.masterId, 'orchestrator_relays', {}) as { relays: { id: string }[] }
+  expect(inbox.relays).toHaveLength(1)
+  expect(inbox.relays[0]).toMatchObject({ project: 'default', to_project: 'lib', text: 'Original text from A' })
+  // The Orchestrator cannot redirect the relay to a project other than the one it names.
+  await expect(h.runTool(h.runtime.masterId, 'orchestrator_relay_forward', { relay_id: inbox.relays[0]!.id, project: 'default' }))
+    .rejects.toThrow(/names project lib/)
+  const forwarded = await h.runTool(h.runtime.masterId, 'orchestrator_relay_forward', { relay_id: inbox.relays[0]!.id, project: 'lib' })
+  expect(forwarded.forwarded).toBe(true)
+  const targetMessages = h.runtime.store.leads.list('lib')
+  expect(targetMessages.some(message => message.kind === 'relay' && String(message.body).includes('Original text from A'))).toBe(true)
+  const records = h.runtime.store.information.all().filter(record => record.kind === 'relay')
+  expect(records).toHaveLength(2)
+  const source = records.find(record => record.source.role === 'lead')!
+  const forward = records.find(record => record.source.role === 'orchestrator')!
+  expect(forward.parent).toBe(source.id)
+  expect(forward.hops).toBe(1)
+  expect(forward.root).toBe(source.root)
+  expect(((await h.runTool(h.runtime.masterId, 'orchestrator_relays', {})) as { relays: unknown[] }).relays).toEqual([])
+})
 it('reads the lists, a ticket, a decision, the settings, the prompts and the models as resources', async () => {
   const { ticket, trigger } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   await h.acceptedTicket(feishu('2', '@bot 再修一个'))

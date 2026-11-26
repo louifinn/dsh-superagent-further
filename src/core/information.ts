@@ -11,7 +11,7 @@
 /** The roles a record can travel between; the Executor is the worker of a Ticket. */
 export type InformationRole = 'orchestrator' | 'lead' | 'worker' | 'reviewer' | 'person'
 /** The kind of fact a record carries, mirroring the durable messages between roles. */
-export type InformationKind = 'assignment' | 'fact' | 'report' | 'question' | 'notice' | 'instruction'
+export type InformationKind = 'assignment' | 'fact' | 'report' | 'question' | 'notice' | 'instruction' | 'relay'
 /** The direction a record travels through the role tree. */
 export type InformationDirection = 'down' | 'up' | 'in'
 /** One end of a record: a role, and the project when the role is project-scoped. */

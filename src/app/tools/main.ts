@@ -23,6 +23,7 @@ import type { SelfReports } from '../self-reports.ts'
 import { requireIncident, type Incidents } from '../incidents.ts'
 import type { Diagnosis } from '../diagnosis.ts'
 import { INCIDENT_SEVERITY_FILTERS, INCIDENT_STATUS_FILTERS } from '../api.ts'
+import type { InfoRecord } from '../../core/information.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -52,6 +53,10 @@ export interface MainToolsHost {
   /** Delivers one file from a project workspace to a chat through the Source kind that supports file messages. */
   sendFile(request: { triggerId?: string; chatId?: string; project: string; path: string }):
   Promise<{ source: string; chatId: string; messageId: string | null }>
+  /** The cross-project relay requests a project Lead handed to the Orchestrator and not forwarded yet (issue #14). */
+  relays(): readonly InfoRecord[]
+  /** Forwards one pending cross-project relay to the project it names (issue #14). */
+  relayForward(relayId: string, project: string): Promise<{ forwarded: true; request_id: string }>
   /** Schedules a pass to carry out work queued by an Engine command (such as an Eval or ticket resume). */
   requestPass(): void
   sendReplies(): Promise<void>
@@ -564,6 +569,28 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         const { context_delivery: _delivery, ...saved } = await savePrompts(host, args.config, args.baseRevision, 'tool')
         return saved
       },
+    }), tool({
+      name: 'orchestrator_relays',
+      description: 'List the cross-project relay requests a project Lead handed to you that are not forwarded yet (issue #14). '
+        + 'Each names the project it came from, the project it is for and the original text.',
+      schema: z.object({}).strict(),
+      execute: async () => ({ relays: host.relays().map(record => {
+        const payload = record.payload as { body?: string; project?: string; ticketId?: string }
+        let held: { to?: string; text?: string } = {}
+        try { held = JSON.parse(payload.body ?? '{}') as { to?: string; text?: string } } catch { held = {} }
+        return { id: record.id, project: payload.project ?? record.source.project ?? null, to_project: held.to ?? null,
+          ticket_id: payload.ticketId ?? null, text: held.text ?? '', created_at: record.createdAt,
+          delivered_at: record.deliveredAt ?? null, acked_at: record.ackAt ?? null }
+      }) }),
+    }), tool({
+      name: 'orchestrator_relay_forward',
+      description: 'Forward one pending cross-project relay, by relay_id, to the project it names (issue #14). The target '
+        + 'project Lead receives the original text with its source; you cannot edit or redirect it.',
+      schema: z.object({
+        relay_id: z.string().trim().min(1).max(200).describe('The id from orchestrator_relays.'),
+        project: z.string().trim().min(1).max(200).describe('The target project id the relay names.'),
+      }).strict(),
+      execute: async ({ relay_id, project }: { relay_id: string; project: string }) => host.relayForward(relay_id, project),
     }),
   ]
 }

@@ -54,6 +54,10 @@ export interface LeadToolsHost {
   notify(session: string, text: string): Promise<{ delivered: true }>
   /** Relays a worker report this Lead reviewed upward to the Orchestrator (worker → Lead → Orchestrator). */
   report(reportId: string, note?: string): { reported: true }
+  /** Relays a message to another project's Lead through the Orchestrator (issue #14). */
+  relay(input: { to: string; text: string; ticket_id?: string }): Promise<{ relayed: true; request_id: string }>
+  /** Relays a message to another Ticket's worker in this project (issue #14). */
+  relayWorker(input: { from: string; to: string; text: string }): Promise<{ relayed: true; request_id: string }>
   /** The Engine's ticket commands; the runtime binds them once its composition is complete (ADR-0008). */
   readonly tickets?: LeadTicketHost
 }
@@ -508,5 +512,29 @@ export function leadTools(host: LeadToolsHost, project: Project): Tool[] {
       note: z.string().trim().min(1).max(2_000).optional().describe('Your review: what you checked and what the Orchestrator should know.'),
     }).strict(),
     execute: async ({ report_id, note }: { report_id: string; note?: string }) => host.report(report_id, note),
+  }), tool({
+    name: 'lead_relay',
+    description: 'Relay a message to another registered project\'s Lead through the Orchestrator (issue #14). You may not message '
+      + 'a sibling project directly: the Orchestrator receives the request with the original text and forwards it. Use it to pass '
+      + 'a finding, a decision or a question another project needs, not to run that project\'s work.',
+    schema: z.object({
+      to_project: z.string().trim().min(1).max(200).describe('The registered project id whose Lead should receive the relay.'),
+      text: z.string().trim().min(1).max(4_000).describe('The message, in the language of the work; the text is preserved.'),
+      ticket_id: z.string().trim().min(1).max(200).optional().describe('The Ticket of this project the relay comes from, if any.'),
+    }).strict(),
+    execute: async ({ to_project, text, ticket_id }: { to_project: string; text: string; ticket_id?: string }) =>
+      host.relay({ to: to_project, text, ticket_id }),
+  }), tool({
+    name: 'lead_relay_worker',
+    description: 'Relay a message from one Ticket\'s worker to another Ticket\'s worker in this project (issue #14): worker A → you → '
+      + 'worker B. Both Tickets must be live and of this project; the original text reaches the target worker, and this Lead is the '
+      + 'required hop.',
+    schema: z.object({
+      from_ticket_id: z.string().trim().min(1).max(200).describe('The Ticket the message comes from.'),
+      to_ticket_id: z.string().trim().min(1).max(200).describe('The Ticket whose worker should receive the relay.'),
+      text: z.string().trim().min(1).max(4_000).describe('The message, in the language of the work; the text is preserved.'),
+    }).strict(),
+    execute: async ({ from_ticket_id, to_ticket_id, text }: { from_ticket_id: string; to_ticket_id: string; text: string }) =>
+      host.relayWorker({ from: from_ticket_id, to: to_ticket_id, text }),
   })]
 }

@@ -1252,6 +1252,43 @@
     }
   },
   {
+    "name": "orchestrator_relays",
+    "description": "List the cross-project relay requests a project Lead handed to you that are not forwarded yet (issue #14). Each names the project it came from, the project it is for and the original text.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "orchestrator_relay_forward",
+    "description": "Forward one pending cross-project relay, by relay_id, to the project it names (issue #14). The target project Lead receives the original text with its source; you cannot edit or redirect it.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "relay_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The id from orchestrator_relays."
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The target project id the relay names."
+        }
+      },
+      "required": [
+        "relay_id",
+        "project"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "memory_write",
     "description": "Remember a fact, decision, preference or lesson that a later Session should know without rediscovering it. Store the durable content, not the conversation around it; write the same content twice and one memory is kept.",
     "parameters": {

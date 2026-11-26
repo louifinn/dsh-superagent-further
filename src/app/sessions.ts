@@ -5,9 +5,10 @@ import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { canComplete, key, liveTicket, UserError, type Ticket } from '../core/index.ts'
-import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
+import { mandateInstructions, ticketOfSession, workerSessionId } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import { agentRole, type AgentErrorInput, type AgentErrorRecord } from './agent-errors.ts'
@@ -21,6 +22,7 @@ import { composeSurfacePrompt, SKILL_PREFIX, type PromptVersion, type Prompts } 
 import { LeadDispatch, type LeadEngine } from './lead-dispatch.ts'
 import { leadReportRelay } from './notices.ts'
 import { leadTools } from './tools/lead.ts'
+import type { InfoRecord } from '../core/information.ts'
 import { readTool } from './tools/tool.ts'
 import { languageContext } from './language.ts'
 import { AUTOMATION_CONTEXT, AUTOMATION_CONTEXT_ORDER, type Automations } from './automations.ts'
@@ -41,7 +43,7 @@ export interface SessionsHost {
   readonly context: Context
   /** The DSH value exports this part uses: scope identity, message IDs, and the message freezer. */
   readonly values: RuntimeHostValues
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys' | 'leads' | 'memories' | 'projectRequests' | 'information'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
@@ -549,6 +551,8 @@ export class Sessions {
     const tools = project ? [...leadTools({ store: host.store, lead: this.lead, session: agent.session.id,
       notify: (session, text) => this.notifyWorker(project.id, session, text),
       report: (reportId: string, note?: string) => this.reportUpward(project.id, reportId, note),
+      relay: (input: { to: string; text: string; ticket_id?: string }) => this.relayAcross(project, input),
+      relayWorker: (input: { from: string; to: string; text: string }) => this.relayWorker(project, input),
       ...tickets === undefined ? {} : { tickets } }, project), readTool('Read one page of a resource of this project that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
       SURFACES.lead.reads, (resource, offset, limit, signal) => host.readProject === undefined
         ? Promise.reject(new Error('This installation has no project-scoped read path'))
@@ -585,6 +589,63 @@ export class Sessions {
     if (!ticket || ticket.project !== project) throw new UserError('unknownWorkerSession')
     await this.prompt(sessionId, key('lead-notify', sessionId, text), text, 'queue')
     return { delivered: true }
+  }
+  /**
+   * Relays a project Lead's message to another registered project's Lead through the Orchestrator (issue #14). The durable
+   * request is recorded here, on the Orchestrator side, so a project never messages a sibling project directly; the
+   * Orchestrator lists it (`orchestrator_relays`) and forwards it with `orchestrator_relay_forward`.
+   */
+  async relayAcross(project: Project, input: { to: string; text: string; ticket_id?: string }): Promise<{ relayed: true; request_id: string }> {
+    const target = this.host.store.settings().executor.projects.find(item => item.id === input.to)
+    if (!target) throw new Error(`Unknown project ${input.to}`)
+    if (target.id === project.id) throw new Error('A cross-project relay names another project; relay inside this project with lead_relay_worker')
+    const requestId = `lead-relay:${randomUUID()}`
+    this.host.store.leads.send({ project: project.id, kind: 'relay', from: 'lead', to: 'orchestrator', requestId,
+      ticketId: input.ticket_id, body: JSON.stringify({ to: target.id, text: input.text }) })
+    this.relay(`lead-relay-notice:${requestId}`, `Relay requested from project ${project.id} to project ${target.id}:\n\n${input.text}`)
+    return { relayed: true, request_id: requestId }
+  }
+  /** The cross-project relay requests a project Lead handed to the Orchestrator that are not forwarded yet (issue #14). */
+  pendingRelays(): InfoRecord[] { return this.host.store.information.pendingRelays() }
+  /**
+   * Forwards one pending cross-project relay to the Lead of the project it names (issue #14): the third hop of
+   * Lead → Orchestrator → Lead. The forwarded record's parent is the pending request, so the original text reaches the
+   * target Lead with its source intact and the three-hop path stays auditable.
+   */
+  async relayForward(relayId: string, projectId: string): Promise<{ forwarded: true; request_id: string }> {
+    const record = this.host.store.information.pendingRelays().find(item => item.id === relayId)
+    if (!record) throw new Error(`No pending relay ${relayId} waits for the Orchestrator`)
+    const payload = record.payload as { body?: string; project?: string; ticketId?: string }
+    let held: { to?: string; text?: string } = {}
+    try { held = JSON.parse(payload.body ?? '{}') as { to?: string; text?: string } } catch { throw new Error(`Relay ${relayId} does not carry a destination`) }
+    const target = this.host.store.settings().executor.projects.find(item => item.id === held.to)
+    if (!target) throw new Error(`Relay ${relayId} names unknown project ${String(held.to)}`)
+    if (target.id !== projectId) throw new Error(`Relay ${relayId} names project ${target.id}, not ${projectId}`)
+    const session = await this.ensureLead(target.id, target.workspace, `Lead · ${target.name}`)
+    const requestId = `relay-forward:${record.id}`
+    const message = this.host.store.leads.send({ project: target.id, kind: 'relay', from: 'orchestrator', to: 'lead', requestId,
+      body: `Relayed from project ${payload.project ?? record.source.project ?? 'unknown'}${payload.ticketId ? ` (Ticket ${payload.ticketId})` : ''}:\n\n${held.text ?? ''}` },
+      undefined, record.dedupe)
+    await this.prompt(session.id, requestId, message.body, 'queue')
+    this.host.store.leads.deliver(message.id)
+    return { forwarded: true, request_id: requestId }
+  }
+  /**
+   * Relays a Lead's message to another Ticket's worker in the same project (issue #14): worker A → Lead → worker B, with the
+   * Lead as the required hop and the original text preserved. Both Tickets must be live and of the same project.
+   */
+  async relayWorker(project: Project, input: { from: string; to: string; text: string }): Promise<{ relayed: true; request_id: string }> {
+    const from = this.host.store.tickets.get(input.from)
+    const to = this.host.store.tickets.get(input.to)
+    if (!from || from.project !== project.id || !to || to.project !== project.id) throw new UserError('unknownWorkerSession')
+    if (from.id === to.id) throw new Error('A relay needs another Ticket')
+    const requestId = `worker-relay:${randomUUID()}`
+    const body = `Relayed from Ticket ${from.id} in this project:\n\n${input.text}`
+    const message = this.host.store.leads.send({ project: project.id, kind: 'relay', from: 'lead', to: 'worker', requestId,
+      ticketId: to.id, body })
+    await this.notifyWorker(project.id, workerSessionId(to.id), body)
+    this.host.store.leads.deliver(message.id)
+    return { relayed: true, request_id: requestId }
   }
 
   /** The registered project whose Lead Session `agent` is, if its Session id names one and the project is still registered. */
